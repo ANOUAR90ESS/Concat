@@ -1,0 +1,18 @@
+{
+  "title": "تجربة الفيديو الطويل",
+  "language": "ar",
+  "aspect": "16:9",
+  "style": {"visual": "cinematic, warm golden light, 35mm film grain"},
+  "chapters": [
+    {"title": "البداية", "scenes": [
+      {"narration": "في قلب الصحراء، كانت هناك مدينة لا ينام أهلها. كل ليلة كانوا يراقبون النجوم.", "onScreenText": "الفصل الأول", "seconds": 7,
+       "shots": [{"prompt": "aerial shot over desert dunes at dusk, slow push in"}, {"prompt": "ancient city walls lit by torches"}]},
+      {"narration": "وفي يوم من الأيام، اختفى نجم من السماء.", "seconds": 4,
+       "shots": [{"prompt": "night sky full of stars, one star fading"}]}
+    ]},
+    {"title": "الرحلة", "scenes": [
+      {"narration": "فخرج شاب صغير يبحث عنه، حاملاً خريطة قديمة.", "onScreenText": "الفصل الثاني", "seconds": 5,
+       "shots": [{"prompt": "young traveller walking across dunes with an old map, tracking shot"}]}
+    ]}
+  ]
+}
