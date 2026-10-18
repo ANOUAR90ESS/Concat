@@ -56,9 +56,9 @@ cat > "$app/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Concat</string>
-  <key>CFBundleDisplayName</key><string>Concat</string>
-  <key>CFBundleIdentifier</key><string>app.concat.editor</string>
+  <key>CFBundleName</key><string>LongCut</string>
+  <key>CFBundleDisplayName</key><string>LongCut</string>
+  <key>CFBundleIdentifier</key><string>app.longcut.editor</string>
   <key>CFBundleVersion</key><string>${version}</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleExecutable</key><string>Concat</string>
@@ -90,8 +90,8 @@ cat > "$app/Info.plist" <<PLIST
   </dict>
   <key>CADisableMinimumFrameDurationOnPhone</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
-  <key>NSPhotoLibraryUsageDescription</key><string>Concat imports the clips you pick.</string>
-  <key>NSMicrophoneUsageDescription</key><string>Concat records voice-over.</string>
+  <key>NSPhotoLibraryUsageDescription</key><string>LongCut imports the clips you pick.</string>
+  <key>NSMicrophoneUsageDescription</key><string>LongCut records voice-over.</string>
   <key>NSHumanReadableCopyright</key><string>AGPL-3.0-or-later. See THIRD_PARTY_NOTICES.md.</string>
 </dict>
 </plist>
