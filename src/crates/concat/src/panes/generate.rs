@@ -476,13 +476,21 @@ impl GeneratePane {
     pub fn data(&self, studio: &Studio) -> GenerateSheetData {
         let prefs = &studio.prefs.generate;
         let summary = self.board.as_ref().map(|board| {
+            // A tenth of a minute while that is a difference worth seeing:
+            // a short draft would otherwise read as "about 0 min".
+            let minutes = board.seconds() / 60.0;
+            let minutes = if minutes < 10.0 {
+                format!("{minutes:.1}")
+            } else {
+                format!("{minutes:.0}")
+            };
             tf(
                 "generate.scriptReady",
                 &[
                     &board.title,
                     &board.scenes().count(),
                     &board.shot_count(),
-                    &format!("{:.0}", board.seconds() / 60.0),
+                    &minutes,
                 ],
             )
         });
