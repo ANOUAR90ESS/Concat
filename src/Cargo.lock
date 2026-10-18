@@ -1242,7 +1242,6 @@ version = "0.2.7"
 dependencies = [
  "concat-host",
  "concat-project",
- "log",
  "png 0.17.16",
  "serde",
  "serde_json",
