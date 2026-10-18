@@ -60,6 +60,10 @@ pub struct Made {
     pub files: HashMap<String, SceneFiles>,
     /// Each file's probe, to import it with.
     pub media: HashMap<String, NewMedia>,
+    /// What the run worked around rather than stopped for: a clip that
+    /// became a still, a still that became a colour card. Said once the
+    /// video is done, so an unattended run finishes and says what it did.
+    pub stand_ins: Vec<String>,
 }
 
 impl Job {
@@ -163,12 +167,14 @@ impl Job {
                         std::fs::copy(&made, &out)
                             .map_err(|error| format!("{}: {error}", out.display()))?;
                     }
-                    Voice::ElevenLabs { key, voice_id } => providers::elevenlabs(
-                        key,
-                        voice_id,
-                        scene.narration.trim(),
-                        &voice_dir.join(format!("{}.mp3", scene.id)),
-                    )?,
+                    Voice::ElevenLabs { key, voice_id } => providers::retry(|| {
+                        providers::elevenlabs(
+                            key,
+                            voice_id,
+                            scene.narration.trim(),
+                            &voice_dir.join(format!("{}.mp3", scene.id)),
+                        )
+                    })?,
                 }
             }
         }
@@ -176,6 +182,7 @@ impl Job {
         let (width, height) = board.frame();
         let total = board.shot_count();
         let mut missing = Vec::new();
+        let mut stand_ins = Vec::new();
         let mut n = 0;
         for scene in board.scenes() {
             for (index, shot) in scene.shots.iter().enumerate() {
@@ -196,20 +203,67 @@ impl Job {
                     }
                     Shots::Replicate {
                         token,
-                        model,
-                        input,
+                        image_model,
+                        video_model,
+                        video_input,
                     } => {
                         progress(Step::Shot { n, of: total });
-                        providers::replicate(
-                            token,
-                            model,
-                            input,
-                            &board.prompt(shot),
-                            seconds,
-                            &board.aspect,
-                            &shots_dir,
-                            &stem,
-                        )?;
+                        let prompt = board.prompt(shot);
+                        // The scene's opening shot moves, when there is a
+                        // video model; a clip that cannot be made becomes a
+                        // still rather than stopping the run.
+                        let mut made = false;
+                        if index == 0 && !video_model.trim().is_empty() {
+                            match providers::retry(|| {
+                                providers::replicate_video(
+                                    token,
+                                    video_model,
+                                    video_input,
+                                    &prompt,
+                                    seconds,
+                                    &board.aspect,
+                                    &shots_dir,
+                                    &stem,
+                                )
+                            }) {
+                                Ok(_) => made = true,
+                                Err(error) => stand_ins
+                                    .push(format!("{stem}: a still in place of a clip ({error})")),
+                            }
+                        }
+                        // And a still that cannot be made becomes a colour
+                        // card: the cut is whole, and the card says which
+                        // shot to make again.
+                        if !made {
+                            let image = providers::retry(|| {
+                                providers::replicate_image(
+                                    token,
+                                    image_model,
+                                    &prompt,
+                                    &board.aspect,
+                                    &shots_dir,
+                                    &stem,
+                                )
+                            });
+                            if let Err(error) = image {
+                                if providers::refused_for_good(&error)
+                                    || error.contains("needs an API token")
+                                {
+                                    // A key that is wrong or out of credit fails
+                                    // every shot the same way: say so now.
+                                    return Err(error);
+                                }
+                                stand_ins.push(format!(
+                                    "{stem}: a colour card in place of a still ({error})"
+                                ));
+                                providers::draft(
+                                    &shots_dir.join(format!("{stem}.png")),
+                                    width,
+                                    height,
+                                    n,
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -223,7 +277,10 @@ impl Job {
         }
 
         progress(Step::Probing);
-        let mut made = Made::default();
+        let mut made = Made {
+            stand_ins,
+            ..Made::default()
+        };
         let mut probe = |path: &Path| -> Result<(String, Option<f64>), String> {
             let path_text = path.to_string_lossy().into_owned();
             let summary = concat_host::media::probe(&path_text)?;

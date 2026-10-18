@@ -72,7 +72,8 @@ pub fn write(
     if key.trim().is_empty() {
         return Err("an Anthropic API key is needed to write the script".to_owned());
     }
-    let ask = |tool: &Value, prompt: String| call(key, model, tool, &prompt);
+    let ask =
+        |tool: &Value, prompt: String| crate::providers::retry(|| call(key, model, tool, &prompt));
 
     let mut brief_text = format!(
         "Topic: {}\nLength: about {} minutes\nNarration language: {}\nAspect ratio: {}\n",

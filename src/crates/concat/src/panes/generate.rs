@@ -27,9 +27,10 @@ use concat_project::Command;
 use concat_project::model::MediaKind;
 use slint::SharedString;
 
-use crate::host::{on_ui_in_project, spawn_in_project};
+use crate::host::{on_ui, on_ui_in_project, spawn_in_project};
 use crate::i18n::{t, tf};
 use crate::panes::Msg;
+use crate::panes::export::ExportMsg;
 use crate::panes::settings::installed;
 use crate::studio::Studio;
 use crate::ui::GenerateSheetData;
@@ -158,6 +159,7 @@ impl GeneratePane {
                     4 => prefs.replicate_model = text,
                     5 => prefs.elevenlabs_key = text,
                     6 => prefs.elevenlabs_voice = text,
+                    7 => prefs.replicate_image_model = text,
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -185,6 +187,10 @@ impl GeneratePane {
             GenerateMsg::Toggled(field, on) => match field {
                 0 => self.captions = on,
                 1 => self.titles = on,
+                2 => {
+                    studio.prefs.generate.auto_export = Some(on);
+                    studio.prefs.save(&studio.host.dirs);
+                }
                 _ => {}
             },
             GenerateMsg::WriteScript => self.write(studio, false),
@@ -324,8 +330,9 @@ impl GeneratePane {
         let shots = match prefs.shots {
             1 => Shots::Replicate {
                 token: prefs.replicate_token.clone(),
-                model: prefs.replicate_model.clone(),
-                input: REPLICATE_INPUT.to_owned(),
+                image_model: prefs.replicate_image_model.clone(),
+                video_model: prefs.replicate_model.clone(),
+                video_input: REPLICATE_INPUT.to_owned(),
             },
             2 => Shots::Folder,
             _ => Shots::Draft,
@@ -433,6 +440,17 @@ impl GeneratePane {
                     &tf("generate.videoReady", &[&format!("{minutes:.1}")]),
                     false,
                 );
+                for stand_in in &made.stand_ins {
+                    log::warn!("generate: {stand_in}");
+                }
+                if !made.stand_ins.is_empty() {
+                    studio.notify(&tf("generate.standIns", &[&made.stand_ins.len()]), true);
+                }
+                if studio.prefs.generate.auto_export.unwrap_or(true)
+                    && let Some(job) = self.job(studio)
+                {
+                    export(job.dir, &board.title);
+                }
             }
             Err(error) => self.message = error,
         }
@@ -509,6 +527,8 @@ impl GeneratePane {
             anthropic_key: prefs.anthropic_key.as_str().into(),
             replicate_token: prefs.replicate_token.as_str().into(),
             replicate_model: prefs.replicate_model.as_str().into(),
+            replicate_image_model: prefs.replicate_image_model.as_str().into(),
+            auto_export: prefs.auto_export.unwrap_or(true),
             elevenlabs_key: prefs.elevenlabs_key.as_str().into(),
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
             has_script: self.board.is_some(),
@@ -519,6 +539,38 @@ impl GeneratePane {
             message: self.message.as_str().into(),
         }
     }
+}
+
+/// Renders the cut through the export sheet, exactly as pressing Export
+/// would, into the job's folder under the video's title: the last step of
+/// a run nobody has to watch. Posted for the next turn, so it starts once
+/// the cut is published and the sheet's own state is its to change.
+fn export(folder: PathBuf, title: &str) {
+    let name: String = title
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    let name = if name.is_empty() {
+        "video".to_owned()
+    } else {
+        name
+    };
+    let folder = folder.to_string_lossy().into_owned();
+    on_ui(move |studio, _, _| {
+        studio.handle(Msg::Export(ExportMsg::Open));
+        studio.handle(Msg::Export(ExportMsg::NameEdited(name)));
+        studio.handle(Msg::Export(ExportMsg::FolderChosen(folder)));
+        // Overwrite: a run made again replaces its own file, not asks.
+        studio.handle(Msg::Export(ExportMsg::Overwrite));
+    });
 }
 
 /// Every recording in the bin, with its length: what a music bed can be.
