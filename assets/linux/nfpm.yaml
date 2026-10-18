@@ -11,15 +11,15 @@
 #
 #   cd stage/Concat-0.2.7-linux-x86_64
 #   VERSION=0.2.7 NFPM_ARCH=amd64 nfpm package -f ../../assets/linux/nfpm.yaml -p deb -t ..
-name: concat
+name: longcut
 arch: ${NFPM_ARCH}
 platform: linux
 version: ${VERSION}
 section: video
 priority: optional
-maintainer: Concat contributors <jub0trd@gmail.com>
-vendor: Concat contributors
-homepage: https://github.com/jub0t/Concat
+maintainer: ANOUAR90ESS <anwarasbas2018@gmail.com>
+vendor: ANOUAR90ESS
+homepage: https://github.com/ANOUAR90ESS/Concat
 license: AGPL-3.0-or-later
 description: |
   Free and open source video editor.
@@ -28,23 +28,23 @@ description: |
 
 contents:
   - src: concat
-    dst: /opt/concat/concat
+    dst: /opt/longcut/concat
     file_info:
       mode: 0755
   - src: lib/*
-    dst: /opt/concat/lib/
-  - src: pkg/concat
-    dst: /usr/bin/concat
+    dst: /opt/longcut/lib/
+  - src: pkg/longcut
+    dst: /usr/bin/longcut
     file_info:
       mode: 0755
-  - src: pkg/concat.desktop
-    dst: /usr/share/applications/concat.desktop
-  - src: concat.png
-    dst: /usr/share/icons/hicolor/256x256/apps/concat.png
+  - src: pkg/longcut.desktop
+    dst: /usr/share/applications/longcut.desktop
+  - src: longcut.png
+    dst: /usr/share/icons/hicolor/256x256/apps/longcut.png
   - src: LICENSE
-    dst: /usr/share/doc/concat/LICENSE
+    dst: /usr/share/doc/longcut/LICENSE
   - src: THIRD_PARTY_NOTICES.md
-    dst: /usr/share/doc/concat/THIRD_PARTY_NOTICES.md
+    dst: /usr/share/doc/longcut/THIRD_PARTY_NOTICES.md
 
 # What the binary loads from the system rather than from lib/: the
 # toolkit the file dialogs use, sound, fonts and OpenGL. Named as each

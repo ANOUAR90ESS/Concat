@@ -134,11 +134,11 @@ inside() {
   apt-get install -y -qq --no-install-recommends \
     "$deb" xvfb xauth libgl1-mesa-dri mesa-vulkan-drivers fonts-dejavu-core > /dev/null
 
-  say "concat --version (the package)"
-  HOME=$(fresh_home) expect_ok "concat --version from the .deb" 60 concat --version
-  say "concat --smoke (the package)"
-  HOME=$(fresh_home) expect_ok "concat --smoke from the .deb" 180 \
-    xvfb-run -a -s "-screen 0 1920x1080x24" concat --smoke
+  say "longcut --version (the package)"
+  HOME=$(fresh_home) expect_ok "longcut --version from the .deb" 60 longcut --version
+  say "longcut --smoke (the package)"
+  HOME=$(fresh_home) expect_ok "longcut --smoke from the .deb" 180 \
+    xvfb-run -a -s "-screen 0 1920x1080x24" longcut --smoke
 
   # No FUSE in a container: the AppImage unpacks itself and runs.
   export APPIMAGE_EXTRACT_AND_RUN=1

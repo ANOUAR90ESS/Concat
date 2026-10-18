@@ -6,7 +6,7 @@
 #
 # Defaults:
 #   source     assets/concat_logo_512.png
-#              (a 512px render of assets/new_concat_logo_512_rounded_light_theme.svg)
+#              (a 512px render of the LongCut icon, drawn by assets/longcut_icon.py)
 #   output-dir assets/icons
 #
 # Uses sips on macOS, ImageMagick (magick/convert) elsewhere.
