@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+
+//! A job: one video's folder, and the work that fills it.
+//!
+//! ```text
+//! <project>/generate/<name>/
+//!     storyboard.json     the script, scene by scene
+//!     prompts.md          every shot's prompt, for making shots by hand
+//!     voice/<scene>.*     the narration
+//!     shots/<scene>_<n>.* the shots
+//! ```
+//!
+//! Every step skips a file that is already there, so a job stopped half
+//! way, or one whose files were replaced by hand, carries on from where it
+//! is; and the folder sits in the project's, so it moves with it.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use concat_project::commands::NewMedia;
+use concat_project::model::MediaKind;
+
+use crate::plan::SceneFiles;
+use crate::providers::{self, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
+use crate::storyboard::{Storyboard, shot_stem};
+
+/// One video's folder.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Job {
+    /// `<project>/generate/<name>`.
+    pub dir: PathBuf,
+}
+
+/// Where the making is, for the sheet's bar.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Step {
+    /// Scene `n` (from 1) of `of` being read aloud.
+    Voice {
+        /// This one.
+        n: usize,
+        /// Of how many.
+        of: usize,
+    },
+    /// Shot `n` (from 1) of `of` being made.
+    Shot {
+        /// This one.
+        n: usize,
+        /// Of how many.
+        of: usize,
+    },
+    /// The files being probed.
+    Probing,
+}
+
+/// What the making leaves for the cut.
+#[derive(Clone, Debug, Default)]
+pub struct Made {
+    /// Each scene's files and their lengths.
+    pub files: HashMap<String, SceneFiles>,
+    /// Each file's probe, to import it with.
+    pub media: HashMap<String, NewMedia>,
+}
+
+impl Job {
+    /// The job for `name` in the project folder `project`.
+    pub fn new(project: &Path, name: &str) -> Job {
+        let slug: String = name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+        let slug: String = slug.chars().take(60).collect();
+        Job {
+            dir: project.join("generate").join(if slug.is_empty() {
+                "video".to_owned()
+            } else {
+                slug
+            }),
+        }
+    }
+
+    /// The storyboard's file.
+    pub fn storyboard(&self) -> PathBuf {
+        self.dir.join("storyboard.json")
+    }
+
+    /// The prompt sheet's file.
+    pub fn prompts(&self) -> PathBuf {
+        self.dir.join("prompts.md")
+    }
+
+    /// Where the narration goes.
+    pub fn voice_dir(&self) -> PathBuf {
+        self.dir.join("voice")
+    }
+
+    /// Where the shots go.
+    pub fn shots_dir(&self) -> PathBuf {
+        self.dir.join("shots")
+    }
+
+    /// Writes the storyboard and its prompt sheet.
+    pub fn keep(&self, board: &Storyboard) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|error| format!("{}: {error}", self.dir.display()))?;
+        board.write(&self.storyboard())?;
+        std::fs::write(self.prompts(), board.prompt_sheet())
+            .map_err(|error| format!("{}: {error}", self.prompts().display()))
+    }
+
+    /// Makes every narration and shot the job is missing, then probes them
+    /// all. `speak` reads one scene's words into a file for
+    /// [`Voice::BuiltIn`] and is not called otherwise; `stop` is asked
+    /// between files.
+    pub fn make(
+        &self,
+        board: &Storyboard,
+        voice: &Voice,
+        shots: &Shots,
+        speak: &mut dyn FnMut(&str) -> Result<PathBuf, String>,
+        progress: &mut dyn FnMut(Step),
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Made, String> {
+        let voice_dir = self.voice_dir();
+        let shots_dir = self.shots_dir();
+        for dir in [&voice_dir, &shots_dir] {
+            std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        }
+
+        // The narration first: it decides every scene's length.
+        let spoken: Vec<_> = board
+            .scenes()
+            .filter(|scene| !scene.narration.trim().is_empty())
+            .collect();
+        if *voice != Voice::None {
+            for (i, scene) in spoken.iter().enumerate() {
+                if stop() {
+                    return Err("cancelled".to_owned());
+                }
+                if providers::existing(&voice_dir, &scene.id, &VOICE_EXTENSIONS).is_some() {
+                    continue;
+                }
+                progress(Step::Voice {
+                    n: i + 1,
+                    of: spoken.len(),
+                });
+                match voice {
+                    Voice::None => {}
+                    Voice::BuiltIn => {
+                        let made = speak(scene.narration.trim())?;
+                        let extension = made.extension().and_then(|e| e.to_str()).unwrap_or("wav");
+                        let out = voice_dir.join(format!("{}.{extension}", scene.id));
+                        std::fs::copy(&made, &out)
+                            .map_err(|error| format!("{}: {error}", out.display()))?;
+                    }
+                    Voice::ElevenLabs { key, voice_id } => providers::elevenlabs(
+                        key,
+                        voice_id,
+                        scene.narration.trim(),
+                        &voice_dir.join(format!("{}.mp3", scene.id)),
+                    )?,
+                }
+            }
+        }
+
+        let (width, height) = board.frame();
+        let total = board.shot_count();
+        let mut missing = Vec::new();
+        let mut n = 0;
+        for scene in board.scenes() {
+            for (index, shot) in scene.shots.iter().enumerate() {
+                n += 1;
+                let stem = shot_stem(&scene.id, index);
+                if providers::existing(&shots_dir, &stem, &SHOT_EXTENSIONS).is_some() {
+                    continue;
+                }
+                if stop() {
+                    return Err("cancelled".to_owned());
+                }
+                let seconds = (scene.seconds / scene.shots.len() as f64).clamp(2.0, 10.0);
+                match shots {
+                    Shots::Folder => missing.push(stem),
+                    Shots::Draft => {
+                        progress(Step::Shot { n, of: total });
+                        providers::draft(&shots_dir.join(format!("{stem}.png")), width, height, n)?;
+                    }
+                    Shots::Replicate {
+                        token,
+                        model,
+                        input,
+                    } => {
+                        progress(Step::Shot { n, of: total });
+                        providers::replicate(
+                            token,
+                            model,
+                            input,
+                            &board.prompt(shot),
+                            seconds,
+                            &board.aspect,
+                            &shots_dir,
+                            &stem,
+                        )?;
+                    }
+                }
+            }
+        }
+        if !missing.is_empty() {
+            return Err(format!(
+                "{} shots are still to be made by hand: see prompts.md, and save them in {}",
+                missing.len(),
+                shots_dir.display()
+            ));
+        }
+
+        progress(Step::Probing);
+        let mut made = Made::default();
+        let mut probe = |path: &Path| -> Result<(String, Option<f64>), String> {
+            let path_text = path.to_string_lossy().into_owned();
+            let summary = concat_host::media::probe(&path_text)?;
+            let item = summary.to_new_media();
+            let length = (item.kind != MediaKind::Image).then(|| item.duration.unwrap_or(0.0));
+            made.media.insert(path_text.clone(), item);
+            Ok((path_text, length))
+        };
+        let mut files = HashMap::new();
+        for scene in board.scenes() {
+            let mut scene_files = SceneFiles::default();
+            if *voice != Voice::None
+                && let Some(path) = providers::existing(&voice_dir, &scene.id, &VOICE_EXTENSIONS)
+            {
+                let (path, length) = probe(&path)?;
+                scene_files.voice = Some((path, length.unwrap_or(0.0)));
+            }
+            for index in 0..scene.shots.len() {
+                let stem = shot_stem(&scene.id, index);
+                let path = providers::existing(&shots_dir, &stem, &SHOT_EXTENSIONS)
+                    .ok_or_else(|| format!("shot {stem} is missing"))?;
+                scene_files.shots.push(probe(&path)?);
+            }
+            files.insert(scene.id.clone(), scene_files);
+        }
+        made.files = files;
+        Ok(made)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_job_folder_is_named_after_the_video() {
+        let job = Job::new(Path::new("/p"), "المدن المفقودة: الجزء 1!");
+        assert_eq!(job.dir, Path::new("/p/generate/المدن-المفقودة-الجزء-1"));
+        assert_eq!(
+            Job::new(Path::new("/p"), "  ").dir,
+            Path::new("/p/generate/video")
+        );
+    }
+}

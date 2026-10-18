@@ -1,0 +1,25 @@
+[package]
+name = "concat-generate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Long videos from an idea: the script, the prompts, the voice and the shots, and the cut."
+
+[dependencies]
+# The cut is made of the edit's own commands, so it is undone, saved and
+# opened like any other.
+concat-project.workspace = true
+# Every generated file is probed the way an import is.
+concat-host.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+# The writer, the voice and the shot generators are web services. Blocking
+# on purpose, as concat-host's downloads are: each runs on a worker thread.
+ureq = { version = "2", features = ["json"] }
+# Draft shots are colour cards, written as PNGs: no service, no cost.
+png = "0.17"
+log = { version = "0.4", features = ["std"] }
+
+[lints]
+workspace = true

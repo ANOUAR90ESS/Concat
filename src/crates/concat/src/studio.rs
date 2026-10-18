@@ -605,6 +605,8 @@ pub struct Models {
     pub speech_samples: Rc<VecModel<SharedString>>,
     pub speech_sample_waves: Rc<VecModel<SharedString>>,
     pub speech_sample_details: Rc<VecModel<SharedString>>,
+    /// The Long video sheet's music beds: none, then the bin's recordings.
+    pub generate_music: Rc<VecModel<SharedString>>,
     pub transcribers: Rc<VecModel<ModelData>>,
     pub voices: Rc<VecModel<ModelData>>,
     /// The Version page's releases, and beside each its day or that it
@@ -672,6 +674,7 @@ impl Models {
             speech_samples: Rc::new(VecModel::default()),
             speech_sample_waves: Rc::new(VecModel::default()),
             speech_sample_details: Rc::new(VecModel::default()),
+            generate_music: Rc::new(VecModel::default()),
             transcribers: Rc::new(VecModel::default()),
             voices: Rc::new(VecModel::default()),
             versions: Rc::new(VecModel::default()),
@@ -904,6 +907,7 @@ pub struct Studio {
     pub project_sheet: crate::panes::project::ProjectPane,
     pub captions: crate::panes::captions::CaptionsPane,
     pub speech: crate::panes::speech::SpeechPane,
+    pub generate: crate::panes::generate::GeneratePane,
     /// A file from the library lent the monitor and the speakers; see
     /// `crate::source`.
     pub source: Option<crate::source::Source>,
@@ -2146,6 +2150,7 @@ impl Studio {
             project_sheet: crate::panes::project::ProjectPane::default(),
             captions: crate::panes::captions::CaptionsPane::default(),
             speech: crate::panes::speech::SpeechPane::default(),
+            generate: crate::panes::generate::GeneratePane::default(),
             source: None,
             meters: crate::meters::MeterFeed::default(),
             voiceover: crate::panes::voiceover::VoiceoverPane::default(),
@@ -2494,6 +2499,13 @@ impl Studio {
                 None
             }
         }
+    }
+
+    /// [`Studio::apply_within`] for a caller outside the studio laying
+    /// down many edits as one step: the Long video sheet's whole cut is one
+    /// Undo.
+    pub fn apply_gesture(&mut self, gesture: &str, command: Command) -> Option<String> {
+        self.apply_within(gesture, command)
     }
 
     /// [`Studio::apply`], or [`Studio::apply_within`] when `gesture` names
@@ -7339,6 +7351,11 @@ impl Studio {
                 pane.update(msg, self);
                 self.speech = pane;
             }
+            crate::panes::Msg::Generate(msg) => {
+                let mut pane = std::mem::take(&mut self.generate);
+                pane.update(msg, self);
+                self.generate = pane;
+            }
             crate::panes::Msg::Voiceover(msg) => {
                 let mut pane = std::mem::take(&mut self.voiceover);
                 pane.update(msg, self);
@@ -9493,6 +9510,8 @@ impl Studio {
             self.speech.sample_detail_rows(self),
         );
         app.set_speech(self.speech.data(self));
+        sync(&models.generate_music, self.generate.music_rows(self));
+        app.set_generate(self.generate.data(self));
         self.publish_source(app);
         editor.set_recording(self.voiceover.recording());
 
@@ -9907,6 +9926,13 @@ impl Studio {
                     true,
                 ),
                 row("speech", t("studio.textToSpeech"), Glyph::Volume, "", true),
+                row(
+                    "generate",
+                    t("generate.longVideo"),
+                    Glyph::Sparkle,
+                    "",
+                    true,
+                ),
                 row(
                     "clear-cache",
                     t("studio.clearProjectCache"),

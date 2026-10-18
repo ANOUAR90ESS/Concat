@@ -28,6 +28,7 @@ import { RelinkDialog, RelinkData, MissingMediaItem } from "dialogs/relink.slint
 import { ConfirmData, ConfirmDialog } from "dialogs/confirm.slint";
 import { CaptionsDialog, CaptionsSheetData } from "dialogs/captions.slint";
 import { SpeechDialog, SpeechSheetData } from "dialogs/speech.slint";
+import { GenerateDialog, GenerateSheetData } from "dialogs/generate.slint";
 import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { Editor } from "editor.slint";
 import { PaneKind, Panes } from "workspace/pane-switcher.slint";
@@ -62,7 +63,7 @@ export {
     SelectedClipData, SelectedTransitionData, StageGuideData, StageItemData, TextAlignment, TimelineTabData,
     TimelineTool, TrackData, TrackSize, MenuItemData, MenuRow, ExportData, ExportPhase, ModelData, SettingsData,
     ChipOption, RecentProjectData, StartData, SystemFactData, ToastData, ProjectSheetData,
-    CaptionsSheetData, SpeechSheetData,
+    CaptionsSheetData, SpeechSheetData, GenerateSheetData,
 }
 
 export component App inherits Window {
@@ -117,6 +118,7 @@ export component App inherits Window {
     }
     property <bool> sheet-open: root.export.open || root.settings.open
         || root.project-sheet.open || root.captions.open || root.speech.open
+        || root.generate.open
         || root.start.composing;
     changed sheet-open => {
         if (!root.sheet-open) {
@@ -320,6 +322,18 @@ export component App inherits Window {
     pure callback speech-insert-tag(text: string, tag: string, at: int) -> string;
     callback speech-begin();
     callback speech-cancel();
+
+    /// The Long video sheet: an idea in, a cut timeline out.
+    in property <GenerateSheetData> generate;
+    in property <[string]> generate-music;
+    callback generate-closed();
+    callback generate-text-edited(field: int, text: string);
+    callback generate-choice-changed(field: int, index: int);
+    callback generate-toggled(field: int, on: bool);
+    callback generate-write-script();
+    callback generate-create();
+    callback generate-open-folder();
+    callback generate-cancel();
 
     /// Takes focus back from whatever field holds it. The keyboard scope is
     /// where focus rests when nothing is being typed into, so giving it the
@@ -534,6 +548,10 @@ export component App inherits Window {
             if (event.text == Key.Escape) {
                 if (root.confirm.open) { root.confirm-dismissed(); return accept; }
                 if (root.relink.open) { root.relink-dismiss(); return accept; }
+                if (root.generate.open) {
+                    if (!root.generate.running) { root.generate-closed(); }
+                    return accept;
+                }
                 if (root.speech.open) {
                     if (!root.speech.running) { root.speech-closed(); }
                     return accept;
@@ -926,6 +944,29 @@ export component App inherits Window {
         insert-tag(text, tag, at) => { return root.speech-insert-tag(text, tag, at); }
         begin => { root.speech-begin(); }
         cancel => { root.speech-cancel(); }
+    }
+
+    GenerateDialog {
+        fill: root.sheets-fill;
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        data: root.generate;
+        music-options: root.generate-music;
+
+        closed => { root.generate-closed(); }
+        text-edited(field, text) => { root.generate-text-edited(field, text); }
+        choice-changed(field, index) => { root.generate-choice-changed(field, index); }
+        toggled(field, on) => { root.generate-toggled(field, on); }
+        write-script => { root.generate-write-script(); }
+        create => { root.generate-create(); }
+        open-folder => { root.generate-open-folder(); }
+        cancel => { root.generate-cancel(); }
     }
 
     // Over the workspace and both sheets, under the menus. A tooltip has to

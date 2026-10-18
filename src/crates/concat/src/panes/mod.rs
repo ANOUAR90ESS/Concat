@@ -16,6 +16,7 @@
 
 pub mod captions;
 pub mod export;
+pub mod generate;
 pub mod media_bin;
 pub mod monitor;
 pub mod pace;
@@ -52,6 +53,8 @@ pub enum Msg {
     Timeline(timeline::TimelineMsg),
     /// To the voiceover take.
     Voiceover(voiceover::VoiceoverMsg),
+    /// To the Long video sheet.
+    Generate(generate::GenerateMsg),
 }
 
 /// What a message says in the log: the activity trail of what the person
@@ -83,6 +86,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         | Msg::Export(ExportMsg::Progress { .. })
         | Msg::Captions(CaptionsMsg::Progress(_))
         | Msg::Speech(SpeechMsg::Progress(_))
+        | Msg::Generate(generate::GenerateMsg::Progress(..))
         | Msg::Settings(SettingsMsg::ModelProgress { .. } | SettingsMsg::InstallProgress { .. }) => {
             return None;
         }
@@ -111,6 +115,24 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         }
         Msg::Captions(CaptionsMsg::Finished(Err(error))) => {
             return Some(Activity::once(Info, format!("captions: failed, {error}")));
+        }
+        Msg::Generate(generate::GenerateMsg::Written(result, _)) => {
+            return Some(Activity::once(
+                Info,
+                match result.as_ref() {
+                    Ok(board) => format!("generate: script written, {} shots", board.shot_count()),
+                    Err(error) => format!("generate: script failed, {error}"),
+                },
+            ));
+        }
+        Msg::Generate(generate::GenerateMsg::Made(result)) => {
+            return Some(Activity::once(
+                Info,
+                match result.as_ref() {
+                    Ok((_, made)) => format!("generate: made, {} files", made.media.len()),
+                    Err(error) => format!("generate: making failed, {error}"),
+                },
+            ));
         }
         Msg::Speech(SpeechMsg::Begin) => {
             return Some(Activity::once(Info, "speech: started".to_owned()));

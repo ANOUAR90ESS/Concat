@@ -1136,6 +1136,7 @@ dependencies = [
  "concat-core",
  "concat-effects",
  "concat-export",
+ "concat-generate",
  "concat-host",
  "concat-media",
  "concat-project",
@@ -1233,6 +1234,19 @@ dependencies = [
  "concat-vision",
  "log",
  "serde",
+]
+
+[[package]]
+name = "concat-generate"
+version = "0.2.7"
+dependencies = [
+ "concat-host",
+ "concat-project",
+ "log",
+ "png 0.17.16",
+ "serde",
+ "serde_json",
+ "ureq 2.12.1",
 ]
 
 [[package]]
@@ -7021,6 +7035,8 @@ dependencies = [
  "once_cell",
  "rustls",
  "rustls-pki-types",
+ "serde",
+ "serde_json",
  "url",
  "webpki-roots 0.26.11",
 ]

@@ -98,6 +98,36 @@ pub struct Preferences {
     /// unless the Settings sheet was asked for more or less. CONCAT_LOG in
     /// the environment overrides it for one run.
     pub log_level: Option<String>,
+    /// The Long video sheet's keys and last choices.
+    pub generate: GeneratePrefs,
+}
+
+/// What the Long video sheet remembers: the services' keys, kept in this
+/// file on this machine and sent nowhere but to the service each belongs
+/// to, and the choices made last time.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GeneratePrefs {
+    /// Claude, which writes the script.
+    pub anthropic_key: String,
+    /// Replicate, which makes the shots.
+    pub replicate_token: String,
+    /// The Replicate model, "owner/name".
+    pub replicate_model: String,
+    /// ElevenLabs, which reads the narration.
+    pub elevenlabs_key: String,
+    /// The ElevenLabs voice.
+    pub elevenlabs_voice: String,
+    /// Row of the language list.
+    pub language: usize,
+    /// Row of the minutes list.
+    pub minutes: Option<usize>,
+    /// Row of the frames.
+    pub aspect: usize,
+    /// Who reads: none, the window's voices, ElevenLabs.
+    pub voice: Option<usize>,
+    /// Where shots come from: draft cards, Replicate, by hand.
+    pub shots: usize,
 }
 
 impl Preferences {

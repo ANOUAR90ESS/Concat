@@ -84,6 +84,7 @@ use host::{Host, Shell};
 use panes::Msg;
 use panes::captions::CaptionsMsg;
 use panes::export::ExportMsg;
+use panes::generate::GenerateMsg;
 use panes::media_bin::MediaMsg;
 use panes::monitor::MonitorMsg;
 use panes::project::ProjectMsg;
@@ -337,6 +338,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         app.set_speech_samples(ModelRc::from(models.speech_samples.clone()));
         app.set_speech_sample_waves(ModelRc::from(models.speech_sample_waves.clone()));
         app.set_speech_sample_details(ModelRc::from(models.speech_sample_details.clone()));
+        app.set_generate_music(ModelRc::from(models.generate_music.clone()));
         app.set_app_menu_items(ModelRc::from(models.bar.clone()));
         app.set_transcribers(ModelRc::from(models.transcribers.clone()));
         app.set_voices(ModelRc::from(models.voices.clone()));
@@ -1723,6 +1725,35 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.handle(Msg::Speech(SpeechMsg::Cancel));
     }));
 
+    // ── the Long video sheet ──
+    app.on_generate_closed(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::Close));
+    }));
+    app.on_generate_text_edited(on_window!(|state, field: i32, text: SharedString| {
+        state.handle(Msg::Generate(GenerateMsg::TextEdited(
+            field,
+            text.to_string(),
+        )));
+    }));
+    app.on_generate_choice_changed(on_window!(|state, field: i32, index: i32| {
+        state.handle(Msg::Generate(GenerateMsg::ChoiceChanged(field, index)));
+    }));
+    app.on_generate_toggled(on_window!(|state, field: i32, on: bool| {
+        state.handle(Msg::Generate(GenerateMsg::Toggled(field, on)));
+    }));
+    app.on_generate_write_script(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::WriteScript));
+    }));
+    app.on_generate_create(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::Create));
+    }));
+    app.on_generate_open_folder(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::OpenFolder));
+    }));
+    app.on_generate_cancel(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::Cancel));
+    }));
+
     // ── the title-bar menus ──
     app.on_menu_opened(on_window!(|state, index: i32| {
         state.open_menu = index;
@@ -1756,6 +1787,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
                         "export" => state.handle(Msg::Export(ExportMsg::Open)),
                         "template" => state.save_template(),
                         "speech" => state.handle(Msg::Speech(SpeechMsg::Open)),
+                        "generate" => state.handle(Msg::Generate(GenerateMsg::Open)),
                         "clear-cache" => state.clear_project_cache(),
                         "settings" => state.handle(Msg::Settings(SettingsMsg::Open)),
                         "close-project" => state.close_project(),
