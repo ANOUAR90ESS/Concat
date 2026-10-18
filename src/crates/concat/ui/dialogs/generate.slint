@@ -1,0 +1,472 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme/theme.slint";
+import { Glyph, Icon } from "../icons.slint";
+import { Button, CopyChip, DialogRow, DialogSection, Field, Modal, Progress } from "../primitives/modal.slint";
+import { SegmentedControl } from "../primitives/segmented-control.slint";
+import { Select } from "../primitives/select.slint";
+import { Switch } from "../inspector/controls.slint";
+
+// Long video: what the menu's Long video opens.
+//
+// An idea in, a cut timeline out. The sheet is the whole job, top to
+// bottom: the idea and how long; who reads it; where the shots come from;
+// the house style of the cut; the keys the services take. Then two
+// buttons. Write script asks Claude for the storyboard and stops there, so
+// it can be read - and edited, it is a file in the project folder - before
+// a single shot is paid for. Create video does whatever is still missing,
+// the script included, then lays the cut on a new timeline. While it runs
+// the sheet is its progress report, as the speech sheets are.
+
+export struct GenerateSheetData {
+    open: bool,
+    /// The idea, in the person's words.
+    topic: string,
+    /// Audience, tone, must-haves.
+    notes: string,
+    /// Row of the minutes list.
+    minutes: int,
+    /// Row of the language list.
+    language: int,
+    /// 0 16:9, 1 9:16, 2 1:1
+    aspect: int,
+    /// 0 none, 1 Concat's own voices, 2 ElevenLabs
+    voice: int,
+    /// 0 draft cards, 1 Replicate, 2 made by hand
+    shots: int,
+    /// Row of the music list; 0 is none.
+    music: int,
+    captions: bool,
+    titles: bool,
+    anthropic-key: string,
+    replicate-token: string,
+    replicate-model: string,
+    elevenlabs-key: string,
+    elevenlabs-voice: string,
+    /// A storyboard is in the project folder for this idea.
+    has-script: bool,
+    /// What that storyboard holds, in words.
+    script-summary: string,
+    running: bool,
+    /// 0..1
+    progress: float,
+    /// What the run is doing, in words.
+    stage: string,
+    /// Why the last run failed, when it did.
+    message: string,
+}
+
+export component GenerateDialog inherits Modal {
+    in property <GenerateSheetData> data;
+    /// "None", then every recording in the bin.
+    in property <[string]> music-options;
+
+    /// Which text: 0 topic, 1 notes, 2 Anthropic key, 3 Replicate token,
+    /// 4 Replicate model, 5 ElevenLabs key, 6 ElevenLabs voice.
+    callback text-edited(field: int, text: string);
+    /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
+    /// 5 music.
+    callback choice-changed(field: int, index: int);
+    /// Which switch: 0 captions, 1 titles.
+    callback toggled(field: int, on: bool);
+    callback write-script();
+    callback create();
+    callback open-folder();
+    callback cancel();
+
+    open: root.data.open;
+    title: I18n.t("generate.longVideo");
+    glyph: Glyph.sparkle;
+    surface-width: 560px;
+    surface-height: 680px;
+    dismissable: !root.data.running;
+
+    // The idea being typed, held apart from `data.topic` as the captions
+    // sheet holds its script: re-seeded when the sheet opens, never while
+    // it is being typed into.
+    property <string> draft;
+    property <bool> typing;
+    changed data => {
+        if (!root.typing) {
+            root.draft = root.data.topic;
+        }
+    }
+    init => { root.draft = root.data.topic; }
+
+    VerticalLayout {
+        if !root.data.running: Rectangle {
+            vertical-stretch: 1;
+
+            Flickable {
+                content-height: form.preferred-height;
+
+                form := VerticalLayout {
+                    DialogSection {
+                        first: true;
+                        title: I18n.t("generate.idea");
+
+                        Rectangle {
+                            height: 88px;
+                            border-radius: Theme.r;
+                            background: Theme.well;
+                            border-width: 1px;
+                            border-color: idea.has-focus ? Theme.accent : Theme.line;
+                            clip: true;
+
+                            idea := TextInput {
+                                x: 10px;
+                                y: 8px;
+                                width: parent.width - 20px;
+                                height: parent.height - 16px;
+                                text <=> root.draft;
+                                color: Theme.fg;
+                                font-size: Theme.fs-lg;
+                                single-line: false;
+                                wrap: word-wrap;
+                                selection-background-color: Theme.accent;
+                                selection-foreground-color: Theme.on-accent;
+                                changed has-focus => { root.typing = self.has-focus; }
+                                edited => { root.text-edited(0, self.text); }
+                                key-pressed(event) => {
+                                    if (event.text == Key.Home) {
+                                        self.set-selection-offsets(0, 0);
+                                        return accept;
+                                    }
+                                    if (event.text == Key.End) {
+                                        self.set-selection-offsets(1000000000, 1000000000);
+                                        return accept;
+                                    }
+                                    return reject;
+                                }
+                            }
+
+                            if root.draft == "" && !idea.has-focus: Text {
+                                x: 10px;
+                                y: 8px;
+                                width: parent.width - 20px;
+                                text: I18n.t("generate.ideaPlaceholder");
+                                color: Theme.fg-dim;
+                                font-size: Theme.fs-lg;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.notes");
+                            Field {
+                                value: root.data.notes;
+                                placeholder: I18n.t("generate.notesPlaceholder");
+                                edited(text) => { root.text-edited(1, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.length");
+                            Select {
+                                options: ["1 min", "3 min", "5 min", "10 min", "15 min", "20 min", "30 min", "60 min"];
+                                current: root.data.minutes;
+                                changed(index) => { root.choice-changed(0, index); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.language");
+                            Select {
+                                options: ["العربية", "English", "Français", "Español", "Deutsch", "Türkçe", "Português", "Bahasa Indonesia", "हिन्दी", "اردو"];
+                                current: root.data.language;
+                                changed(index) => { root.choice-changed(1, index); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.frame");
+                            SegmentedControl {
+                                options: ["16:9", "9:16", "1:1"];
+                                current: root.data.aspect;
+                                changed(index) => { root.choice-changed(2, index); }
+                            }
+                        }
+
+                        if root.data.has-script: HorizontalLayout {
+                            spacing: 8px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                Icon { glyph: Glyph.check; size: 13px; tint: Theme.accent; }
+                            }
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.data.script-summary;
+                                color: Theme.fg-muted;
+                                font-size: Theme.fs-sm;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+
+                            Button {
+                                label: I18n.t("generate.openFolder");
+                                glyph: Glyph.folder;
+                                ghost: true;
+                                clicked => { root.open-folder(); }
+                            }
+                        }
+                    }
+
+                    DialogSection {
+                        title: I18n.t("generate.voice");
+
+                        DialogRow {
+                            label: I18n.t("generate.reader");
+                            Select {
+                                options: [I18n.t("generate.noVoice"), I18n.t("generate.concatVoices"), "ElevenLabs"];
+                                current: root.data.voice;
+                                changed(index) => { root.choice-changed(3, index); }
+                            }
+                        }
+
+                        if root.data.voice == 1: Text {
+                            text: I18n.t("generate.concatVoicesHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        if root.data.voice == 2: DialogRow {
+                            label: I18n.t("generate.apiKey");
+                            Field {
+                                value: root.data.elevenlabs-key;
+                                secret: true;
+                                technical: true;
+                                placeholder: "xi-...";
+                                edited(text) => { root.text-edited(5, text); }
+                            }
+                        }
+
+                        if root.data.voice == 2: DialogRow {
+                            label: I18n.t("generate.voiceId");
+                            Field {
+                                value: root.data.elevenlabs-voice;
+                                technical: true;
+                                edited(text) => { root.text-edited(6, text); }
+                            }
+                        }
+                    }
+
+                    DialogSection {
+                        title: I18n.t("generate.shots");
+
+                        DialogRow {
+                            label: I18n.t("generate.source");
+                            Select {
+                                options: [I18n.t("generate.draftCards"), "Replicate", I18n.t("generate.byHand")];
+                                current: root.data.shots;
+                                changed(index) => { root.choice-changed(4, index); }
+                            }
+                        }
+
+                        Text {
+                            text: root.data.shots == 0 ? I18n.t("generate.draftCardsHint")
+                                : root.data.shots == 1 ? I18n.t("generate.replicateHint")
+                                : I18n.t("generate.byHandHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.apiKey");
+                            Field {
+                                value: root.data.replicate-token;
+                                secret: true;
+                                technical: true;
+                                placeholder: "r8_...";
+                                edited(text) => { root.text-edited(3, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.model");
+                            Field {
+                                value: root.data.replicate-model;
+                                technical: true;
+                                placeholder: "owner/model";
+                                edited(text) => { root.text-edited(4, text); }
+                            }
+                        }
+                    }
+
+                    DialogSection {
+                        title: I18n.t("generate.cut");
+
+                        DialogRow {
+                            label: I18n.t("generate.music");
+                            Select {
+                                options: root.music-options;
+                                current: root.data.music;
+                                changed(index) => { root.choice-changed(5, index); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.captionsFromNarration");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.captions;
+                                    toggled(on) => { root.toggled(0, on); }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.chapterTitles");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.titles;
+                                    toggled(on) => { root.toggled(1, on); }
+                                }
+                            }
+                        }
+                    }
+
+                    DialogSection {
+                        title: I18n.t("generate.writer");
+                        hint: I18n.t("generate.writerHint");
+
+                        DialogRow {
+                            label: "Claude";
+                            Field {
+                                value: root.data.anthropic-key;
+                                secret: true;
+                                technical: true;
+                                placeholder: "sk-ant-...";
+                                edited(text) => { root.text-edited(2, text); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.data.running: Rectangle { vertical-stretch: 1; }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.line;
+        }
+
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+
+            if root.data.message != "": Rectangle {
+                border-radius: Theme.r;
+                background: Theme.danger-soft;
+
+                HorizontalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        alignment: start;
+                        Icon { glyph: Glyph.close; size: 13px; tint: Theme.danger; }
+                    }
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.data.message;
+                        color: Theme.danger;
+                        font-size: Theme.fs-sm;
+                        wrap: word-wrap;
+                    }
+
+                    VerticalLayout {
+                        alignment: start;
+                        CopyChip { text: root.data.message; }
+                    }
+                }
+            }
+
+            if root.data.running: VerticalLayout {
+                spacing: 8px;
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.data.stage;
+                        color: Theme.fg;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: "\{Math.floor(root.data.progress * 100)}%";
+                        color: Theme.fg-muted;
+                        font-family: Theme.font-technical;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Progress {
+                    value: root.data.progress;
+                    live: true;
+                }
+            }
+
+            if root.data.running: HorizontalLayout {
+                alignment: start;
+                Button {
+                    label: I18n.t("common.cancel");
+                    glyph: Glyph.close;
+                    ghost: true;
+                    clicked => { root.cancel(); }
+                }
+            }
+
+            if !root.data.running: HorizontalLayout {
+                spacing: 8px;
+
+                Button {
+                    label: root.data.has-script ? I18n.t("generate.rewriteScript") : I18n.t("generate.writeScript");
+                    glyph: Glyph.text-mark;
+                    large: true;
+                    enabled: root.draft != "";
+                    clicked => { root.write-script(); }
+                }
+
+                Button {
+                    horizontal-stretch: 1;
+                    block: true;
+                    primary: true;
+                    large: true;
+                    glyph: Glyph.film;
+                    label: I18n.t("generate.createVideo");
+                    enabled: root.draft != "" || root.data.has-script;
+                    clicked => { root.create(); }
+                }
+            }
+        }
+    }
+}
