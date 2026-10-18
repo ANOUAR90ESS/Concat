@@ -29,16 +29,57 @@ pub enum Shots {
     Draft,
     /// Made by hand from the prompt sheet and saved in the job's `shots/`.
     Folder,
-    /// Any text-to-video model on Replicate.
+    /// Made on Replicate: every shot a still from a text-to-image model,
+    /// which the cut moves over, and - when a video model is named - the
+    /// first shot of every scene a clip from it. Stills keep an hour of
+    /// video affordable; a moving shot on each scene's open keeps it alive.
     Replicate {
         /// The account's API token.
         token: String,
-        /// "owner/name".
-        model: String,
-        /// The model's input as JSON; strings may hold `{prompt}`,
+        /// The text-to-image model, "owner/name".
+        image_model: String,
+        /// The text-to-video model, "owner/name"; empty for stills only.
+        video_model: String,
+        /// The video model's input as JSON; strings may hold `{prompt}`,
         /// `{seconds}` and `{aspect}`.
-        input: String,
+        video_input: String,
     },
+}
+
+/// The text-to-image model a Replicate job uses when none is named: fast,
+/// cheap, and it takes an aspect ratio.
+pub const DEFAULT_IMAGE_MODEL: &str = "black-forest-labs/flux-schnell";
+
+/// How many times a call to a service is made before it is given up on:
+/// a long video is hundreds of calls, and one busy minute on the far side
+/// must not end an unattended run.
+pub const ATTEMPTS: u32 = 3;
+
+/// The longest one shot may take to make before it is given up on, so an
+/// unattended run never waits forever on a prediction that is stuck.
+const SHOT_DEADLINE: Duration = Duration::from_secs(15 * 60);
+
+/// `work` until it succeeds, at most [`ATTEMPTS`] times, waiting longer
+/// between each: the last failure if none does.
+pub fn retry<T>(mut work: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    let mut last = String::new();
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_secs(5 * u64::from(attempt * attempt)));
+        }
+        match work() {
+            Ok(value) => return Ok(value),
+            // A request the service refused as it stands - a bad key, no
+            // credit, an input it does not take - fails the same way
+            // again: only a busy or broken moment is worth waiting out.
+            Err(error) if refused_for_good(&error) => return Err(error),
+            Err(error) => {
+                log::warn!("attempt {} of {ATTEMPTS} failed: {error}", attempt + 1);
+                last = error;
+            }
+        }
+    }
+    Err(last)
 }
 
 /// Where the narration comes from, besides the window's own voices.
@@ -124,8 +165,20 @@ fn rgb(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
     [(r + m) * 255.0, (g + m) * 255.0, (b + m) * 255.0]
 }
 
-/// One shot from a Replicate model, saved as `dir`/`stem`.<its extension>.
-pub fn replicate(
+/// Whether a service's answer says the request itself is wrong: a 4xx
+/// other than 408 (timeout) and 429 (too many requests).
+pub fn refused_for_good(error: &str) -> bool {
+    error
+        .split("answered ")
+        .nth(1)
+        .and_then(|rest| rest.get(..3))
+        .and_then(|code| code.parse::<u16>().ok())
+        .is_some_and(|code| (400..500).contains(&code) && code != 408 && code != 429)
+}
+
+/// One clip from a Replicate text-to-video model, saved as
+/// `dir`/`stem`.<its extension>.
+pub fn replicate_video(
     token: &str,
     model: &str,
     input: &str,
@@ -135,12 +188,50 @@ pub fn replicate(
     dir: &Path,
     stem: &str,
 ) -> Result<PathBuf, String> {
+    let template: Value = serde_json::from_str(input)
+        .map_err(|error| format!("the model's input is not JSON: {error}"))?;
+    replicate(
+        token,
+        model,
+        fill(&template, prompt, seconds, aspect),
+        dir,
+        stem,
+    )
+}
+
+/// One still from a Replicate text-to-image model of the FLUX family's
+/// inputs, framed for `aspect` and saved as `dir`/`stem`.png.
+pub fn replicate_image(
+    token: &str,
+    model: &str,
+    prompt: &str,
+    aspect: &str,
+    dir: &Path,
+    stem: &str,
+) -> Result<PathBuf, String> {
+    let model = if model.trim().is_empty() {
+        DEFAULT_IMAGE_MODEL
+    } else {
+        model
+    };
+    let input = json!({"prompt": prompt, "aspect_ratio": aspect, "output_format": "png"});
+    replicate(token, model, input, dir, stem)
+}
+
+/// Runs one prediction on `model` with `input` and saves what it made as
+/// `dir`/`stem`.<the file's extension>.
+fn replicate(
+    token: &str,
+    model: &str,
+    input: Value,
+    dir: &Path,
+    stem: &str,
+) -> Result<PathBuf, String> {
     if token.trim().is_empty() || model.trim().is_empty() {
         return Err("Replicate needs an API token and a model".to_owned());
     }
-    let template: Value = serde_json::from_str(input)
-        .map_err(|error| format!("the model's input is not JSON: {error}"))?;
-    let body = json!({ "input": fill(&template, prompt, seconds, aspect) });
+    let body = json!({ "input": input });
+    let started = std::time::Instant::now();
     let agent = agent();
     let auth = format!("Bearer {}", token.trim());
     let mut prediction: Value = agent
@@ -162,6 +253,9 @@ pub fn replicate(
                     "Replicate could not make {stem}: {}",
                     prediction["error"].as_str().unwrap_or("no reason given")
                 ));
+            }
+            _ if started.elapsed() > SHOT_DEADLINE => {
+                return Err(format!("Replicate took too long to make {stem}"));
             }
             _ => {}
         }
@@ -259,6 +353,30 @@ fn save(response: ureq::Response, out: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_passing_failure_is_tried_again() {
+        let mut calls = 0;
+        let refused: Result<(), String> = retry(|| {
+            calls += 1;
+            Err("Replicate answered 401: invalid token".to_owned())
+        });
+        assert!(refused.is_err());
+        assert_eq!(calls, 1);
+        assert!(!refused_for_good("Replicate answered 429: slow down"));
+        assert!(!refused_for_good("Replicate answered 503: busy"));
+        assert!(!refused_for_good("Replicate did not answer: timed out"));
+        let mut tries = 0;
+        let healed = retry(|| {
+            tries += 1;
+            if tries < 2 {
+                Err("Replicate answered 502: bad gateway".to_owned())
+            } else {
+                Ok(tries)
+            }
+        });
+        assert_eq!(healed, Ok(2));
+    }
 
     #[test]
     fn the_template_is_filled_with_types_kept() {

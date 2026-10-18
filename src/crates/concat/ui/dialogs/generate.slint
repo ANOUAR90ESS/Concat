@@ -42,7 +42,12 @@ export struct GenerateSheetData {
     titles: bool,
     anthropic-key: string,
     replicate-token: string,
+    /// The video model; empty for stills only.
     replicate-model: string,
+    /// The image model; empty for the default.
+    replicate-image-model: string,
+    /// Export the finished cut without being asked.
+    auto-export: bool,
     elevenlabs-key: string,
     elevenlabs-voice: string,
     /// A storyboard is in the project folder for this idea.
@@ -64,12 +69,13 @@ export component GenerateDialog inherits Modal {
     in property <[string]> music-options;
 
     /// Which text: 0 topic, 1 notes, 2 Anthropic key, 3 Replicate token,
-    /// 4 Replicate model, 5 ElevenLabs key, 6 ElevenLabs voice.
+    /// 4 Replicate video model, 5 ElevenLabs key, 6 ElevenLabs voice,
+    /// 7 Replicate image model.
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
     /// 5 music.
     callback choice-changed(field: int, index: int);
-    /// Which switch: 0 captions, 1 titles.
+    /// Which switch: 0 captions, 1 titles, 2 export when done.
     callback toggled(field: int, on: bool);
     callback write-script();
     callback create();
@@ -261,7 +267,7 @@ export component GenerateDialog inherits Modal {
                         DialogRow {
                             label: I18n.t("generate.source");
                             Select {
-                                options: [I18n.t("generate.draftCards"), "Replicate", I18n.t("generate.byHand")];
+                                options: [I18n.t("generate.draftCards"), I18n.t("generate.replicateMix"), I18n.t("generate.byHand")];
                                 current: root.data.shots;
                                 changed(index) => { root.choice-changed(4, index); }
                             }
@@ -288,11 +294,21 @@ export component GenerateDialog inherits Modal {
                         }
 
                         if root.data.shots == 1: DialogRow {
-                            label: I18n.t("generate.model");
+                            label: I18n.t("generate.imageModel");
+                            Field {
+                                value: root.data.replicate-image-model;
+                                technical: true;
+                                placeholder: "black-forest-labs/flux-schnell";
+                                edited(text) => { root.text-edited(7, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.videoModel");
                             Field {
                                 value: root.data.replicate-model;
                                 technical: true;
-                                placeholder: "owner/model";
+                                placeholder: I18n.t("generate.videoModelPlaceholder");
                                 edited(text) => { root.text-edited(4, text); }
                             }
                         }
@@ -324,6 +340,24 @@ export component GenerateDialog inherits Modal {
                                 Switch {
                                     checked: root.data.captions;
                                     toggled(on) => { root.toggled(0, on); }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.exportWhenDone");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.auto-export;
+                                    toggled(on) => { root.toggled(2, on); }
                                 }
                             }
                         }

@@ -112,8 +112,13 @@ pub struct GeneratePrefs {
     pub anthropic_key: String,
     /// Replicate, which makes the shots.
     pub replicate_token: String,
-    /// The Replicate model, "owner/name".
+    /// The Replicate text-to-video model, "owner/name"; empty for stills
+    /// only.
     pub replicate_model: String,
+    /// The Replicate text-to-image model; empty for the default.
+    pub replicate_image_model: String,
+    /// Export the finished cut without being asked; None is yes.
+    pub auto_export: Option<bool>,
     /// ElevenLabs, which reads the narration.
     pub elevenlabs_key: String,
     /// The ElevenLabs voice.

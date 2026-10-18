@@ -19,6 +19,9 @@ serde_json.workspace = true
 ureq = { version = "2", features = ["json"] }
 # Draft shots are colour cards, written as PNGs: no service, no cost.
 png = "0.17"
+# What an unattended run had to work around - a retry, a stand-in shot -
+# goes to the window's log.
+log = { version = "0.4", features = ["std"] }
 
 [lints]
 workspace = true
