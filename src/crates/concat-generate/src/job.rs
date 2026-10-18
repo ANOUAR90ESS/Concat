@@ -103,6 +103,36 @@ impl Job {
         self.dir.join("prompts.md")
     }
 
+    /// The shots the last run stood in for, one name a line: they are
+    /// made again on the next run rather than taken for finished.
+    pub fn stand_ins(&self) -> PathBuf {
+        self.dir.join("stand-ins.txt")
+    }
+
+    /// Removes the shots the last run stood in for, so this run makes them.
+    fn forget_stand_ins(&self) {
+        let Ok(list) = std::fs::read_to_string(self.stand_ins()) else {
+            return;
+        };
+        for stem in list.lines().map(str::trim).filter(|stem| !stem.is_empty()) {
+            while let Some(path) = providers::existing(&self.shots_dir(), stem, &SHOT_EXTENSIONS) {
+                if std::fs::remove_file(&path).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = std::fs::remove_file(self.stand_ins());
+    }
+
+    /// Notes the shots this run stood in for; see [`Job::stand_ins`].
+    fn remember_stand_ins(&self, stems: &[String]) -> Result<(), String> {
+        if stems.is_empty() {
+            return Ok(());
+        }
+        std::fs::write(self.stand_ins(), stems.join("\n") + "\n")
+            .map_err(|error| format!("{}: {error}", self.stand_ins().display()))
+    }
+
     /// Where the narration goes.
     pub fn voice_dir(&self) -> PathBuf {
         self.dir.join("voice")
@@ -140,6 +170,7 @@ impl Job {
         for dir in [&voice_dir, &shots_dir] {
             std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
         }
+        self.forget_stand_ins();
 
         // The narration first: it decides every scene's length.
         let spoken: Vec<_> = board
@@ -183,6 +214,7 @@ impl Job {
         let total = board.shot_count();
         let mut missing = Vec::new();
         let mut stand_ins = Vec::new();
+        let mut stood_in = Vec::new();
         let mut n = 0;
         for scene in board.scenes() {
             for (index, shot) in scene.shots.iter().enumerate() {
@@ -256,6 +288,7 @@ impl Job {
                                 stand_ins.push(format!(
                                     "{stem}: a colour card in place of a still ({error})"
                                 ));
+                                stood_in.push(stem.clone());
                                 providers::draft(
                                     &shots_dir.join(format!("{stem}.png")),
                                     width,
@@ -276,6 +309,7 @@ impl Job {
             ));
         }
 
+        self.remember_stand_ins(&stood_in)?;
         progress(Step::Probing);
         let mut made = Made {
             stand_ins,
@@ -314,6 +348,23 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stood_in_shot_is_made_again_next_time() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-standin-{}", std::process::id()));
+        let job = Job::new(&root, "stand ins");
+        std::fs::create_dir_all(job.shots_dir()).unwrap();
+        for stem in ["c01s01_1", "c01s01_2"] {
+            std::fs::write(job.shots_dir().join(format!("{stem}.png")), b"x").unwrap();
+        }
+        job.remember_stand_ins(&["c01s01_2".to_owned()]).unwrap();
+        job.forget_stand_ins();
+        assert!(job.shots_dir().join("c01s01_1.png").exists());
+        assert!(!job.shots_dir().join("c01s01_2.png").exists());
+        assert!(!job.stand_ins().exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn a_job_folder_is_named_after_the_video() {
