@@ -163,10 +163,7 @@ impl MonitorPane {
                         .host
                         .monitor
                         .texture_of(&sources, spec)
-                        .and_then(|texture| {
-                            slint::Image::try_from(texture)
-                                .map_err(|error| format!("preview texture: {error}"))
-                        }),
+                        .and_then(image_of),
                     Ok(Picture::Pixels(bytes, width, height)) => {
                         let buffer =
                             slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
@@ -295,6 +292,20 @@ impl MonitorPane {
             },
         );
     }
+}
+
+/// A composited frame as the window draws it: the texture itself, on the
+/// device the window renders on.
+#[cfg(not(target_os = "android"))]
+fn image_of(texture: wgpu::Texture) -> Result<slint::Image, String> {
+    slint::Image::try_from(texture).map_err(|error| format!("preview texture: {error}"))
+}
+
+/// Android's window shares no device with the engine and draws through
+/// OpenGL ES, not wgpu (gpu.rs), so a texture cannot be shown there.
+#[cfg(target_os = "android")]
+fn image_of(_texture: wgpu::Texture) -> Result<slint::Image, String> {
+    Err("preview texture: the window shares no GPU device on Android".to_owned())
 }
 
 #[cfg(test)]

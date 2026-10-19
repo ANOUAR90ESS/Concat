@@ -128,6 +128,7 @@ impl Gpu {
     }
 
     /// The device as Slint takes it.
+    #[cfg(not(target_os = "android"))]
     pub fn configuration(&self) -> slint::wgpu_30::WGPUConfiguration {
         slint::wgpu_30::WGPUConfiguration::Manual {
             instance: self.instance.clone(),
