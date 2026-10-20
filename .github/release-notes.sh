@@ -35,7 +35,7 @@ set -euo pipefail
 since="$1"
 until="$2"
 version="$3"
-title="Concat $version"
+title="LongCut $version"
 
 # A conventional-commit type, with its optional (scope) and breaking `!`.
 type='^[a-z0-9]+(\([^)]*\))?!?: '
@@ -83,10 +83,10 @@ if [ -n "$changes" ]; then
 fi
 caveats=()
 if [ "${WINDOWS_SIGNED:-true}" = false ]; then
-  caveats+=("- **Windows:** this release is not code-signed yet. SmartScreen asks before it runs: **More info** › **Run anyway**. Where Smart App Control is on, Windows refuses unsigned programs; see the [code signing policy](https://github.com/jub0t/concat/blob/main/CODE_SIGNING.md).")
+  caveats+=("- **Windows:** this release is not code-signed yet. SmartScreen asks before it runs: **More info** › **Run anyway**. Where Smart App Control is on, Windows refuses unsigned programs; see the [code signing policy](https://github.com/ANOUAR90ESS/Concat/blob/main/CODE_SIGNING.md).")
 fi
 if [ "${ANDROID_STARTED:-true}" = false ]; then
-  caveats+=("- **Android:** no automated check has started this APK: CI's emulators run x86_64 and it is built for arm64. If it does not open on your phone, [say so](https://github.com/jub0t/concat/issues).")
+  caveats+=("- **Android:** no automated check has started this APK: CI's emulators run x86_64 and it is built for arm64. If it does not open on your phone, [say so](https://github.com/ANOUAR90ESS/Concat/issues).")
 fi
 if [ "${#caveats[@]}" -gt 0 ]; then
   echo "### Before you install"
@@ -97,7 +97,7 @@ fi
 cat <<'MD'
 ### Download
 
-A self-contained build for every platform Concat ships on.
+A self-contained build for every platform LongCut ships on.
 
 | | Apple silicon | Intel / x86_64 | arm64 |
 |---|---|---|---|
