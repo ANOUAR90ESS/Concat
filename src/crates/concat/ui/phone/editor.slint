@@ -648,6 +648,13 @@ export component PhoneEditor inherits Rectangle {
             width: parent.width;
             height: parent.height - 1px;
 
+            // First: the idea in, a cut timeline out. On the desk it is a
+            // row of the menu, which a phone has no bar for.
+            ToolItem {
+                glyph: Glyph.sparkle;
+                label: I18n.t("generate.longVideo");
+                clicked => { Editor.long-video(); }
+            }
             ToolItem {
                 glyph: Glyph.film;
                 label: I18n.t("common.media");

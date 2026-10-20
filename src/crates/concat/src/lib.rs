@@ -1655,6 +1655,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     editor.on_speak(on_window!(|state| {
         state.handle(Msg::Speech(SpeechMsg::Open));
     }));
+    editor.on_long_video(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::Open));
+    }));
 
     app.on_captions_closed(on_window!(|state| {
         state.handle(Msg::Captions(CaptionsMsg::Close));
