@@ -99,14 +99,16 @@ collect() {
     wait "$logcat_pid" 2>/dev/null
     logcat_pid=""
   fi
-  adb exec-out screencap -p > "$out/screen.png" 2>/dev/null || rm -f "$out/screen.png"
+  # Each under a limit: a device that stopped answering would otherwise
+  # hold the way out until the step's own timeout, with nothing written.
+  limit 30 adb exec-out screencap -p > "$out/screen.png" 2>/dev/null || rm -f "$out/screen.png"
   {
-    adb shell dumpsys activity activities 2>/dev/null | grep -i 'ResumedActivity'
-    adb shell dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp'
+    limit 30 adb shell dumpsys activity activities 2>/dev/null | grep -i 'ResumedActivity'
+    limit 30 adb shell dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp'
   } | tr -d '\r' > "$out/focus.txt"
-  adb shell getprop > "$out/getprop.txt" 2>/dev/null
+  limit 30 adb shell getprop > "$out/getprop.txt" 2>/dev/null
   # Tombstones for a native crash, where the device lets them be read.
-  adb logcat -d -b crash -v threadtime > "$out/logcat-crash.txt" 2>/dev/null
+  limit 30 adb logcat -d -b crash -v threadtime > "$out/logcat-crash.txt" 2>/dev/null
   if [ -f "$logcat_file" ]; then
     grep -E ' concat +:' "$logcat_file" > "$out/concat.txt" || true
   fi
@@ -196,6 +198,7 @@ started=$(limit 180 adb shell am start -W -n "$activity" 2>&1 | tr -d '\r') \
   || fail "am start did not return within 180s"
 printf '%s\n' "$started"
 grep -q '^Status: ok' <<< "$started" || fail "am start did not report the launch as ok"
+launched=$SECONDS
 
 # The lines that mean the start-up failed, wherever they come from: the
 # runtime's crash report, the C library's on a fatal signal, Rust's on a
@@ -217,7 +220,16 @@ fatal+='| concat +: ([A-Za-z0-9_:]+: )?(preview: |could not start|close: event l
 pids=""
 running=""
 app_pids() {
-  running=$(adb shell pidof "$package" 2>/dev/null | tr -d '\r' || true)
+  # Under a limit: an emulator that froze once the app started (API 30
+  # did, after its first frames) held this call until the step's timeout,
+  # thirty minutes with nothing said. A limit that runs out is the device
+  # gone silent, not the app gone.
+  local status=0
+  running=$(limit 30 adb shell pidof "$package" 2>/dev/null) || status=$?
+  if [ "$status" = 142 ]; then
+    fail "the device stopped answering adb $((SECONDS - launched))s after the launch (the emulator froze; see logcat.txt for the app's last lines)"
+  fi
+  running=$(tr -d '\r' <<< "$running")
   pids=$(
     {
       sed -n "s/.*Start proc \([0-9][0-9]*\):$package\/.*/\1/p" "$logcat_file"

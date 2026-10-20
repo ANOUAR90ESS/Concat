@@ -289,6 +289,16 @@ jobs:
       fail-fast: false
       matrix:
         api: [30, 35]
+        # How the emulator draws the guest's GL: SwiftShader on the host
+        # (swiftshader_indirect) for API 35. API 30's image froze under it
+        # once the app drew its window over OpenGL ES, the only API that
+        # image offers it (it has no Vulkan), so API 30 draws through ANGLE
+        # over SwiftShader (swangle_indirect), the emulator's newer path.
+        include:
+          - api: 30
+            gpu: swangle_indirect
+          - api: 35
+            gpu: swiftshader_indirect
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -328,7 +338,7 @@ jobs:
           ram-size: 4096M
           disk-size: 6G
           emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none -camera-front none
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           script: scripts/ci/smoke-android.sh --out smoke-android --wait 60 apk/LongCut-*.apk
 
