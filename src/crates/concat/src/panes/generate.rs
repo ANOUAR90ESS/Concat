@@ -14,14 +14,16 @@
 //!
 //! See `concat_generate` for the steps themselves.
 
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use concat_generate::budget;
 use concat_generate::job::{Job, Made, Step};
 use concat_generate::plan::{self, Editing, Options};
 use concat_generate::providers::{Shots, Voice};
-use concat_generate::storyboard::Storyboard;
+use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{self, Brief, Writing};
 use concat_project::Command;
 use concat_project::model::MediaKind;
@@ -33,7 +35,7 @@ use crate::panes::Msg;
 use crate::panes::export::ExportMsg;
 use crate::panes::settings::installed;
 use crate::studio::Studio;
-use crate::ui::GenerateSheetData;
+use crate::ui::{GenerateSheetData, ScriptRow, ScriptSheetData};
 
 /// The lengths offered, in minutes, row for row with the sheet's list.
 const MINUTES: [f64; 8] = [1.0, 3.0, 5.0, 10.0, 15.0, 20.0, 30.0, 60.0];
@@ -55,6 +57,11 @@ const LANGUAGES: [&str; 10] = [
 ];
 /// The frames offered.
 const ASPECTS: [&str; 3] = ["16:9", "9:16", "1:1"];
+/// The shares of shots made as clips, row for row with the sheet's list.
+const CLIP_SHARES: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+/// The row a first opening starts on: a quarter of the shots clips, the
+/// rest stills - clips cost several times what a still does.
+const DEFAULT_CLIPS: usize = 1;
 /// The Kokoro speaker a read starts with when none has been chosen.
 const DEFAULT_SPEAKER: i32 = 3;
 /// The input a Replicate model is sent when nothing else is known about it.
@@ -78,6 +85,19 @@ pub enum GenerateMsg {
     Create,
     /// Show the job's folder in the file manager.
     OpenFolder,
+    /// Open the script editor on the storyboard.
+    EditScript,
+    /// Close it, writing the storyboard back.
+    CloseScript,
+    /// A text of the script changed: chapter, scene and shot (-1 where the
+    /// row is none) and which text; see the editor's `edited`.
+    ScriptEdited(i32, i32, i32, i32, String),
+    /// A shot made a clip, or a still.
+    ShotKindChanged(i32, i32, i32, bool),
+    /// Write one scene again.
+    RewriteScene(i32, i32),
+    /// The writer is done with a scene.
+    Rewritten(usize, usize, Box<Result<Scene, String>>),
     Cancel,
     /// A worker saying where it is: `0..=1`, and in words.
     Progress(f32, String),
@@ -104,6 +124,22 @@ pub struct GeneratePane {
     /// The storyboard already in the job's folder, read when the sheet
     /// opens and whenever the idea changes.
     board: Option<Storyboard>,
+    /// The shots whose pictures read as ones already used, by stem:
+    /// worked out when the storyboard changes, not on every publish.
+    repeats: HashSet<String>,
+    /// The script editor is showing.
+    pub script_open: bool,
+    /// The scene being written again, if one is.
+    rewriting: Option<(usize, usize)>,
+    /// Why the last rewrite failed.
+    script_message: String,
+    /// The storyboard has edits the file does not have yet.
+    dirty: bool,
+    /// What the edits made stale: scenes whose narration changed and shots
+    /// whose picture did, by id and stem, removed from the job's folder
+    /// when the storyboard is written so the next run makes them again.
+    stale_voices: BTreeSet<String>,
+    stale_shots: BTreeSet<String>,
     /// Asked between files by the running worker.
     stop: Arc<AtomicBool>,
 }
@@ -123,6 +159,13 @@ impl Default for GeneratePane {
             stage: String::new(),
             message: String::new(),
             board: None,
+            repeats: HashSet::new(),
+            script_open: false,
+            rewriting: None,
+            script_message: String::new(),
+            dirty: false,
+            stale_voices: BTreeSet::new(),
+            stale_shots: BTreeSet::new(),
             stop: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -141,7 +184,10 @@ impl GeneratePane {
                 }
                 self.look(studio);
             }
-            GenerateMsg::Close => self.open = false,
+            GenerateMsg::Close => {
+                self.keep(studio);
+                self.open = false;
+            }
             GenerateMsg::TextEdited(field, text) => {
                 let prefs = &mut studio.prefs.generate;
                 match field {
@@ -180,6 +226,7 @@ impl GeneratePane {
                         self.music = index;
                         return;
                     }
+                    6 => prefs.clips = Some(index.min(CLIP_SHARES.len() - 1)),
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -194,10 +241,60 @@ impl GeneratePane {
                 _ => {}
             },
             GenerateMsg::WriteScript => self.write(studio, false),
-            GenerateMsg::Create => match self.board.clone() {
-                Some(board) => self.make(studio, board),
-                None => self.write(studio, true),
-            },
+            GenerateMsg::Create => {
+                self.keep(studio);
+                match self.board.clone() {
+                    Some(board) => self.make(studio, board),
+                    None => self.write(studio, true),
+                }
+            }
+            GenerateMsg::EditScript => {
+                if self.board.is_some() {
+                    self.script_open = true;
+                    self.script_message.clear();
+                }
+            }
+            GenerateMsg::CloseScript => {
+                self.keep(studio);
+                self.script_open = false;
+            }
+            GenerateMsg::ScriptEdited(chapter, scene, shot, field, text) => {
+                self.edit(chapter, scene, shot, field, text);
+            }
+            GenerateMsg::ShotKindChanged(chapter, scene, shot, video) => {
+                if let Some((stem, found)) = self.shot_mut(chapter, scene, shot) {
+                    found.kind = if video {
+                        ShotKind::Video
+                    } else {
+                        ShotKind::Image
+                    };
+                    self.stale_shots.insert(stem);
+                    self.dirty = true;
+                }
+            }
+            GenerateMsg::RewriteScene(chapter, scene) => self.rewrite(studio, chapter, scene),
+            GenerateMsg::Rewritten(chapter, scene, result) => {
+                self.rewriting = None;
+                match *result {
+                    Ok(new) => {
+                        if let Some(board) = self.board.as_mut()
+                            && let Some(old) = board
+                                .chapters
+                                .get_mut(chapter)
+                                .and_then(|c| c.scenes.get_mut(scene))
+                        {
+                            self.stale_voices.insert(old.id.clone());
+                            for n in 0..old.shots.len().max(new.shots.len()) {
+                                self.stale_shots.insert(shot_stem(&old.id, n));
+                            }
+                            *old = new;
+                            self.dirty = true;
+                            self.changed();
+                        }
+                    }
+                    Err(error) => self.script_message = error,
+                }
+            }
             GenerateMsg::OpenFolder => {
                 if let Some(job) = self.job(studio)
                     && let Err(error) = crate::platform::reveal(&job.storyboard().to_string_lossy())
@@ -221,6 +318,8 @@ impl GeneratePane {
                 match *result {
                     Ok(board) => {
                         self.board = Some(board.clone());
+                        self.dirty = false;
+                        self.changed();
                         if then_make {
                             self.make(studio, board);
                         }
@@ -257,6 +356,203 @@ impl GeneratePane {
             .job(studio)
             .filter(|_| !self.topic.trim().is_empty())
             .and_then(|job| Storyboard::read(&job.storyboard()).ok());
+        self.dirty = false;
+        self.stale_voices.clear();
+        self.stale_shots.clear();
+        self.changed();
+    }
+
+    /// Works out again what follows from the storyboard: which shots repeat.
+    fn changed(&mut self) {
+        self.repeats = self
+            .board
+            .as_ref()
+            .map(|board| {
+                board
+                    .repeats()
+                    .into_iter()
+                    .map(|(_, later)| later)
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+
+    /// Writes the edited storyboard back to the job's folder, and removes
+    /// what the edits made stale, so the next run makes it again.
+    fn keep(&mut self, studio: &mut Studio) {
+        if !self.dirty {
+            return;
+        }
+        let Some(job) = self.job(studio) else {
+            return;
+        };
+        let Some(board) = self.board.as_mut() else {
+            return;
+        };
+        match board.tidy().and_then(|()| job.keep(board)) {
+            Ok(()) => {
+                let voices: Vec<String> =
+                    std::mem::take(&mut self.stale_voices).into_iter().collect();
+                let shots: Vec<String> =
+                    std::mem::take(&mut self.stale_shots).into_iter().collect();
+                job.forget(&voices, &shots);
+                self.dirty = false;
+            }
+            Err(error) => studio.notify(&error, true),
+        }
+        self.changed();
+    }
+
+    /// The shot `shot` of `scene` of `chapter`, with its stem.
+    fn shot_mut(
+        &mut self,
+        chapter: i32,
+        scene: i32,
+        shot: i32,
+    ) -> Option<(String, &mut concat_generate::storyboard::Shot)> {
+        let scene = self
+            .board
+            .as_mut()?
+            .chapters
+            .get_mut(usize::try_from(chapter).ok()?)?
+            .scenes
+            .get_mut(usize::try_from(scene).ok()?)?;
+        let n = usize::try_from(shot).ok()?;
+        let stem = shot_stem(&scene.id, n);
+        scene.shots.get_mut(n).map(|found| (stem, found))
+    }
+
+    /// One text of the script changed; see the editor's `edited`.
+    fn edit(&mut self, chapter: i32, scene: i32, shot: i32, field: i32, text: String) {
+        if shot >= 0 {
+            let Some((stem, found)) = self.shot_mut(chapter, scene, shot) else {
+                return;
+            };
+            match field {
+                0 => found.prompt = text,
+                1 => found.motion = text,
+                _ => return,
+            }
+            self.stale_shots.insert(stem);
+            self.dirty = true;
+            if field == 0 {
+                self.changed();
+            }
+            return;
+        }
+        let Some(board) = self.board.as_mut() else {
+            return;
+        };
+        let Some(found) = usize::try_from(chapter)
+            .ok()
+            .and_then(|c| board.chapters.get_mut(c))
+        else {
+            return;
+        };
+        if scene < 0 {
+            match field {
+                0 => found.title = text,
+                1 => {
+                    // A new mood is a new look for every shot of the chapter.
+                    found.mood = text;
+                    for scene in &found.scenes {
+                        for n in 0..scene.shots.len() {
+                            self.stale_shots.insert(shot_stem(&scene.id, n));
+                        }
+                    }
+                }
+                2 => found.summary = text,
+                _ => return,
+            }
+            self.dirty = true;
+            return;
+        }
+        let Some(found) = usize::try_from(scene)
+            .ok()
+            .and_then(|s| found.scenes.get_mut(s))
+        else {
+            return;
+        };
+        match field {
+            0 => {
+                found.narration = text;
+                self.stale_voices.insert(found.id.clone());
+            }
+            1 => {
+                found.voice = text;
+                self.stale_voices.insert(found.id.clone());
+            }
+            2 => {
+                found.on_screen_text = Some(text).filter(|text| !text.trim().is_empty());
+            }
+            _ => return,
+        }
+        self.dirty = true;
+    }
+
+    /// The brief the sheet's choices make.
+    fn brief(&self, studio: &Studio) -> Brief {
+        let prefs = &studio.prefs.generate;
+        Brief {
+            topic: self.topic.trim().to_owned(),
+            minutes: MINUTES[self.minutes.min(MINUTES.len() - 1)],
+            language: LANGUAGES[prefs.language.min(LANGUAGES.len() - 1)].to_owned(),
+            aspect: ASPECTS[prefs.aspect.min(ASPECTS.len() - 1)].to_owned(),
+            notes: self.notes.clone(),
+            clip_share: CLIP_SHARES[self.clips_row(studio)],
+        }
+    }
+
+    /// Row of the clips list.
+    fn clips_row(&self, studio: &Studio) -> usize {
+        studio
+            .prefs
+            .generate
+            .clips
+            .unwrap_or(DEFAULT_CLIPS)
+            .min(CLIP_SHARES.len() - 1)
+    }
+
+    /// Asks Claude for one scene again, on a worker.
+    fn rewrite(&mut self, studio: &mut Studio, chapter: i32, scene: i32) {
+        let (Ok(chapter), Ok(scene)) = (usize::try_from(chapter), usize::try_from(scene)) else {
+            return;
+        };
+        let Some(board) = self.board.clone() else {
+            return;
+        };
+        if self.rewriting.is_some() {
+            return;
+        }
+        let key = studio.prefs.generate.anthropic_key.clone();
+        if key.trim().is_empty() {
+            self.script_message = t("generate.needAnthropicKey");
+            return;
+        }
+        self.script_message.clear();
+        self.rewriting = Some((chapter, scene));
+        let brief = self.brief(studio);
+        spawn_in_project(
+            move || {
+                writer::rewrite_scene(
+                    &board,
+                    &brief,
+                    chapter,
+                    scene,
+                    "",
+                    false,
+                    &key,
+                    writer::DEFAULT_MODEL,
+                )
+            },
+            move |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::Rewritten(
+                    chapter,
+                    scene,
+                    Box::new(result),
+                )))
+            },
+        );
     }
 
     /// Asks Claude for the storyboard on a worker; `then_make` goes on to
@@ -272,13 +568,7 @@ impl GeneratePane {
             return;
         }
         let Some(job) = self.job(studio) else { return };
-        let brief = Brief {
-            topic: self.topic.trim().to_owned(),
-            minutes: MINUTES[self.minutes.min(MINUTES.len() - 1)],
-            language: LANGUAGES[prefs.language.min(LANGUAGES.len() - 1)].to_owned(),
-            aspect: ASPECTS[prefs.aspect.min(ASPECTS.len() - 1)].to_owned(),
-            notes: self.notes.clone(),
-        };
+        let brief = self.brief(studio);
         self.begin(t("generate.writingOutline"));
         let epoch = crate::host::project_epoch();
         spawn_in_project(
@@ -502,21 +792,36 @@ impl GeneratePane {
             } else {
                 format!("{minutes:.0}")
             };
+            let (clips, stills) = board.kinds();
             tf(
                 "generate.scriptReady",
                 &[
                     &board.title,
                     &board.scenes().count(),
-                    &board.shot_count(),
+                    &clips,
+                    &stills,
                     &minutes,
                 ],
             )
         });
+        let totals = budget::budget(&self.brief(studio).pacing()).totals();
         GenerateSheetData {
             open: self.open,
             topic: self.topic.as_str().into(),
             notes: self.notes.as_str().into(),
             minutes: self.minutes as i32,
+            clips: self.clips_row(studio) as i32,
+            budget: tf(
+                "generate.budget",
+                &[
+                    &totals.chapters,
+                    &totals.scenes,
+                    &totals.clips,
+                    &totals.stills,
+                    &totals.words,
+                ],
+            )
+            .into(),
             language: prefs.language as i32,
             aspect: prefs.aspect as i32,
             voice: self.voice_row(studio) as i32,
@@ -538,6 +843,107 @@ impl GeneratePane {
             stage: self.stage.as_str().into(),
             message: self.message.as_str().into(),
         }
+    }
+}
+
+impl GeneratePane {
+    /// The script editor as Slint shows it.
+    pub fn script_data(&self, studio: &Studio) -> ScriptSheetData {
+        let Some(board) = self.board.as_ref().filter(|_| self.script_open) else {
+            return ScriptSheetData::default();
+        };
+        let (clips, stills) = board.kinds();
+        let minutes = board.seconds() / 60.0;
+        let planned = budget::budget(&self.brief(studio).pacing()).totals();
+        ScriptSheetData {
+            open: true,
+            summary: tf(
+                "script.summary",
+                &[
+                    &board.title,
+                    &format!("{minutes:.1}"),
+                    &board.chapters.len(),
+                    &board.scenes().count(),
+                    &clips,
+                    &stills,
+                    &board.words(),
+                ],
+            )
+            .into(),
+            planned: tf(
+                "script.planned",
+                &[
+                    &MINUTES[self.minutes.min(MINUTES.len() - 1)],
+                    &planned.scenes,
+                    &planned.clips,
+                    &planned.stills,
+                ],
+            )
+            .into(),
+            warning: if self.repeats.is_empty() {
+                SharedString::default()
+            } else {
+                tf("script.repeats", &[&self.repeats.len()]).into()
+            },
+            message: self.script_message.as_str().into(),
+        }
+    }
+
+    /// The script editor's rows: each chapter, then its scenes, each scene
+    /// then its shots.
+    pub fn script_rows(&self) -> Vec<ScriptRow> {
+        let Some(board) = self.board.as_ref().filter(|_| self.script_open) else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        for (c, chapter) in board.chapters.iter().enumerate() {
+            rows.push(ScriptRow {
+                kind: 0,
+                chapter: c as i32,
+                scene: -1,
+                shot: -1,
+                label: tf("script.chapter", &[&(c + 1)]).into(),
+                text: chapter.title.as_str().into(),
+                detail: chapter.mood.as_str().into(),
+                extra: chapter.summary.as_str().into(),
+                ..ScriptRow::default()
+            });
+            for (s, scene) in chapter.scenes.iter().enumerate() {
+                rows.push(ScriptRow {
+                    kind: 1,
+                    chapter: c as i32,
+                    scene: s as i32,
+                    shot: -1,
+                    label: format!("{} · {:.0} s", scene.id, scene.seconds).into(),
+                    text: scene.narration.as_str().into(),
+                    detail: scene.voice.as_str().into(),
+                    extra: scene.on_screen_text.as_deref().unwrap_or_default().into(),
+                    busy: self.rewriting == Some((c, s)),
+                    ..ScriptRow::default()
+                });
+                for (n, shot) in scene.shots.iter().enumerate() {
+                    let stem = shot_stem(&scene.id, n);
+                    rows.push(ScriptRow {
+                        kind: 2,
+                        chapter: c as i32,
+                        scene: s as i32,
+                        shot: n as i32,
+                        label: format!(
+                            "{} · {:.1} s",
+                            tf("script.shot", &[&(n + 1)]),
+                            shot.seconds
+                        )
+                        .into(),
+                        text: shot.prompt.as_str().into(),
+                        detail: shot.motion.as_str().into(),
+                        video: shot.kind == ShotKind::Video,
+                        repeat: self.repeats.contains(&stem),
+                        ..ScriptRow::default()
+                    });
+                }
+            }
+        }
+        rows
     }
 }
 

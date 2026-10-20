@@ -339,6 +339,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         app.set_speech_sample_waves(ModelRc::from(models.speech_sample_waves.clone()));
         app.set_speech_sample_details(ModelRc::from(models.speech_sample_details.clone()));
         app.set_generate_music(ModelRc::from(models.generate_music.clone()));
+        app.set_script_rows(ModelRc::from(models.script_rows.clone()));
         app.set_app_menu_items(ModelRc::from(models.bar.clone()));
         app.set_transcribers(ModelRc::from(models.transcribers.clone()));
         app.set_voices(ModelRc::from(models.voices.clone()));
@@ -1752,6 +1753,33 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     }));
     app.on_generate_open_folder(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::OpenFolder));
+    }));
+    app.on_generate_edit_script(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::EditScript));
+    }));
+    app.on_script_closed(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::CloseScript));
+    }));
+    app.on_script_edited(on_window!(
+        |state, chapter: i32, scene: i32, shot: i32, field: i32, text: SharedString| {
+            state.handle(Msg::Generate(GenerateMsg::ScriptEdited(
+                chapter,
+                scene,
+                shot,
+                field,
+                text.to_string(),
+            )));
+        }
+    ));
+    app.on_script_kind_changed(on_window!(
+        |state, chapter: i32, scene: i32, shot: i32, video: bool| {
+            state.handle(Msg::Generate(GenerateMsg::ShotKindChanged(
+                chapter, scene, shot, video,
+            )));
+        }
+    ));
+    app.on_script_rewrite(on_window!(|state, chapter: i32, scene: i32| {
+        state.handle(Msg::Generate(GenerateMsg::RewriteScene(chapter, scene)));
     }));
     app.on_generate_cancel(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::Cancel));

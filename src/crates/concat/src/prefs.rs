@@ -133,6 +133,8 @@ pub struct GeneratePrefs {
     pub voice: Option<usize>,
     /// Where shots come from: draft cards, Replicate, by hand.
     pub shots: usize,
+    /// Row of the clips list: the share of shots made as clips.
+    pub clips: Option<usize>,
 }
 
 impl Preferences {

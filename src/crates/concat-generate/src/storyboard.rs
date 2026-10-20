@@ -10,16 +10,24 @@
 //! {
 //!   "title": "...", "language": "ar", "aspect": "16:9",
 //!   "style": {"visual": "cinematic, 35mm, warm light", "voice": "calm"},
-//!   "chapters": [{"title": "...", "scenes": [
-//!     {"id": "c01s01", "narration": "...", "onScreenText": null,
-//!      "seconds": 8, "shots": [{"prompt": "what the camera sees"}]}
+//!   "chapters": [{"title": "...", "summary": "...", "mood": "cold dawn blues",
+//!     "scenes": [
+//!     {"id": "c01s01", "narration": "...", "voice": "hushed, curious",
+//!      "onScreenText": null, "seconds": 8, "shots": [
+//!        {"kind": "video", "prompt": "what the camera sees",
+//!         "motion": "slow push in", "seconds": 5},
+//!        {"kind": "image", "prompt": "...", "seconds": 3}]}
 //!   ]}]
 //! }
 //! ```
 //!
-//! A scene lasts as long as its narration takes to say, and its shots share
-//! that time. The visual style is appended to every shot's prompt, so a
-//! hundred shots generated one at a time still look like one film.
+//! Every scene carries the three things a generator is asked for: its
+//! narration and how it is said (the voice), and its shots, each a still
+//! (an image prompt) or a clip (the same picture, and how it moves). A
+//! scene lasts as long as its narration takes to say, and its shots share
+//! that time. The film's visual style is appended to every shot's prompt
+//! and the chapter's mood after it, so a hundred shots generated one at a
+//! time look like one film without every chapter looking the same.
 
 use serde::{Deserialize, Serialize};
 
@@ -63,6 +71,13 @@ pub struct Style {
 pub struct Chapter {
     /// The chapter's name.
     pub title: String,
+    /// What it covers, in a sentence: what the chapters after it are told,
+    /// so none of them says it again.
+    pub summary: String,
+    /// Its own light and palette inside the film's style - "cold dawn
+    /// blues", "dusty noon gold" - so a long video moves between looks
+    /// rather than holding one for an hour. Empty is the film's look alone.
+    pub mood: String,
     /// Its scenes, in order.
     pub scenes: Vec<Scene>,
 }
@@ -76,6 +91,9 @@ pub struct Scene {
     pub id: String,
     /// What the voice says over the scene.
     pub narration: String,
+    /// How it is said: pace, feeling, emphasis. A direction for the reader,
+    /// never read aloud.
+    pub voice: String,
     /// A title over the scene's start, if any.
     pub on_screen_text: Option<String>,
     /// How long the scene was written to last; its narration decides in
@@ -85,12 +103,31 @@ pub struct Scene {
     pub shots: Vec<Shot>,
 }
 
-/// One shot: a prompt for a text-to-video model.
+/// One shot: a picture, still or moving.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Shot {
-    /// What the camera sees, in English.
+    /// A still from an image model, or a clip from a video model.
+    pub kind: ShotKind,
+    /// What the camera sees, in English: the image prompt, and for a clip
+    /// the picture it starts from.
     pub prompt: String,
+    /// For a clip, how it moves: the camera and what moves in the frame.
+    /// Empty on a still.
+    pub motion: String,
+    /// How long the shot was planned to hold; 0 shares the scene evenly.
+    pub seconds: f64,
+}
+
+/// What a shot is made as.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShotKind {
+    /// A still, moved over by the cut.
+    #[default]
+    Image,
+    /// A clip.
+    Video,
 }
 
 impl Storyboard {
@@ -169,15 +206,70 @@ impl Storyboard {
             .unwrap_or((1920, 1080))
     }
 
-    /// The prompt a generator gets: the shot, then the film's look.
-    pub fn prompt(&self, shot: &Shot) -> String {
-        let prompt = shot.prompt.trim().trim_end_matches('.');
-        let style = self.style.visual.trim();
-        if style.is_empty() {
-            prompt.to_owned()
-        } else {
-            format!("{prompt}. {style}")
+    /// How many shots are clips, and how many stills.
+    pub fn kinds(&self) -> (usize, usize) {
+        let clips = self
+            .scenes()
+            .flat_map(|scene| scene.shots.iter())
+            .filter(|shot| shot.kind == ShotKind::Video)
+            .count();
+        (clips, self.shot_count() - clips)
+    }
+
+    /// How many words the narration has, all told.
+    pub fn words(&self) -> usize {
+        self.scenes()
+            .map(|scene| scene.narration.split_whitespace().count())
+            .sum()
+    }
+
+    /// The image prompt: the shot, then the film's look, then the
+    /// chapter's mood.
+    pub fn prompt(&self, chapter: &Chapter, shot: &Shot) -> String {
+        let mut parts = vec![shot.prompt.trim().trim_end_matches('.').to_owned()];
+        for extra in [self.style.visual.trim(), chapter.mood.trim()] {
+            if !extra.is_empty() {
+                parts.push(extra.trim_end_matches('.').to_owned());
+            }
         }
+        parts.join(". ")
+    }
+
+    /// The video prompt: the picture, how it moves, then the look.
+    pub fn video_prompt(&self, chapter: &Chapter, shot: &Shot) -> String {
+        let motion = shot.motion.trim().trim_end_matches('.');
+        if motion.is_empty() {
+            return self.prompt(chapter, shot);
+        }
+        let mut with_motion = shot.clone();
+        with_motion.prompt = format!("{}. {motion}", shot.prompt.trim().trim_end_matches('.'));
+        self.prompt(chapter, &with_motion)
+    }
+
+    /// Pairs of shots whose pictures are near enough alike to read as the
+    /// same shot twice, by their ids ("c01s02_1"). A long video written a
+    /// chapter at a time drifts back to the shots it has already used; this
+    /// is how that is caught.
+    pub fn repeats(&self) -> Vec<(String, String)> {
+        let shots: Vec<(String, std::collections::HashSet<String>)> = self
+            .scenes()
+            .flat_map(|scene| {
+                scene
+                    .shots
+                    .iter()
+                    .enumerate()
+                    .map(|(n, shot)| (shot_stem(&scene.id, n), content_words(&shot.prompt)))
+            })
+            .collect();
+        let mut pairs = Vec::new();
+        for (i, (a, words_a)) in shots.iter().enumerate() {
+            for (b, words_b) in &shots[i + 1..] {
+                if alike(words_a, words_b) {
+                    pairs.push((a.clone(), b.clone()));
+                }
+            }
+        }
+        pairs
     }
 
     /// Markdown: every shot's prompt under its scene, with the name its file
@@ -195,13 +287,51 @@ impl Storyboard {
                 if !scene.narration.is_empty() {
                     out += &format!("> {}\n\n", scene.narration);
                 }
+                if !scene.voice.trim().is_empty() {
+                    out += &format!("Voice: {}\n\n", scene.voice.trim());
+                }
                 for (n, shot) in scene.shots.iter().enumerate() {
-                    out += &format!("- `{}`: {}\n", shot_stem(&scene.id, n), self.prompt(shot));
+                    let stem = shot_stem(&scene.id, n);
+                    out += &match shot.kind {
+                        ShotKind::Image => {
+                            format!("- `{stem}` image: {}\n", self.prompt(chapter, shot))
+                        }
+                        ShotKind::Video => {
+                            format!("- `{stem}` video: {}\n", self.video_prompt(chapter, shot))
+                        }
+                    };
                 }
             }
         }
         out
     }
+}
+
+/// Words too common to tell two pictures apart.
+const COMMON: &[&str] = &[
+    "a", "an", "the", "of", "in", "on", "at", "to", "and", "with", "from", "by", "over", "under",
+    "into", "its", "his", "her", "their", "is", "are", "shot", "camera", "frame", "framing",
+    "light", "lit", "wide", "medium", "close", "closeup", "up", "view", "angle", "slow",
+];
+
+/// A prompt's telling words: lower case, no punctuation, no [`COMMON`].
+fn content_words(prompt: &str) -> std::collections::HashSet<String> {
+    prompt
+        .split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .filter(|word| word.len() > 2 && !COMMON.contains(&word.as_str()))
+        .collect()
+}
+
+/// Two pictures alike: most of the smaller one's telling words are the
+/// other's too. Prompts too short to judge never match.
+fn alike(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<String>) -> bool {
+    let smaller = a.len().min(b.len());
+    if smaller < 4 {
+        return false;
+    }
+    let shared = a.intersection(b).count();
+    shared as f64 / smaller as f64 >= 0.75
 }
 
 /// The name, without extension, a scene's `n`th shot (from 0) is saved as.
@@ -233,13 +363,56 @@ mod tests {
     }
 
     #[test]
-    fn the_style_rides_on_every_prompt() {
+    fn the_style_and_the_mood_ride_on_every_prompt() {
+        let mut board = board();
+        let chapter = board.chapters[0].clone();
+        let shot = &chapter.scenes[0].shots[0];
+        assert_eq!(board.prompt(&chapter, shot), "a dune. warm light");
+        board.chapters[0].mood = "dusk violet".into();
+        board.chapters[0].scenes[0].shots[0].kind = ShotKind::Video;
+        board.chapters[0].scenes[0].shots[0].motion = "slow push in.".into();
+        let chapter = board.chapters[0].clone();
+        let shot = &chapter.scenes[0].shots[0];
+        assert_eq!(
+            board.video_prompt(&chapter, shot),
+            "a dune. slow push in. warm light. dusk violet"
+        );
+        board.tidy().unwrap();
+        let sheet = board.prompt_sheet();
+        assert!(
+            sheet.contains("`c01s01_1` video: a dune. slow push in."),
+            "{sheet}"
+        );
+        assert!(
+            sheet.contains("`c01s01_2` image: b. warm light. dusk violet"),
+            "{sheet}"
+        );
+        assert_eq!(board.kinds(), (1, 2));
+    }
+
+    #[test]
+    fn an_old_storyboard_reads_as_stills() {
         let board = board();
         let shot = &board.chapters[0].scenes[0].shots[0];
-        assert_eq!(board.prompt(shot), "a dune. warm light");
-        let mut tidy = board.clone();
-        tidy.tidy().unwrap();
-        assert!(tidy.prompt_sheet().contains("`c01s01_2`: b. warm light"));
+        assert_eq!(shot.kind, ShotKind::Image);
+        assert!(shot.motion.is_empty());
+        assert!(board.chapters[0].scenes[0].voice.is_empty());
+    }
+
+    #[test]
+    fn a_shot_written_twice_is_caught() {
+        let mut board = board();
+        board.chapters[0].scenes[0].shots[0].prompt =
+            "aerial view of red sandstone ruins at the edge of a dry riverbed".into();
+        board.chapters[0].scenes[1].shots[0].prompt =
+            "wide aerial shot over red sandstone ruins beside a dry riverbed".into();
+        board.chapters[0].scenes[0].shots[1].prompt =
+            "a merchant's hands weighing saffron on a brass scale".into();
+        board.tidy().unwrap();
+        assert_eq!(
+            board.repeats(),
+            vec![("c01s01_1".to_owned(), "c01s02_1".to_owned())]
+        );
     }
 
     #[test]

@@ -607,6 +607,7 @@ pub struct Models {
     pub speech_sample_details: Rc<VecModel<SharedString>>,
     /// The Long video sheet's music beds: none, then the bin's recordings.
     pub generate_music: Rc<VecModel<SharedString>>,
+    pub script_rows: Rc<VecModel<crate::ui::ScriptRow>>,
     pub transcribers: Rc<VecModel<ModelData>>,
     pub voices: Rc<VecModel<ModelData>>,
     /// The Version page's releases, and beside each its day or that it
@@ -675,6 +676,7 @@ impl Models {
             speech_sample_waves: Rc::new(VecModel::default()),
             speech_sample_details: Rc::new(VecModel::default()),
             generate_music: Rc::new(VecModel::default()),
+            script_rows: Rc::new(VecModel::default()),
             transcribers: Rc::new(VecModel::default()),
             voices: Rc::new(VecModel::default()),
             versions: Rc::new(VecModel::default()),
@@ -9512,6 +9514,8 @@ impl Studio {
         app.set_speech(self.speech.data(self));
         sync(&models.generate_music, self.generate.music_rows(self));
         app.set_generate(self.generate.data(self));
+        sync(&models.script_rows, self.generate.script_rows());
+        app.set_script(self.generate.script_data(self));
         self.publish_source(app);
         editor.set_recording(self.voiceover.recording());
 

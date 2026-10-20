@@ -23,7 +23,7 @@ use concat_project::model::MediaKind;
 
 use crate::plan::SceneFiles;
 use crate::providers::{self, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
-use crate::storyboard::{Storyboard, shot_stem};
+use crate::storyboard::{ShotKind, Storyboard, shot_stem};
 
 /// One video's folder.
 #[derive(Clone, Debug, PartialEq)]
@@ -143,6 +143,24 @@ impl Job {
         self.dir.join("shots")
     }
 
+    /// Removes what was made for scenes and shots the script has changed
+    /// since: the narration of each of `voices` (scene ids) and each of
+    /// `shots` (shot stems), so the next run makes them from the new words.
+    pub fn forget(&self, voices: &[String], shots: &[String]) {
+        for (dir, names, extensions) in [
+            (self.voice_dir(), voices, &VOICE_EXTENSIONS[..]),
+            (self.shots_dir(), shots, &SHOT_EXTENSIONS[..]),
+        ] {
+            for name in names {
+                while let Some(path) = providers::existing(&dir, name, extensions) {
+                    if std::fs::remove_file(&path).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     /// Writes the storyboard and its prompt sheet.
     pub fn keep(&self, board: &Storyboard) -> Result<(), String> {
         std::fs::create_dir_all(&self.dir)
@@ -216,7 +234,11 @@ impl Job {
         let mut stand_ins = Vec::new();
         let mut stood_in = Vec::new();
         let mut n = 0;
-        for scene in board.scenes() {
+        for (chapter, scene) in board
+            .chapters
+            .iter()
+            .flat_map(|chapter| chapter.scenes.iter().map(move |scene| (chapter, scene)))
+        {
             for (index, shot) in scene.shots.iter().enumerate() {
                 n += 1;
                 let stem = shot_stem(&scene.id, index);
@@ -226,7 +248,12 @@ impl Job {
                 if stop() {
                     return Err("cancelled".to_owned());
                 }
-                let seconds = (scene.seconds / scene.shots.len() as f64).clamp(2.0, 10.0);
+                let seconds = if shot.seconds > 0.0 {
+                    shot.seconds
+                } else {
+                    scene.seconds / scene.shots.len() as f64
+                }
+                .clamp(2.0, 10.0);
                 match shots {
                     Shots::Folder => missing.push(stem),
                     Shots::Draft => {
@@ -240,18 +267,19 @@ impl Job {
                         video_input,
                     } => {
                         progress(Step::Shot { n, of: total });
-                        let prompt = board.prompt(shot);
-                        // The scene's opening shot moves, when there is a
+                        let prompt = board.prompt(chapter, shot);
+                        // A shot written as a clip moves, when there is a
                         // video model; a clip that cannot be made becomes a
                         // still rather than stopping the run.
                         let mut made = false;
-                        if index == 0 && !video_model.trim().is_empty() {
+                        if shot.kind == ShotKind::Video && !video_model.trim().is_empty() {
+                            let video_prompt = board.video_prompt(chapter, shot);
                             match providers::retry(|| {
                                 providers::replicate_video(
                                     token,
                                     video_model,
                                     video_input,
-                                    &prompt,
+                                    &video_prompt,
                                     seconds,
                                     &board.aspect,
                                     &shots_dir,
