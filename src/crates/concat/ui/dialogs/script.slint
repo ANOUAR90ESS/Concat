@@ -1,0 +1,317 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+
+import { ListView } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme/theme.slint";
+import { Glyph, Icon } from "../icons.slint";
+import { Button, Field, Modal } from "../primitives/modal.slint";
+import { SegmentedControl } from "../primitives/segmented-control.slint";
+
+// The script editor: the Long video sheet's storyboard, scene by scene,
+// before a shot is paid for.
+//
+// One list, three kinds of row. A chapter: its title, what it covers, and
+// its mood - its own light inside the film's look. A scene: its narration,
+// how the narrator says it, the title over its start, and Rewrite, which
+// asks the writer for the scene again in the same shape. A shot: still or
+// clip, its picture, and for a clip how it moves; a shot whose picture
+// reads as one already used says so. Every edit goes straight back to the
+// storyboard; the file is written when the editor closes.
+
+export struct ScriptRow {
+    /// 0 a chapter, 1 a scene, 2 a shot
+    kind: int,
+    /// Which chapter, scene and shot, from 0; -1 where the row is none.
+    chapter: int,
+    scene: int,
+    shot: int,
+    /// "Chapter 2", "c02s03 · 12 s", "Shot 1 · 4.6 s"
+    label: string,
+    /// The chapter's title, the scene's narration, the shot's picture.
+    text: string,
+    /// The chapter's mood, the scene's voice, the clip's motion.
+    detail: string,
+    /// What the chapter covers, the scene's title on screen.
+    extra: string,
+    /// A shot made as a clip.
+    video: bool,
+    /// A shot whose picture reads as one already used.
+    repeat: bool,
+    /// A scene being written again right now.
+    busy: bool,
+}
+
+export struct ScriptSheetData {
+    open: bool,
+    /// What the storyboard holds, in a line.
+    summary: string,
+    /// What the length was budgeted for, in a line.
+    planned: string,
+    /// Shots that repeat, in words; empty when none do.
+    warning: string,
+    /// Why the last rewrite failed, when it did.
+    message: string,
+}
+
+/// Several lines of text, edited in place, as tall as what it holds. Held
+/// apart from `value` the way `Field` is, so a republish mid-sentence does
+/// not move the caret.
+component Paragraph inherits Rectangle {
+    in property <string> value;
+    in property <string> placeholder;
+    in property <bool> large;
+    callback edited(text: string);
+
+    property <string> draft;
+    init => { root.draft = root.value; }
+    changed value => {
+        if (!input.has-focus) {
+            root.draft = root.value;
+        }
+    }
+
+    min-height: max(34px, input.preferred-height + 14px);
+    border-radius: Theme.r;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Colors.transparent;
+    clip: true;
+
+    TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
+
+    input := TextInput {
+        x: 9px;
+        y: 7px;
+        width: parent.width - 18px;
+        text <=> root.draft;
+        color: Theme.fg;
+        font-size: root.large ? Theme.fs-lg : Theme.fs;
+        single-line: false;
+        wrap: word-wrap;
+        selection-background-color: Theme.accent;
+        selection-foreground-color: Theme.on-accent;
+        edited => { root.edited(self.text); }
+    }
+
+    if root.draft == "" && !input.has-focus: Text {
+        x: 9px;
+        y: 7px;
+        width: parent.width - 18px;
+        text: root.placeholder;
+        color: Theme.fg-dim;
+        font-size: root.large ? Theme.fs-lg : Theme.fs;
+        wrap: word-wrap;
+    }
+}
+
+/// A small caption over a field.
+component Caption inherits Text {
+    color: Theme.fg-dim;
+    font-size: Theme.fs-sm;
+}
+
+export component ScriptDialog inherits Modal {
+    in property <ScriptSheetData> data;
+    in property <[ScriptRow]> rows;
+
+    /// Which text of the row: 0 its text, 1 its detail, 2 its extra.
+    callback edited(chapter: int, scene: int, shot: int, field: int, text: string);
+    callback kind-changed(chapter: int, scene: int, shot: int, video: bool);
+    callback rewrite(chapter: int, scene: int);
+
+    open: root.data.open;
+    title: I18n.t("script.title");
+    glyph: Glyph.text-mark;
+    surface-width: 760px;
+    surface-height: 760px;
+
+    VerticalLayout {
+        VerticalLayout {
+            padding: 14px;
+            padding-bottom: 10px;
+            spacing: 4px;
+
+            Text {
+                text: root.data.summary;
+                color: Theme.fg;
+                font-size: Theme.fs;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.data.planned;
+                color: Theme.fg-muted;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+            if root.data.warning != "": Text {
+                text: root.data.warning;
+                color: Theme.meter-mid;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+            if root.data.message != "": Text {
+                text: root.data.message;
+                color: Theme.danger;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.line;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+
+            for row in root.rows: VerticalLayout {
+                padding-left: row.kind == 2 ? 36px : 14px;
+                padding-right: 14px;
+                padding-top: row.kind == 0 ? 18px : 8px;
+                padding-bottom: 6px;
+                spacing: 6px;
+
+                // ── a chapter ──
+                if row.kind == 0: Text {
+                    text: row.label;
+                    color: Theme.accent;
+                    font-size: Theme.fs-sm;
+                    font-weight: 600;
+                }
+                if row.kind == 0: Field {
+                    value: row.text;
+                    edited(text) => { root.edited(row.chapter, -1, -1, 0, text); }
+                }
+                if row.kind == 0: Caption { text: I18n.t("script.covers"); }
+                if row.kind == 0: Paragraph {
+                    value: row.extra;
+                    edited(text) => { root.edited(row.chapter, -1, -1, 2, text); }
+                }
+                if row.kind == 0: Caption { text: I18n.t("script.mood"); }
+                if row.kind == 0: Field {
+                    value: row.detail;
+                    technical: true;
+                    edited(text) => { root.edited(row.chapter, -1, -1, 1, text); }
+                }
+
+                // ── a scene ──
+                if row.kind == 1: HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: row.label;
+                        color: Theme.fg-muted;
+                        font-family: Theme.font-technical;
+                        font-size: Theme.fs-sm;
+                        vertical-alignment: center;
+                    }
+                    Button {
+                        label: row.busy ? I18n.t("script.rewriting") : I18n.t("script.rewrite");
+                        glyph: Glyph.reset;
+                        ghost: true;
+                        enabled: !row.busy;
+                        clicked => { root.rewrite(row.chapter, row.scene); }
+                    }
+                }
+                if row.kind == 1: Paragraph {
+                    value: row.text;
+                    large: true;
+                    edited(text) => { root.edited(row.chapter, row.scene, -1, 0, text); }
+                }
+                if row.kind == 1: HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 3px;
+                        Caption { text: I18n.t("script.voice"); }
+                        Field {
+                            value: row.detail;
+                            technical: true;
+                            edited(text) => { root.edited(row.chapter, row.scene, -1, 1, text); }
+                        }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 3px;
+                        Caption { text: I18n.t("script.onScreen"); }
+                        Field {
+                            value: row.extra;
+                            edited(text) => { root.edited(row.chapter, row.scene, -1, 2, text); }
+                        }
+                    }
+                }
+
+                // ── a shot ──
+                if row.kind == 2: HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: row.label;
+                        color: Theme.fg-muted;
+                        font-family: Theme.font-technical;
+                        font-size: Theme.fs-sm;
+                        vertical-alignment: center;
+                    }
+                    SegmentedControl {
+                        width: 170px;
+                        options: [I18n.t("script.image"), I18n.t("script.video")];
+                        current: row.video ? 1 : 0;
+                        changed(index) => { root.kind-changed(row.chapter, row.scene, row.shot, index == 1); }
+                    }
+                    if row.repeat: HorizontalLayout {
+                        spacing: 4px;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon { glyph: Glyph.copy; size: 12px; tint: Theme.meter-mid; }
+                        }
+                        Text {
+                            text: I18n.t("script.repeat");
+                            color: Theme.meter-mid;
+                            font-size: Theme.fs-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                if row.kind == 2: Paragraph {
+                    value: row.text;
+                    placeholder: I18n.t("script.picture");
+                    edited(text) => { root.edited(row.chapter, row.scene, row.shot, 0, text); }
+                }
+                if row.kind == 2 && row.video: HorizontalLayout {
+                    spacing: 8px;
+                    Caption {
+                        text: I18n.t("script.motion");
+                        vertical-alignment: center;
+                    }
+                    Field {
+                        value: row.detail;
+                        technical: true;
+                        edited(text) => { root.edited(row.chapter, row.scene, row.shot, 1, text); }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.line;
+        }
+
+        HorizontalLayout {
+            padding: 14px;
+            alignment: end;
+            Button {
+                label: I18n.t("script.done");
+                glyph: Glyph.check;
+                primary: true;
+                large: true;
+                clicked => { root.closed(); }
+            }
+        }
+    }
+}

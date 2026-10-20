@@ -28,6 +28,11 @@ export struct GenerateSheetData {
     notes: string,
     /// Row of the minutes list.
     minutes: int,
+    /// Row of the clips list: none, a quarter, half, three quarters, all.
+    clips: int,
+    /// What the length and the mix come to before a word is written:
+    /// chapters, scenes and voice lines, video and image prompts, words.
+    budget: string,
     /// Row of the language list.
     language: int,
     /// 0 16:9, 1 9:16, 2 1:1
@@ -73,13 +78,14 @@ export component GenerateDialog inherits Modal {
     /// 7 Replicate image model.
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
-    /// 5 music.
+    /// 5 music, 6 clips.
     callback choice-changed(field: int, index: int);
     /// Which switch: 0 captions, 1 titles, 2 export when done.
     callback toggled(field: int, on: bool);
     callback write-script();
     callback create();
     callback open-folder();
+    callback edit-script();
     callback cancel();
 
     open: root.data.open;
@@ -178,6 +184,22 @@ export component GenerateDialog inherits Modal {
                         }
 
                         DialogRow {
+                            label: I18n.t("generate.clips");
+                            Select {
+                                options: [I18n.t("generate.clipsNone"), "25%", "50%", "75%", "100%"];
+                                current: root.data.clips;
+                                changed(index) => { root.choice-changed(6, index); }
+                            }
+                        }
+
+                        Text {
+                            text: root.data.budget;
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        DialogRow {
                             label: I18n.t("generate.language");
                             Select {
                                 options: ["العربية", "English", "Français", "Español", "Deutsch", "Türkçe", "Português", "Bahasa Indonesia", "हिन्दी", "اردو"];
@@ -210,6 +232,12 @@ export component GenerateDialog inherits Modal {
                                 font-size: Theme.fs-sm;
                                 vertical-alignment: center;
                                 wrap: word-wrap;
+                            }
+
+                            Button {
+                                label: I18n.t("generate.editScript");
+                                glyph: Glyph.text-mark;
+                                clicked => { root.edit-script(); }
                             }
 
                             Button {

@@ -8,8 +8,10 @@
 //! again, or its files replaced by hand, without the others noticing:
 //!
 //! 1. [`writer`]: Claude writes a [`storyboard::Storyboard`] chapter by
-//!    chapter - narration, on-screen titles, one text-to-video prompt per
-//!    shot - into the job's folder, with a prompt sheet beside it.
+//!    chapter, to the shape [`budget`] works out from the length - so many
+//!    scenes, each a line of narration with how it is said, and so many
+//!    shots, each a still's image prompt or a clip's picture and motion -
+//!    into the job's folder, with a prompt sheet beside it.
 //! 2. [`job::Job::make`]: the narration is read and the shots are made,
 //!    by the [`providers`] chosen: the window's own voices or ElevenLabs,
 //!    Replicate's video models, colour cards for a draft, or files made by
@@ -24,6 +26,7 @@
 //! The crate draws nothing. The window's Long video sheet is its face, and
 //! runs steps 1 and 2 on a worker and step 4 on the window's session.
 
+pub mod budget;
 pub mod job;
 pub mod plan;
 pub mod providers;
