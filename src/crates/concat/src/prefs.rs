@@ -135,6 +135,15 @@ pub struct GeneratePrefs {
     pub shots: usize,
     /// Row of the clips list: the share of shots made as clips.
     pub clips: Option<usize>,
+    /// The most one run may spend, in dollars, as typed; empty for no
+    /// limit.
+    pub spend_limit: String,
+    /// What one clip from the video model costs, as typed; empty for the
+    /// default model's.
+    pub clip_price: String,
+    /// What one still from the image model costs, as typed; empty for the
+    /// default model's.
+    pub image_price: String,
 }
 
 impl Preferences {

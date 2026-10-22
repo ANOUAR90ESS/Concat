@@ -9,6 +9,7 @@
 //!     prompts.md          every shot's prompt, for making shots by hand
 //!     voice/<scene>.*     the narration
 //!     shots/<scene>_<n>.* the shots
+//!     frames/<scene>_<n>.* the stills clips start from
 //! ```
 //!
 //! Every step skips a file that is already there, so a job stopped half
@@ -21,8 +22,9 @@ use std::path::{Path, PathBuf};
 use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
 
+use crate::cost::{Prices, Spend};
 use crate::plan::SceneFiles;
-use crate::providers::{self, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
+use crate::providers::{self, ModelInputs, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
 use crate::storyboard::{ShotKind, Storyboard, shot_stem};
 
 /// One video's folder.
@@ -64,6 +66,17 @@ pub struct Made {
     /// became a still, a still that became a colour card. Said once the
     /// video is done, so an unattended run finishes and says what it did.
     pub stand_ins: Vec<String>,
+    /// About what this run paid the services, in dollars.
+    pub spent: f64,
+}
+
+/// What a run may spend, and what each thing costs.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Costs {
+    /// What each thing costs.
+    pub prices: Prices,
+    /// The most a run may spend; None for no limit.
+    pub limit: Option<f64>,
 }
 
 impl Job {
@@ -143,13 +156,21 @@ impl Job {
         self.dir.join("shots")
     }
 
+    /// Where the stills clips start from go: apart from the shots, so a
+    /// clip not made yet is not taken for a still that is.
+    pub fn frames_dir(&self) -> PathBuf {
+        self.dir.join("frames")
+    }
+
     /// Removes what was made for scenes and shots the script has changed
     /// since: the narration of each of `voices` (scene ids) and each of
-    /// `shots` (shot stems), so the next run makes them from the new words.
+    /// `shots` (shot stems) - with the still a clip started from - so the
+    /// next run makes them from the new words.
     pub fn forget(&self, voices: &[String], shots: &[String]) {
         for (dir, names, extensions) in [
             (self.voice_dir(), voices, &VOICE_EXTENSIONS[..]),
             (self.shots_dir(), shots, &SHOT_EXTENSIONS[..]),
+            (self.frames_dir(), shots, &SHOT_EXTENSIONS[..]),
         ] {
             for name in names {
                 while let Some(path) = providers::existing(&dir, name, extensions) {
@@ -173,18 +194,23 @@ impl Job {
     /// Makes every narration and shot the job is missing, then probes them
     /// all. `speak` reads one scene's words into a file for
     /// [`Voice::BuiltIn`] and is not called otherwise; `stop` is asked
-    /// between files.
+    /// between files. Every paid call is counted against `costs`' limit
+    /// first, and the run stops at a call the limit does not cover.
+    #[allow(clippy::too_many_arguments)]
     pub fn make(
         &self,
         board: &Storyboard,
         voice: &Voice,
         shots: &Shots,
+        costs: &Costs,
         speak: &mut dyn FnMut(&str) -> Result<PathBuf, String>,
         progress: &mut dyn FnMut(Step),
         stop: &dyn Fn() -> bool,
     ) -> Result<Made, String> {
         let voice_dir = self.voice_dir();
         let shots_dir = self.shots_dir();
+        let mut spend = Spend::new(costs.limit);
+        let prices = &costs.prices;
         for dir in [&voice_dir, &shots_dir] {
             std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
         }
@@ -216,14 +242,20 @@ impl Job {
                         std::fs::copy(&made, &out)
                             .map_err(|error| format!("{}: {error}", out.display()))?;
                     }
-                    Voice::ElevenLabs { key, voice_id } => providers::retry(|| {
-                        providers::elevenlabs(
-                            key,
-                            voice_id,
-                            scene.narration.trim(),
-                            &voice_dir.join(format!("{}.mp3", scene.id)),
-                        )
-                    })?,
+                    Voice::ElevenLabs { key, voice_id } => {
+                        let text = scene.narration.trim();
+                        let cost = text.chars().count() as f64 / 1000.0 * prices.voice_per_1k;
+                        spend.take(cost)?;
+                        providers::retry(|| {
+                            providers::elevenlabs(
+                                key,
+                                voice_id,
+                                text,
+                                &voice_dir.join(format!("{}.mp3", scene.id)),
+                            )
+                        })
+                        .inspect_err(|_| spend.refund(cost))?
+                    }
                 }
             }
         }
@@ -233,6 +265,8 @@ impl Job {
         let mut missing = Vec::new();
         let mut stand_ins = Vec::new();
         let mut stood_in = Vec::new();
+        // What the video model takes, read once, when the first clip is due.
+        let mut inputs: Option<Option<ModelInputs>> = None;
         let mut n = 0;
         for (chapter, scene) in board
             .chapters
@@ -270,31 +304,61 @@ impl Job {
                         let prompt = board.prompt(chapter, shot);
                         // A shot written as a clip moves, when there is a
                         // video model; a clip that cannot be made becomes a
-                        // still rather than stopping the run.
+                        // still - the one it was to start from, when there
+                        // is one - rather than stopping the run.
                         let mut made = false;
                         if shot.kind == ShotKind::Video && !video_model.trim().is_empty() {
-                            let video_prompt = board.video_prompt(chapter, shot);
-                            match providers::retry(|| {
-                                providers::replicate_video(
-                                    token,
-                                    video_model,
-                                    video_input,
-                                    &video_prompt,
-                                    seconds,
-                                    &board.aspect,
-                                    &shots_dir,
-                                    &stem,
-                                )
-                            }) {
-                                Ok(_) => made = true,
-                                Err(error) => stand_ins
-                                    .push(format!("{stem}: a still in place of a clip ({error})")),
+                            let inputs = inputs.get_or_insert_with(|| {
+                                providers::replicate_inputs(token, video_model)
+                                    .inspect_err(|error| {
+                                        log::warn!("{video_model}'s inputs: {error}");
+                                    })
+                                    .ok()
+                            });
+                            let clip = Clip {
+                                token,
+                                image_model,
+                                video_model,
+                                video_input,
+                                prompt: &prompt,
+                                video_prompt: &board.video_prompt(chapter, shot),
+                                seconds,
+                                aspect: &board.aspect,
+                                stem: &stem,
+                            };
+                            match self.clip(&clip, inputs.as_ref(), prices, &mut spend) {
+                                Ok(()) => made = true,
+                                Err(error) if error.starts_with(crate::cost::LIMIT_REACHED) => {
+                                    return Err(error);
+                                }
+                                Err(error) => {
+                                    let frame = providers::existing(
+                                        &self.frames_dir(),
+                                        &stem,
+                                        &SHOT_EXTENSIONS,
+                                    );
+                                    if let Some(frame) = frame {
+                                        let extension = frame
+                                            .extension()
+                                            .and_then(|e| e.to_str())
+                                            .unwrap_or("png");
+                                        let out = shots_dir.join(format!("{stem}.{extension}"));
+                                        std::fs::copy(&frame, &out).map_err(|error| {
+                                            format!("{}: {error}", out.display())
+                                        })?;
+                                        made = true;
+                                    }
+                                    stand_ins.push(format!(
+                                        "{stem}: a still in place of a clip ({error})"
+                                    ));
+                                }
                             }
                         }
                         // And a still that cannot be made becomes a colour
                         // card: the cut is whole, and the card says which
                         // shot to make again.
                         if !made {
+                            spend.take(prices.still)?;
                             let image = providers::retry(|| {
                                 providers::replicate_image(
                                     token,
@@ -306,6 +370,7 @@ impl Job {
                                 )
                             });
                             if let Err(error) = image {
+                                spend.refund(prices.still);
                                 if providers::refused_for_good(&error)
                                     || error.contains("needs an API token")
                                 {
@@ -341,6 +406,7 @@ impl Job {
         progress(Step::Probing);
         let mut made = Made {
             stand_ins,
+            spent: spend.spent,
             ..Made::default()
         };
         let mut probe = |path: &Path| -> Result<(String, Option<f64>), String> {
@@ -373,6 +439,90 @@ impl Job {
     }
 }
 
+/// One clip to make: what [`Job::clip`] is handed.
+struct Clip<'a> {
+    token: &'a str,
+    image_model: &'a str,
+    video_model: &'a str,
+    video_input: &'a str,
+    /// The shot's still prompt, for the picture it starts from.
+    prompt: &'a str,
+    /// The shot's picture and how it moves.
+    video_prompt: &'a str,
+    seconds: f64,
+    aspect: &'a str,
+    stem: &'a str,
+}
+
+impl Job {
+    /// Makes one clip. A model that starts from a picture is sent a still
+    /// made first from the shot's own prompt, kept in `frames/` so a clip
+    /// tried again does not pay for it twice; one that takes words alone,
+    /// or whose inputs could not be read, is sent the words.
+    fn clip(
+        &self,
+        clip: &Clip,
+        inputs: Option<&ModelInputs>,
+        prices: &Prices,
+        spend: &mut Spend,
+    ) -> Result<(), String> {
+        let image = match inputs.and_then(ModelInputs::image_field) {
+            Some(_) => {
+                let frames = self.frames_dir();
+                std::fs::create_dir_all(&frames)
+                    .map_err(|error| format!("{}: {error}", frames.display()))?;
+                let frame = match providers::existing(&frames, clip.stem, &SHOT_EXTENSIONS) {
+                    Some(frame) => frame,
+                    None => {
+                        spend.take(prices.still)?;
+                        providers::retry(|| {
+                            providers::replicate_image(
+                                clip.token,
+                                clip.image_model,
+                                clip.prompt,
+                                clip.aspect,
+                                &frames,
+                                clip.stem,
+                            )
+                        })
+                        .inspect_err(|_| spend.refund(prices.still))?
+                    }
+                };
+                Some(providers::retry(|| {
+                    providers::replicate_upload(clip.token, &frame)
+                })?)
+            }
+            None => None,
+        };
+        let input = match inputs {
+            Some(inputs) => inputs.clip(
+                clip.video_prompt,
+                clip.seconds,
+                clip.aspect,
+                image.as_deref(),
+            ),
+            None => providers::templated_clip(
+                clip.video_input,
+                clip.video_prompt,
+                clip.seconds,
+                clip.aspect,
+            )?,
+        };
+        spend.take(prices.clip)?;
+        providers::retry(|| {
+            providers::replicate_clip(
+                clip.token,
+                clip.video_model,
+                input.clone(),
+                &self.shots_dir(),
+                clip.stem,
+            )
+        })
+        .inspect_err(|_| spend.refund(prices.clip))
+        .map(|_| ())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +541,29 @@ mod tests {
         assert!(job.shots_dir().join("c01s01_1.png").exists());
         assert!(!job.shots_dir().join("c01s01_2.png").exists());
         assert!(!job.stand_ins().exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_edited_shot_is_forgotten_with_the_still_it_started_from() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-forget-{}", std::process::id()));
+        let job = Job::new(&root, "forget");
+        std::fs::create_dir_all(job.shots_dir()).unwrap();
+        std::fs::create_dir_all(job.frames_dir()).unwrap();
+        for (dir, name) in [
+            (job.shots_dir(), "c01s01_1.mp4"),
+            (job.frames_dir(), "c01s01_1.png"),
+            (job.shots_dir(), "c01s01_2.png"),
+            (job.frames_dir(), "c01s01_2.png"),
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        job.forget(&[], &["c01s01_1".to_owned()]);
+        assert!(!job.shots_dir().join("c01s01_1.mp4").exists());
+        assert!(!job.frames_dir().join("c01s01_1.png").exists());
+        assert!(job.shots_dir().join("c01s01_2.png").exists());
+        assert!(job.frames_dir().join("c01s01_2.png").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

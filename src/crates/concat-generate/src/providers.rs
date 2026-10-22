@@ -29,18 +29,20 @@ pub enum Shots {
     Draft,
     /// Made by hand from the prompt sheet and saved in the job's `shots/`.
     Folder,
-    /// Made on Replicate: every shot a still from a text-to-image model,
-    /// which the cut moves over, and - when a video model is named - the
-    /// first shot of every scene a clip from it. Stills keep an hour of
-    /// video affordable; a moving shot on each scene's open keeps it alive.
+    /// Made on Replicate, as the script says: a still from a text-to-image
+    /// model, which the cut moves over, or a clip from a video model. A
+    /// model that takes a picture to start from is sent a still made first
+    /// from the shot's own prompt, so a clip keeps the film's look rather
+    /// than the video model's; one that takes words alone is sent those.
     Replicate {
         /// The account's API token.
         token: String,
         /// The text-to-image model, "owner/name".
         image_model: String,
-        /// The text-to-video model, "owner/name"; empty for stills only.
+        /// The video model, "owner/name"; empty for stills only.
         video_model: String,
-        /// The video model's input as JSON; strings may hold `{prompt}`,
+        /// The video model's input as JSON, for a model whose own
+        /// description cannot be read; strings may hold `{prompt}`,
         /// `{seconds}` and `{aspect}`.
         video_input: String,
     },
@@ -49,6 +51,10 @@ pub enum Shots {
 /// The text-to-image model a Replicate job uses when none is named: fast,
 /// cheap, and it takes an aspect ratio.
 pub const DEFAULT_IMAGE_MODEL: &str = "black-forest-labs/flux-schnell";
+
+/// The video model offered when none is named: image-to-video, fast and at
+/// the cheap end, so a clip moves a still the image model made.
+pub const DEFAULT_VIDEO_MODEL: &str = "wan-video/wan-2.2-i2v-fast";
 
 /// How many times a call to a service is made before it is given up on:
 /// a long video is hundreds of calls, and one busy minute on the far side
@@ -176,27 +182,273 @@ pub fn refused_for_good(error: &str) -> bool {
         .is_some_and(|code| (400..500).contains(&code) && code != 408 && code != 429)
 }
 
-/// One clip from a Replicate text-to-video model, saved as
+/// What a Replicate model takes, read from the model's own description,
+/// so one input fits any of them: the field the starting picture goes in
+/// is called `image` on one model and `start_image` on the next, and a
+/// clip's length is seconds on one and frames on another.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ModelInputs {
+    /// The inputs, by name.
+    properties: serde_json::Map<String, Value>,
+    /// The schemas they refer to for their choices.
+    schemas: Value,
+}
+
+/// The names a model's starting picture goes by, likeliest first.
+const IMAGE_FIELDS: [&str; 7] = [
+    "image",
+    "start_image",
+    "first_frame_image",
+    "input_image",
+    "first_frame",
+    "image_url",
+    "start_frame",
+];
+
+/// Words in a picture input's name that say it is not the starting one.
+const NOT_THE_START: [&str; 7] = [
+    "end",
+    "last",
+    "tail",
+    "mask",
+    "reference",
+    "ref_",
+    "negative",
+];
+
+impl ModelInputs {
+    /// The inputs an OpenAPI description of a model names.
+    pub fn from_schema(schema: &Value) -> ModelInputs {
+        let schemas = schema["components"]["schemas"].clone();
+        ModelInputs {
+            properties: schemas["Input"]["properties"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+            schemas,
+        }
+    }
+
+    /// The input the starting picture goes in; None for a model that takes
+    /// words alone.
+    pub fn image_field(&self) -> Option<String> {
+        IMAGE_FIELDS
+            .iter()
+            .find(|name| self.properties.contains_key(**name))
+            .map(|name| (*name).to_owned())
+            .or_else(|| {
+                self.properties
+                    .keys()
+                    .find(|name| {
+                        let name = name.to_lowercase();
+                        name.contains("image")
+                            && !NOT_THE_START.iter().any(|word| name.contains(word))
+                    })
+                    .cloned()
+            })
+    }
+
+    /// The choices an input allows, its own or the schema's it refers to.
+    fn choices(&self, name: &str) -> Vec<Value> {
+        let Some(property) = self.properties.get(name) else {
+            return Vec::new();
+        };
+        if let Some(choices) = property["enum"].as_array() {
+            return choices.clone();
+        }
+        property["allOf"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(std::iter::once(property))
+            .filter_map(|part| part["$ref"].as_str())
+            .filter_map(|reference| reference.rsplit('/').next())
+            .find_map(|schema| self.schemas[schema]["enum"].as_array().cloned())
+            .unwrap_or_default()
+    }
+
+    /// The input for one clip: the prompt, the starting picture when the
+    /// model takes one, as near `seconds` as the model allows, and the
+    /// frame when it is one the model offers. Everything else is left to
+    /// the model's defaults.
+    pub fn clip(&self, prompt: &str, seconds: f64, aspect: &str, image: Option<&str>) -> Value {
+        let mut input = serde_json::Map::new();
+        input.insert("prompt".to_owned(), json!(prompt));
+        if let (Some(url), Some(field)) = (image, self.image_field()) {
+            input.insert(field, json!(url));
+        }
+        if self.properties.contains_key("duration") {
+            if let Some(duration) = self.nearest("duration", seconds) {
+                input.insert("duration".to_owned(), duration);
+            }
+        } else if self.properties.contains_key("num_frames") {
+            let fps = ["frames_per_second", "fps"]
+                .iter()
+                .find_map(|name| self.properties.get(*name)?["default"].as_f64())
+                .unwrap_or(16.0);
+            if let Some(frames) = self.nearest("num_frames", seconds * fps) {
+                input.insert("num_frames".to_owned(), frames);
+            }
+        }
+        if self
+            .choices("aspect_ratio")
+            .iter()
+            .any(|choice| choice.as_str() == Some(aspect))
+        {
+            input.insert("aspect_ratio".to_owned(), json!(aspect));
+        }
+        Value::Object(input)
+    }
+
+    /// The value of `name` nearest `wanted`: the nearest of its choices,
+    /// or `wanted` within its bounds; None when it says neither, so the
+    /// model's default stands.
+    fn nearest(&self, name: &str, wanted: f64) -> Option<Value> {
+        let number = |value: &Value| {
+            value.as_f64().or_else(|| {
+                value
+                    .as_str()?
+                    .trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .parse()
+                    .ok()
+            })
+        };
+        let choices = self.choices(name);
+        if !choices.is_empty() {
+            return choices
+                .into_iter()
+                .filter_map(|choice| Some((number(&choice)?, choice)))
+                .min_by(|(a, _), (b, _)| (a - wanted).abs().total_cmp(&(b - wanted).abs()))
+                .map(|(_, choice)| choice);
+        }
+        let property = self.properties.get(name)?;
+        let (low, high) = (property["minimum"].as_f64()?, property["maximum"].as_f64()?);
+        let value = wanted.round().clamp(low, high);
+        Some(if property["type"] == "integer" {
+            json!(value as i64)
+        } else {
+            json!(value)
+        })
+    }
+}
+
+/// What `model` takes, from Replicate's description of it.
+pub fn replicate_inputs(token: &str, model: &str) -> Result<ModelInputs, String> {
+    let model_info: Value = agent()
+        .get(&format!(
+            "https://api.replicate.com/v1/models/{}",
+            model.trim()
+        ))
+        .set("authorization", &format!("Bearer {}", token.trim()))
+        .call()
+        .map_err(|error| refused("Replicate", error))?
+        .into_json()
+        .map_err(|error| error.to_string())?;
+    let schema = &model_info["latest_version"]["openapi_schema"];
+    if schema.is_null() {
+        return Err(format!("Replicate does not describe {model}'s inputs"));
+    }
+    Ok(ModelInputs::from_schema(schema))
+}
+
+/// One clip from a Replicate video model, sent `input`, saved as
 /// `dir`/`stem`.<its extension>.
-pub fn replicate_video(
+pub fn replicate_clip(
     token: &str,
     model: &str,
-    input: &str,
-    prompt: &str,
-    seconds: f64,
-    aspect: &str,
+    input: Value,
     dir: &Path,
     stem: &str,
 ) -> Result<PathBuf, String> {
-    let template: Value = serde_json::from_str(input)
+    replicate(token, model, input, dir, stem)
+}
+
+/// The input `template` makes for one clip, for a model whose own
+/// description could not be read.
+pub fn templated_clip(
+    template: &str,
+    prompt: &str,
+    seconds: f64,
+    aspect: &str,
+) -> Result<Value, String> {
+    let template: Value = serde_json::from_str(template)
         .map_err(|error| format!("the model's input is not JSON: {error}"))?;
-    replicate(
-        token,
-        model,
-        fill(&template, prompt, seconds, aspect),
-        dir,
-        stem,
+    Ok(fill(&template, prompt, seconds, aspect))
+}
+
+/// Puts the picture at `path` where a Replicate model can read it, and
+/// says where: uploaded to the account's files, or, failing that, the
+/// picture itself written into the address.
+pub fn replicate_upload(token: &str, path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mime = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+    {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("frame.png");
+    let boundary = format!("longcut-{:x}", bytes.len() as u64 ^ 0x5eed_cafe_f00d);
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"content\"; filename=\"{name}\"\r\n\
+         Content-Type: {mime}\r\n\r\n"
     )
+    .into_bytes();
+    body.extend_from_slice(&bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let uploaded = agent()
+        .post("https://api.replicate.com/v1/files")
+        .set("authorization", &format!("Bearer {}", token.trim()))
+        .set(
+            "content-type",
+            &format!("multipart/form-data; boundary={boundary}"),
+        )
+        .send_bytes(&body)
+        .map_err(|error| refused("Replicate", error))
+        .and_then(|response| {
+            response
+                .into_json::<Value>()
+                .map_err(|error| error.to_string())
+        });
+    match uploaded {
+        Ok(file) => match file["urls"]["get"].as_str() {
+            Some(url) => Ok(url.to_owned()),
+            None => Err("Replicate kept the picture but gave no address for it".to_owned()),
+        },
+        Err(error) if refused_for_good(&error) && error.contains("401") => Err(error),
+        Err(error) => {
+            log::warn!(
+                "uploading {} failed, sending it inline: {error}",
+                path.display()
+            );
+            Ok(format!("data:{mime};base64,{}", base64(&bytes)))
+        }
+    }
+}
+
+/// Standard base64, padded.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// One still from a Replicate text-to-image model of the FLUX family's
@@ -388,6 +640,64 @@ mod tests {
             json!({"prompt": "a dune", "duration": 5, "aspect_ratio": "9:16",
                                   "note": "5s", "fps": 24})
         );
+    }
+
+    #[test]
+    fn a_clip_is_fitted_to_what_the_model_takes() {
+        // Kling's shape: the picture in start_image, the length a choice of
+        // seconds kept in a schema of its own.
+        let kling = ModelInputs::from_schema(&json!({"components": {"schemas": {
+            "Input": {"properties": {
+                "prompt": {"type": "string"},
+                "start_image": {"type": "string", "format": "uri"},
+                "end_image": {"type": "string", "format": "uri"},
+                "duration": {"allOf": [{"$ref": "#/components/schemas/duration"}]},
+                "aspect_ratio": {"allOf": [{"$ref": "#/components/schemas/aspect_ratio"}]}
+            }},
+            "duration": {"type": "integer", "enum": [5, 10]},
+            "aspect_ratio": {"type": "string", "enum": ["16:9", "9:16", "1:1"]}
+        }}}));
+        assert_eq!(kling.image_field().as_deref(), Some("start_image"));
+        assert_eq!(
+            kling.clip("waves", 6.2, "9:16", Some("https://x/f.png")),
+            json!({"prompt": "waves", "start_image": "https://x/f.png", "duration": 5,
+                   "aspect_ratio": "9:16"})
+        );
+        // Wan's shape: the length in frames, at the model's own rate.
+        let wan =
+            ModelInputs::from_schema(&json!({"components": {"schemas": {"Input": {"properties": {
+                "prompt": {"type": "string"},
+                "image": {"type": "string", "format": "uri"},
+                "num_frames": {"type": "integer", "minimum": 81, "maximum": 121},
+                "frames_per_second": {"type": "integer", "default": 16}
+            }}}}}));
+        assert_eq!(
+            wan.clip("a dune", 6.0, "16:9", Some("data:x")),
+            json!({"prompt": "a dune", "image": "data:x", "num_frames": 96})
+        );
+        // Words alone: no picture to send, and a length it does not bound
+        // is left to its default.
+        let words =
+            ModelInputs::from_schema(&json!({"components": {"schemas": {"Input": {"properties": {
+                "prompt": {"type": "string"},
+                "reference_image": {"type": "string"},
+                "duration": {"type": "string", "enum": ["4s", "8s"]}
+            }}}}}));
+        assert_eq!(words.image_field(), None);
+        assert_eq!(
+            words.clip("rain", 7.0, "1:1", None),
+            json!({"prompt": "rain", "duration": "8s"})
+        );
+    }
+
+    #[test]
+    fn a_picture_is_written_as_base64() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
     }
 
     #[test]

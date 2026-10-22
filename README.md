@@ -17,10 +17,13 @@ Everything below that it shares with Concat comes from their work.
 
 What LongCut adds is **Long video** (File ▸ Long video): describe an idea and
 pick a length, and Claude writes the script chapter by chapter, the narration
-and the shots are made (Concat's own voices or ElevenLabs; Replicate's video
-models, draft colour cards, or shots made by hand), and the whole thing is cut
-on a new timeline - shots fitted to the narration, transitions, captions,
-chapter titles, a music bed - ready to edit and export like anything else.
+and the shots are made (Concat's own voices or ElevenLabs; Replicate's image
+and video models - each clip moving a still made first from its prompt, so
+the film keeps one look - draft colour cards, or shots made by hand), and the
+whole thing is cut on a new timeline - shots fitted to the narration,
+transitions, captions, chapter titles, a music bed - ready to edit and export
+like anything else. The sheet estimates what a video will cost before a cent
+is spent, and a spend limit stops a run before it goes over.
 See `src/crates/concat-generate`.
 
 ## About

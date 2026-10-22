@@ -19,10 +19,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use concat_generate::budget;
-use concat_generate::job::{Job, Made, Step};
+use concat_generate::budget::{self, Totals};
+use concat_generate::cost::{self, Estimate, Prices};
+use concat_generate::job::{Costs, Job, Made, Step};
 use concat_generate::plan::{self, Editing, Options};
-use concat_generate::providers::{Shots, Voice};
+use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{self, Brief, Writing};
 use concat_project::Command;
@@ -206,6 +207,9 @@ impl GeneratePane {
                     5 => prefs.elevenlabs_key = text,
                     6 => prefs.elevenlabs_voice = text,
                     7 => prefs.replicate_image_model = text,
+                    8 => prefs.spend_limit = text,
+                    9 => prefs.clip_price = text,
+                    10 => prefs.image_price = text,
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -503,6 +507,64 @@ impl GeneratePane {
         }
     }
 
+    /// What the video will cost: the storyboard's own counts once it is
+    /// written, the budget's before.
+    fn estimate(&self, studio: &Studio) -> Estimate {
+        let prefs = &studio.prefs.generate;
+        let totals = match &self.board {
+            Some(board) => {
+                let (clips, stills) = board.kinds();
+                Totals {
+                    seconds: board.seconds(),
+                    chapters: board.chapters.len(),
+                    scenes: board.scenes().count(),
+                    clips,
+                    stills,
+                    words: board.words(),
+                }
+            }
+            None => budget::budget(&self.brief(studio).pacing()).totals(),
+        };
+        let mut estimate = cost::estimate(
+            &totals,
+            &prices(studio),
+            true,
+            // A model's inputs are not known before the run reads them:
+            // count the still a clip may start from, which costs little.
+            true,
+            self.voice_row(studio) == 2,
+        );
+        // Shots from Replicate are paid for; draft cards and shots made by
+        // hand are not.
+        if prefs.shots != 1 {
+            estimate.stills = 0.0;
+            estimate.clips = 0.0;
+        }
+        estimate
+    }
+
+    /// The estimate in a line, and over the limit when it is.
+    fn cost_line(&self, studio: &Studio) -> String {
+        let estimate = self.estimate(studio);
+        let mut line = tf(
+            "generate.cost",
+            &[
+                &dollars(estimate.total()),
+                &dollars(estimate.script),
+                &dollars(estimate.stills),
+                &dollars(estimate.clips),
+                &dollars(estimate.voice),
+            ],
+        );
+        if let Some(limit) = spend_limit(studio)
+            && estimate.total() > limit
+        {
+            line.push(' ');
+            line.push_str(&tf("generate.overLimit", &[&dollars(limit)]));
+        }
+        line
+    }
+
     /// Row of the clips list.
     fn clips_row(&self, studio: &Studio) -> usize {
         studio
@@ -621,7 +683,7 @@ impl GeneratePane {
             1 => Shots::Replicate {
                 token: prefs.replicate_token.clone(),
                 image_model: prefs.replicate_image_model.clone(),
-                video_model: prefs.replicate_model.clone(),
+                video_model: video_model(&prefs.replicate_model).to_owned(),
                 video_input: REPLICATE_INPUT.to_owned(),
             },
             2 => Shots::Folder,
@@ -638,6 +700,10 @@ impl GeneratePane {
             self.message = t("speech.downloadVoiceModelFirst");
             return;
         }
+        let costs = Costs {
+            prices: prices(studio),
+            limit: spend_limit(studio),
+        };
         let speaker = studio.prefs.tts_voice.unwrap_or(DEFAULT_SPEAKER);
         let speech = Arc::clone(&studio.host.speech);
         let dirs = studio.host.dirs.clone();
@@ -678,9 +744,15 @@ impl GeneratePane {
                         studio.handle(Msg::Generate(GenerateMsg::Progress(fraction, stage)));
                     });
                 };
-                let made = job.make(&board, &voice, &shots, &mut speak, &mut progress, &|| {
-                    stop.load(Ordering::Acquire)
-                })?;
+                let made = job.make(
+                    &board,
+                    &voice,
+                    &shots,
+                    &costs,
+                    &mut speak,
+                    &mut progress,
+                    &|| stop.load(Ordering::Acquire),
+                )?;
                 Ok((board, made))
             },
             |studio, _, _, result| {
@@ -730,6 +802,9 @@ impl GeneratePane {
                     &tf("generate.videoReady", &[&format!("{minutes:.1}")]),
                     false,
                 );
+                if made.spent > 0.0 {
+                    studio.notify(&tf("generate.spent", &[&dollars(made.spent)]), false);
+                }
                 for stand_in in &made.stand_ins {
                     log::warn!("generate: {stand_in}");
                 }
@@ -822,6 +897,10 @@ impl GeneratePane {
                 ],
             )
             .into(),
+            cost: self.cost_line(studio).into(),
+            spend_limit: prefs.spend_limit.as_str().into(),
+            clip_price: prefs.clip_price.as_str().into(),
+            image_price: prefs.image_price.as_str().into(),
             language: prefs.language as i32,
             aspect: prefs.aspect as i32,
             voice: self.voice_row(studio) as i32,
@@ -1015,5 +1094,51 @@ impl Editing for Session<'_> {
             .iter()
             .find(|item| item.path == path)
             .map(|item| item.id.clone())
+    }
+}
+
+/// The video model to use: the one named, or the default.
+fn video_model(named: &str) -> &str {
+    if named.trim().is_empty() {
+        DEFAULT_VIDEO_MODEL
+    } else {
+        named.trim()
+    }
+}
+
+/// A price or a limit typed in the sheet, in dollars: None when it is
+/// empty or not a number of them.
+fn amount(text: &str) -> Option<f64> {
+    text.trim()
+        .trim_start_matches('$')
+        .replace(',', ".")
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+/// What each thing costs: the prices typed in the sheet, the defaults'
+/// where none is.
+fn prices(studio: &Studio) -> Prices {
+    let prefs = &studio.prefs.generate;
+    let defaults = Prices::default();
+    Prices {
+        still: amount(&prefs.image_price).unwrap_or(defaults.still),
+        clip: amount(&prefs.clip_price).unwrap_or(defaults.clip),
+        ..defaults
+    }
+}
+
+/// The most a run may spend; None for no limit.
+fn spend_limit(studio: &Studio) -> Option<f64> {
+    amount(&studio.prefs.generate.spend_limit)
+}
+
+/// Dollars as the sheet shows them: cents, or a tenth of one below a cent.
+fn dollars(value: f64) -> String {
+    if value > 0.0 && value < 0.01 {
+        format!("{value:.3}")
+    } else {
+        format!("{value:.2}")
     }
 }
