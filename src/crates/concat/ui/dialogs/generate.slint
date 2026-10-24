@@ -33,6 +33,14 @@ export struct GenerateSheetData {
     /// What the length and the mix come to before a word is written:
     /// chapters, scenes and voice lines, video and image prompts, words.
     budget: string,
+    /// What it comes to in dollars, item by item, and whether that is over
+    /// the limit.
+    cost: string,
+    /// The most a run may spend, as typed; empty for no limit.
+    spend-limit: string,
+    /// What a clip and a still cost, as typed; empty for the defaults.
+    clip-price: string,
+    image-price: string,
     /// Row of the language list.
     language: int,
     /// 0 16:9, 1 9:16, 2 1:1
@@ -75,7 +83,8 @@ export component GenerateDialog inherits Modal {
 
     /// Which text: 0 topic, 1 notes, 2 Anthropic key, 3 Replicate token,
     /// 4 Replicate video model, 5 ElevenLabs key, 6 ElevenLabs voice,
-    /// 7 Replicate image model.
+    /// 7 Replicate image model, 8 spend limit, 9 price of a clip, 10 price
+    /// of a still.
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
     /// 5 music, 6 clips.
@@ -197,6 +206,23 @@ export component GenerateDialog inherits Modal {
                             color: Theme.fg-dim;
                             font-size: Theme.fs-sm;
                             wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: root.data.cost;
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.spendLimit");
+                            Field {
+                                value: root.data.spend-limit;
+                                technical: true;
+                                placeholder: I18n.t("generate.noLimit");
+                                edited(text) => { root.text-edited(8, text); }
+                            }
                         }
 
                         DialogRow {
@@ -336,8 +362,28 @@ export component GenerateDialog inherits Modal {
                             Field {
                                 value: root.data.replicate-model;
                                 technical: true;
-                                placeholder: I18n.t("generate.videoModelPlaceholder");
+                                placeholder: "wan-video/wan-2.2-i2v-fast";
                                 edited(text) => { root.text-edited(4, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.clipPrice");
+                            Field {
+                                value: root.data.clip-price;
+                                technical: true;
+                                placeholder: "0.10";
+                                edited(text) => { root.text-edited(9, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.imagePrice");
+                            Field {
+                                value: root.data.image-price;
+                                technical: true;
+                                placeholder: "0.003";
+                                edited(text) => { root.text-edited(10, text); }
                             }
                         }
                     }

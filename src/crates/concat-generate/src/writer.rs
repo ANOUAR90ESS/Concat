@@ -509,38 +509,76 @@ fn apply_revisions(board: &mut Storyboard, revised: &Value) {
 }
 
 /// One Messages API call answered through `tool`: the tool's input.
+///
+/// The model is asked, not forced, to answer with the tool: the current
+/// models refuse a `tool_choice` that names one. An answer in words alone
+/// is sent back once with the ask repeated.
 fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, String> {
     let name = tool["name"].as_str().unwrap_or_default();
-    let body = json!({
-        "model": model,
-        "max_tokens": 16000,
-        "system": SYSTEM,
-        "tools": [tool],
-        "tool_choice": {"type": "tool", "name": name},
-        "messages": [{"role": "user", "content": prompt}],
-    });
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(20))
         .timeout_read(std::time::Duration::from_secs(600))
         .build();
-    let reply: Value = match agent
-        .post(API)
-        .set("x-api-key", key.trim())
-        .set("anthropic-version", "2023-06-01")
-        .send_json(body)
-    {
-        Ok(response) => response.into_json().map_err(|error| error.to_string())?,
-        Err(ureq::Error::Status(code, response)) => {
-            let detail = response.into_string().unwrap_or_default();
-            return Err(format!("Claude answered {code}: {}", message_of(&detail)));
+    let mut messages = vec![json!({
+        "role": "user",
+        "content": format!("{prompt}\n\nAnswer by calling the {name} tool, once."),
+    })];
+    for _ in 0..2 {
+        let body = json!({
+            "model": model,
+            "max_tokens": 32000,
+            "system": SYSTEM,
+            "tools": [tool],
+            "tool_choice": {"type": "auto"},
+            "messages": messages,
+        });
+        let reply: Value = match agent
+            .post(API)
+            .set("x-api-key", key.trim())
+            .set("anthropic-version", "2023-06-01")
+            .send_json(body)
+        {
+            Ok(response) => response.into_json().map_err(|error| error.to_string())?,
+            Err(ureq::Error::Status(code, response)) => {
+                let detail = response.into_string().unwrap_or_default();
+                return Err(format!("Claude answered {code}: {}", message_of(&detail)));
+            }
+            Err(error) => return Err(format!("Claude did not answer: {error}")),
+        };
+        if let Some(input) = tool_input(&reply) {
+            return Ok(input);
         }
-        Err(error) => return Err(format!("Claude did not answer: {error}")),
-    };
+        match reply["stop_reason"].as_str().unwrap_or_default() {
+            "max_tokens" => {
+                return Err(format!(
+                    "Claude ran out of room writing the {name}: try a shorter video"
+                ));
+            }
+            "refusal" => return Err(format!("Claude declined to write the {name}")),
+            _ => {}
+        }
+        // Words instead of the tool: hand them back, and ask again.
+        if reply["content"]
+            .as_array()
+            .is_some_and(|blocks| !blocks.is_empty())
+        {
+            messages.push(json!({"role": "assistant", "content": reply["content"].clone()}));
+            messages.push(json!({
+                "role": "user",
+                "content": format!("Call the {name} tool now with your answer."),
+            }));
+        }
+    }
+    Err(format!("Claude did not answer with the {name}"))
+}
+
+/// The input of the first tool call in a reply, if it made one.
+fn tool_input(reply: &Value) -> Option<Value> {
     reply["content"]
-        .as_array()
-        .and_then(|blocks| blocks.iter().find(|block| block["type"] == "tool_use"))
+        .as_array()?
+        .iter()
+        .find(|block| block["type"] == "tool_use")
         .map(|block| block["input"].clone())
-        .ok_or_else(|| format!("Claude did not answer with the {name}"))
 }
 
 /// The error's own sentence out of an API error body, or the body.
@@ -722,6 +760,18 @@ mod tests {
                 .collect(),
             ..Scene::default()
         }
+    }
+
+    #[test]
+    fn the_answer_is_the_tool_call_after_any_thinking_or_words() {
+        let reply = json!({"content": [
+            {"type": "thinking", "thinking": ""},
+            {"type": "text", "text": "Here is the outline."},
+            {"type": "tool_use", "name": "outline", "input": {"title": "x"}}
+        ], "stop_reason": "tool_use"});
+        assert_eq!(tool_input(&reply), Some(json!({"title": "x"})));
+        let words = json!({"content": [{"type": "text", "text": "No tool."}]});
+        assert_eq!(tool_input(&words), None);
     }
 
     #[test]

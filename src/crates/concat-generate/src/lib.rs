@@ -14,8 +14,10 @@
 //!    into the job's folder, with a prompt sheet beside it.
 //! 2. [`job::Job::make`]: the narration is read and the shots are made,
 //!    by the [`providers`] chosen: the window's own voices or ElevenLabs,
-//!    Replicate's video models, colour cards for a draft, or files made by
-//!    hand.
+//!    Replicate's image and video models - a clip moving a still made
+//!    first, so it keeps the film's look - colour cards for a draft, or
+//!    files made by hand; what it costs is worked out by [`cost`] before
+//!    and held to a limit during.
 //! 3. [`plan::plan`]: where every file lands, worked out from their
 //!    lengths: each scene as long as its narration, its shots sharing it.
 //! 4. [`plan::cut`]: the plan laid down as the edit's own commands on a
@@ -27,6 +29,7 @@
 //! runs steps 1 and 2 on a worker and step 4 on the window's session.
 
 pub mod budget;
+pub mod cost;
 pub mod job;
 pub mod plan;
 pub mod providers;
