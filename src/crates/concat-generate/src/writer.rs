@@ -511,8 +511,11 @@ fn apply_revisions(board: &mut Storyboard, revised: &Value) {
 /// One Messages API call answered through `tool`: the tool's input.
 ///
 /// The model is asked, not forced, to answer with the tool: the current
-/// models refuse a `tool_choice` that names one. An answer in words alone
-/// is sent back once with the ask repeated.
+/// models refuse a `tool_choice` that names one. Without the schema held
+/// to, an answer can come back with a list written out as JSON text, a
+/// required field left empty, or in words alone: text that is JSON is read
+/// as what it says, and an answer still missing what the tool requires is
+/// sent back, with what is missing, twice at most.
 fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, String> {
     let name = tool["name"].as_str().unwrap_or_default();
     let agent = ureq::AgentBuilder::new()
@@ -523,7 +526,8 @@ fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, Str
         "role": "user",
         "content": format!("{prompt}\n\nAnswer by calling the {name} tool, once."),
     })];
-    for _ in 0..2 {
+    let mut last = format!("Claude did not answer with the {name}");
+    for _ in 0..3 {
         let body = json!({
             "model": model,
             "max_tokens": 32000,
@@ -545,10 +549,8 @@ fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, Str
             }
             Err(error) => return Err(format!("Claude did not answer: {error}")),
         };
-        if let Some(input) = tool_input(&reply) {
-            return Ok(input);
-        }
         match reply["stop_reason"].as_str().unwrap_or_default() {
+            // A tool call cut off is missing its end, whatever it holds.
             "max_tokens" => {
                 return Err(format!(
                     "Claude ran out of room writing the {name}: try a shorter video"
@@ -557,28 +559,115 @@ fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, Str
             "refusal" => return Err(format!("Claude declined to write the {name}")),
             _ => {}
         }
-        // Words instead of the tool: hand them back, and ask again.
-        if reply["content"]
-            .as_array()
-            .is_some_and(|blocks| !blocks.is_empty())
-        {
-            messages.push(json!({"role": "assistant", "content": reply["content"].clone()}));
-            messages.push(json!({
-                "role": "user",
-                "content": format!("Call the {name} tool now with your answer."),
-            }));
+        let content = reply["content"].clone();
+        let answered = content.as_array().is_some_and(|blocks| !blocks.is_empty());
+        let note = match tool_call(&reply) {
+            Some((id, mut input)) => {
+                decode_json_text(&mut input);
+                let missing = missing(tool, &input);
+                if missing.is_empty() {
+                    return Ok(input);
+                }
+                last = format!(
+                    "the writer returned the {name} without {} (it gave: {})",
+                    missing.join(", "),
+                    given(&input)
+                );
+                json!([{
+                    "type": "tool_result",
+                    "tool_use_id": id,
+                    "is_error": true,
+                    "content": format!(
+                        "{} missing or empty. Call the {name} tool again with every \
+                         required field filled, lists as JSON arrays.",
+                        missing.join(", ")
+                    ),
+                }])
+            }
+            None => json!(format!("Call the {name} tool now with your answer.")),
+        };
+        if answered {
+            messages.push(json!({"role": "assistant", "content": content}));
+            messages.push(json!({"role": "user", "content": note}));
         }
     }
-    Err(format!("Claude did not answer with the {name}"))
+    Err(last)
 }
 
-/// The input of the first tool call in a reply, if it made one.
-fn tool_input(reply: &Value) -> Option<Value> {
+/// The id and the input of the first tool call in a reply, if it made one.
+fn tool_call(reply: &Value) -> Option<(String, Value)> {
     reply["content"]
         .as_array()?
         .iter()
         .find(|block| block["type"] == "tool_use")
-        .map(|block| block["input"].clone())
+        .map(|block| {
+            (
+                block["id"].as_str().unwrap_or_default().to_owned(),
+                block["input"].clone(),
+            )
+        })
+}
+
+/// Reads a field written as JSON text - `"[{\"title\": ...}]"` where a list
+/// belongs - as the list or the object it says, at any depth.
+fn decode_json_text(value: &mut Value) {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if ((trimmed.starts_with('[') && trimmed.ends_with(']'))
+                || (trimmed.starts_with('{') && trimmed.ends_with('}')))
+                && let Ok(mut decoded) = serde_json::from_str::<Value>(trimmed)
+            {
+                decode_json_text(&mut decoded);
+                *value = decoded;
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(decode_json_text),
+        Value::Object(map) => map.values_mut().for_each(decode_json_text),
+        _ => {}
+    }
+}
+
+/// The required fields of `tool` that `input` leaves out or empty.
+fn missing(tool: &Value, input: &Value) -> Vec<String> {
+    tool["input_schema"]["required"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|field| match &input[*field] {
+            Value::Null => true,
+            Value::String(text) => text.trim().is_empty(),
+            Value::Array(items) => items.is_empty(),
+            Value::Object(map) => map.is_empty(),
+            _ => false,
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+/// What an answer holds, field by field, for the error that says it fell
+/// short: each field's name and kind.
+fn given(input: &Value) -> String {
+    let Some(map) = input.as_object() else {
+        return "no fields".to_owned();
+    };
+    if map.is_empty() {
+        return "no fields".to_owned();
+    }
+    map.iter()
+        .map(|(field, value)| {
+            let kind = match value {
+                Value::Array(items) => format!("a list of {}", items.len()),
+                Value::String(_) => "text".to_owned(),
+                Value::Object(_) => "an object".to_owned(),
+                Value::Null => "null".to_owned(),
+                _ => "a value".to_owned(),
+            };
+            format!("{field} as {kind}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The error's own sentence out of an API error body, or the body.
@@ -767,11 +856,43 @@ mod tests {
         let reply = json!({"content": [
             {"type": "thinking", "thinking": ""},
             {"type": "text", "text": "Here is the outline."},
-            {"type": "tool_use", "name": "outline", "input": {"title": "x"}}
+            {"type": "tool_use", "id": "toolu_1", "name": "outline", "input": {"title": "x"}}
         ], "stop_reason": "tool_use"});
-        assert_eq!(tool_input(&reply), Some(json!({"title": "x"})));
+        assert_eq!(
+            tool_call(&reply),
+            Some(("toolu_1".to_owned(), json!({"title": "x"})))
+        );
         let words = json!({"content": [{"type": "text", "text": "No tool."}]});
-        assert_eq!(tool_input(&words), None);
+        assert_eq!(tool_call(&words), None);
+    }
+
+    #[test]
+    fn a_list_written_as_json_text_is_read_as_the_list() {
+        let mut input = json!({
+            "title": "The fall",
+            "chapters": "[{\"title\": \"One\", \"points\": \"[\\\"a\\\"]\"}]",
+            "note": "[not json"
+        });
+        decode_json_text(&mut input);
+        assert_eq!(input["chapters"][0]["title"], "One");
+        assert_eq!(input["chapters"][0]["points"], json!(["a"]));
+        assert_eq!(input["note"], "[not json");
+        assert_eq!(input["title"], "The fall");
+    }
+
+    #[test]
+    fn an_answer_short_of_what_the_tool_requires_says_what_is_missing() {
+        let tool = outline_tool();
+        let short =
+            json!({"title": "T", "visual_style": "film", "voice_style": "", "chapters": []});
+        assert_eq!(missing(&tool, &short), vec!["voice_style", "chapters"]);
+        assert_eq!(
+            given(&short),
+            "chapters as a list of 0, title as text, visual_style as text, voice_style as text"
+        );
+        let whole = json!({"title": "T", "visual_style": "film", "voice_style": "calm",
+                           "chapters": [{"title": "One"}]});
+        assert!(missing(&tool, &whole).is_empty());
     }
 
     #[test]
