@@ -201,22 +201,26 @@ pub fn plan(
                 source: Some(spoken),
                 text: None,
             });
-            if options.captions {
-                let cards = caption_cards(&scene.narration, options.caption_words);
-                let chars: usize = cards.iter().map(|card| card.chars().count()).sum();
-                let mut at = t;
-                for card in cards {
-                    let span = spoken * card.chars().count() as f64 / chars as f64;
-                    out.push(Placement {
-                        kind: Kind::Caption,
-                        start: at,
-                        length: span,
-                        file: None,
-                        source: None,
-                        text: Some(card),
-                    });
-                    at += span;
-                }
+        }
+        // The captions run with the voice when there is one, and over the
+        // scene when there is not: a cut with no narration still says what
+        // the script says, as subtitles.
+        if options.captions {
+            let cards = caption_cards(&scene.narration, options.caption_words);
+            let chars: usize = cards.iter().map(|card| card.chars().count()).sum();
+            let over = spoken.unwrap_or(length);
+            let mut at = t;
+            for card in cards {
+                let span = over * card.chars().count() as f64 / chars.max(1) as f64;
+                out.push(Placement {
+                    kind: Kind::Caption,
+                    start: at,
+                    length: span,
+                    file: None,
+                    source: None,
+                    text: Some(card),
+                });
+                at += span;
             }
         }
         if options.titles
@@ -598,6 +602,35 @@ mod tests {
             .collect();
         assert_eq!(music, [0.0, 4.0, 8.0]);
         assert!((total_length(&placements) - 8.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn without_narration_the_captions_run_over_the_scene() {
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().voice = None;
+        let placements = plan(&board(), &files, &Options::default(), None).unwrap();
+        assert!(of(&placements, Kind::Voice).is_empty());
+        let captions = of(&placements, Kind::Caption);
+        let words: Vec<_> = captions
+            .iter()
+            .map(|c| c.text.as_deref().unwrap())
+            .collect();
+        assert_eq!(words, ["First sentence here.", "Second one."]);
+        // The scene's written six seconds, shared by the cards' lengths.
+        assert_eq!(captions[0].start, 0.0);
+        let end = captions.last().map(|c| c.start + c.length).unwrap();
+        assert!((end - 6.0).abs() < 1e-9);
+        let off = plan(
+            &board(),
+            &files,
+            &Options {
+                captions: false,
+                ..Options::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert!(of(&off, Kind::Caption).is_empty());
     }
 
     #[test]
