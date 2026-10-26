@@ -482,25 +482,57 @@ fn replicate(
     if token.trim().is_empty() || model.trim().is_empty() {
         return Err("Replicate needs an API token and a model".to_owned());
     }
-    let body = json!({ "input": input });
     let started = std::time::Instant::now();
     let agent = agent();
     let auth = format!("Bearer {}", token.trim());
-    let mut prediction: Value = agent
-        .post(&format!(
-            "https://api.replicate.com/v1/models/{}/predictions",
-            model.trim()
-        ))
-        .set("authorization", &auth)
-        .send_json(body)
-        .map_err(|error| refused("Replicate", error))?
-        .into_json()
-        .map_err(|error| error.to_string())?;
+    // A shot asked for by a run that ended before it came back - the app
+    // closed, the project changed - is paid for already: follow that one
+    // rather than asking, and paying, again.
+    let pending = pending(dir, stem);
+    let resumed = std::fs::read_to_string(&pending)
+        .ok()
+        .map(|url| url.trim().to_owned())
+        .filter(|url| url.starts_with("https://"))
+        .and_then(|url| {
+            agent
+                .get(&url)
+                .set("authorization", &auth)
+                .call()
+                .ok()?
+                .into_json::<Value>()
+                .ok()
+        })
+        .filter(|prediction| {
+            !matches!(
+                prediction["status"].as_str().unwrap_or_default(),
+                "failed" | "canceled"
+            )
+        });
+    let mut prediction: Value = match resumed {
+        Some(prediction) => prediction,
+        None => {
+            let prediction: Value = agent
+                .post(&format!(
+                    "https://api.replicate.com/v1/models/{}/predictions",
+                    model.trim()
+                ))
+                .set("authorization", &auth)
+                .send_json(json!({ "input": input }))
+                .map_err(|error| refused("Replicate", error))?
+                .into_json()
+                .map_err(|error| error.to_string())?;
+            if let Some(url) = prediction["urls"]["get"].as_str() {
+                let _ = std::fs::write(&pending, url);
+            }
+            prediction
+        }
+    };
     // A video takes minutes; ask every five seconds until it says.
     loop {
         match prediction["status"].as_str().unwrap_or_default() {
             "succeeded" => break,
             "failed" | "canceled" => {
+                let _ = std::fs::remove_file(&pending);
                 return Err(format!(
                     "Replicate could not make {stem}: {}",
                     prediction["error"].as_str().unwrap_or("no reason given")
@@ -534,8 +566,19 @@ fn replicate(
         .and_then(|extension| extension.to_str())
         .unwrap_or("mp4");
     let out = dir.join(format!("{stem}.{extension}"));
-    fetch(&agent, url, &out)?;
+    // Replicate keeps what it made for an hour: one gone by now is asked
+    // for again on the next try.
+    fetch(&agent, url, &out).inspect_err(|_| {
+        let _ = std::fs::remove_file(&pending);
+    })?;
+    let _ = std::fs::remove_file(&pending);
     Ok(out)
+}
+
+/// Where the address of a shot asked for but not yet saved is kept, so a
+/// run that ends before it comes back follows it instead of paying again.
+pub fn pending(dir: &Path, stem: &str) -> PathBuf {
+    dir.join(format!("{stem}.pending"))
 }
 
 /// The template with `{prompt}`, `{seconds}` and `{aspect}` filled in. A

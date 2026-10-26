@@ -10,6 +10,7 @@
 //!     voice/<scene>.*     the narration
 //!     shots/<scene>_<n>.* the shots
 //!     frames/<scene>_<n>.* the stills clips start from
+//!     idea.json           the idea it was written from, to find it again
 //! ```
 //!
 //! Every step skips a file that is already there, so a job stopped half
@@ -35,7 +36,7 @@ pub struct Job {
 }
 
 /// Where the making is, for the sheet's bar.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Step {
     /// Scene `n` (from 1) of `of` being read aloud.
     Voice {
@@ -43,6 +44,8 @@ pub enum Step {
         n: usize,
         /// Of how many.
         of: usize,
+        /// The words being read.
+        text: String,
     },
     /// Shot `n` (from 1) of `of` being made.
     Shot {
@@ -50,10 +53,52 @@ pub enum Step {
         n: usize,
         /// Of how many.
         of: usize,
+        /// What it is to show.
+        prompt: String,
+    },
+    /// Shot `n` is made and saved: a run ended after this keeps it.
+    Made {
+        /// This one.
+        n: usize,
+        /// Of how many.
+        of: usize,
+        /// A still of it to show, when there is one: the shot itself, or
+        /// the picture a clip started from.
+        picture: Option<PathBuf>,
+        /// What the run has paid so far, in dollars.
+        spent: f64,
     },
     /// The files being probed.
     Probing,
 }
+
+/// The idea a job was written from: kept in its folder, so the sheet opened
+/// again - the app closed, another project opened in between - finds the
+/// job and carries on with it rather than starting over.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Idea {
+    /// The idea, in the person's words: what names the job's folder.
+    pub topic: String,
+    /// Audience, tone, must-haves.
+    #[serde(default)]
+    pub notes: String,
+}
+
+/// How far a job is: what its folder already holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Status {
+    /// Scenes with words to read.
+    pub voices: usize,
+    /// How many of them are read.
+    pub voices_made: usize,
+    /// Shots.
+    pub shots: usize,
+    /// How many of them are made.
+    pub shots_made: usize,
+}
+
+/// The extensions of a still, to show one of a shot.
+const STILL_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 
 /// What the making leaves for the cut.
 #[derive(Clone, Debug, Default)]
@@ -104,6 +149,94 @@ impl Job {
                 slug
             }),
         }
+    }
+
+    /// The idea's file.
+    pub fn idea(&self) -> PathBuf {
+        self.dir.join("idea.json")
+    }
+
+    /// Keeps the idea the job is written from in its folder.
+    pub fn remember(&self, idea: &Idea) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|error| format!("{}: {error}", self.dir.display()))?;
+        let text = serde_json::to_string_pretty(idea).map_err(|error| error.to_string())?;
+        std::fs::write(self.idea(), text)
+            .map_err(|error| format!("{}: {error}", self.idea().display()))
+    }
+
+    /// The idea of the job in `project` worked on last: the one whose
+    /// folder changed last, among those that keep their idea.
+    pub fn latest(project: &Path) -> Option<Idea> {
+        std::fs::read_dir(project.join("generate"))
+            .ok()?
+            .flatten()
+            .filter_map(|entry| {
+                let job = Job { dir: entry.path() };
+                let idea: Idea =
+                    serde_json::from_str(&std::fs::read_to_string(job.idea()).ok()?).ok()?;
+                let changed = job.last_change();
+                Some((changed, idea))
+            })
+            .filter(|(_, idea)| !idea.topic.trim().is_empty())
+            .max_by_key(|(changed, _)| *changed)
+            .map(|(_, idea)| idea)
+    }
+
+    /// When anything in the folder was last written.
+    fn last_change(&self) -> std::time::SystemTime {
+        let changed = |path: &Path| path.metadata().and_then(|meta| meta.modified()).ok();
+        [
+            self.idea(),
+            self.storyboard(),
+            self.shots_dir(),
+            self.voice_dir(),
+        ]
+        .iter()
+        .filter_map(|path| changed(path))
+        .max()
+        .unwrap_or(std::time::UNIX_EPOCH)
+    }
+
+    /// How far the job is with `board`; `voiced` is whether its scenes
+    /// are read at all.
+    pub fn status(&self, board: &Storyboard, voiced: bool) -> Status {
+        let mut status = Status::default();
+        if voiced {
+            for scene in board
+                .scenes()
+                .filter(|scene| !scene.narration.trim().is_empty())
+            {
+                status.voices += 1;
+                if providers::existing(&self.voice_dir(), &scene.id, &VOICE_EXTENSIONS).is_some() {
+                    status.voices_made += 1;
+                }
+            }
+        }
+        let stood_in: Vec<String> = std::fs::read_to_string(self.stand_ins())
+            .unwrap_or_default()
+            .lines()
+            .map(|line| line.trim().to_owned())
+            .collect();
+        for scene in board.scenes() {
+            for index in 0..scene.shots.len() {
+                let stem = shot_stem(&scene.id, index);
+                status.shots += 1;
+                if !stood_in.contains(&stem)
+                    && providers::existing(&self.shots_dir(), &stem, &SHOT_EXTENSIONS).is_some()
+                {
+                    status.shots_made += 1;
+                }
+            }
+        }
+        status
+    }
+
+    /// A still of the shot `stem` to show: the shot, or the picture the
+    /// clip started from.
+    pub fn picture(&self, stem: &str) -> Option<PathBuf> {
+        providers::existing(&self.shots_dir(), stem, &STILL_EXTENSIONS)
+            .or_else(|| providers::existing(&self.frames_dir(), stem, &STILL_EXTENSIONS))
     }
 
     /// The storyboard's file.
@@ -178,8 +311,60 @@ impl Job {
                         break;
                     }
                 }
+                // A shot asked for from the old words is not followed.
+                let _ = std::fs::remove_file(providers::pending(&dir, name));
             }
         }
+    }
+
+    /// Removes what was made for `old` that `new` asks for differently: a
+    /// script written again keeps the narration and the shots whose words
+    /// it did not change, and makes the rest from the new words rather
+    /// than showing pictures of the old ones.
+    pub fn retire(&self, old: &Storyboard, new: &Storyboard) {
+        let voices = |board: &Storyboard| -> HashMap<String, (String, String)> {
+            board
+                .scenes()
+                .map(|scene| {
+                    (
+                        scene.id.clone(),
+                        (scene.narration.clone(), scene.voice.clone()),
+                    )
+                })
+                .collect()
+        };
+        let shots = |board: &Storyboard| -> HashMap<String, (String, String, ShotKind)> {
+            board
+                .chapters
+                .iter()
+                .flat_map(|chapter| chapter.scenes.iter().map(move |scene| (chapter, scene)))
+                .flat_map(|(chapter, scene)| {
+                    scene.shots.iter().enumerate().map(move |(index, shot)| {
+                        (
+                            shot_stem(&scene.id, index),
+                            (
+                                board.prompt(chapter, shot),
+                                board.video_prompt(chapter, shot),
+                                shot.kind,
+                            ),
+                        )
+                    })
+                })
+                .collect()
+        };
+        let (old_voices, new_voices) = (voices(old), voices(new));
+        let (old_shots, new_shots) = (shots(old), shots(new));
+        let changed_voices: Vec<String> = old_voices
+            .iter()
+            .filter(|(id, words)| new_voices.get(*id) != Some(words))
+            .map(|(id, _)| id.clone())
+            .collect();
+        let changed_shots: Vec<String> = old_shots
+            .iter()
+            .filter(|(stem, words)| new_shots.get(*stem) != Some(words))
+            .map(|(stem, _)| stem.clone())
+            .collect();
+        self.forget(&changed_voices, &changed_shots);
     }
 
     /// Writes the storyboard and its prompt sheet.
@@ -232,6 +417,7 @@ impl Job {
                 progress(Step::Voice {
                     n: i + 1,
                     of: spoken.len(),
+                    text: scene.narration.trim().to_owned(),
                 });
                 match voice {
                     Voice::None => {}
@@ -289,9 +475,13 @@ impl Job {
                 }
                 .clamp(2.0, 10.0);
                 match shots {
-                    Shots::Folder => missing.push(stem),
+                    Shots::Folder => missing.push(stem.clone()),
                     Shots::Draft => {
-                        progress(Step::Shot { n, of: total });
+                        progress(Step::Shot {
+                            n,
+                            of: total,
+                            prompt: shot.prompt.clone(),
+                        });
                         providers::draft(&shots_dir.join(format!("{stem}.png")), width, height, n)?;
                     }
                     Shots::Replicate {
@@ -300,7 +490,11 @@ impl Job {
                         video_model,
                         video_input,
                     } => {
-                        progress(Step::Shot { n, of: total });
+                        progress(Step::Shot {
+                            n,
+                            of: total,
+                            prompt: shot.prompt.clone(),
+                        });
                         let prompt = board.prompt(chapter, shot);
                         // A shot written as a clip moves, when there is a
                         // video model; a clip that cannot be made becomes a
@@ -388,9 +582,20 @@ impl Job {
                                     height,
                                     n,
                                 )?;
+                                // Noted as it happens: a run that ends early
+                                // still makes this shot again next time.
+                                self.remember_stand_ins(&stood_in)?;
                             }
                         }
                     }
+                }
+                if !matches!(shots, Shots::Folder) {
+                    progress(Step::Made {
+                        n,
+                        of: total,
+                        picture: self.picture(&stem),
+                        spent: spend.spent,
+                    });
                 }
             }
         }
@@ -402,7 +607,6 @@ impl Job {
             ));
         }
 
-        self.remember_stand_ins(&stood_in)?;
         progress(Step::Probing);
         let mut made = Made {
             stand_ins,
@@ -575,5 +779,92 @@ mod tests {
             Job::new(Path::new("/p"), "  ").dir,
             Path::new("/p/generate/video")
         );
+    }
+
+    #[test]
+    fn the_job_worked_on_last_is_found_again() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-latest-{}", std::process::id()));
+        assert_eq!(Job::latest(&root), None);
+        let older = Job::new(&root, "older idea");
+        older
+            .remember(&Idea {
+                topic: "older idea".into(),
+                notes: String::new(),
+            })
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let newer = Job::new(&root, "newer idea");
+        let idea = Idea {
+            topic: "newer idea".into(),
+            notes: "for children".into(),
+        };
+        newer.remember(&idea).unwrap();
+        assert_eq!(Job::latest(&root), Some(idea));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_job_says_how_far_it_is() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-status-{}", std::process::id()));
+        let job = Job::new(&root, "status");
+        let mut board: Storyboard = serde_json::from_str(
+            r#"{"title":"T","chapters":[{"title":"A","scenes":[
+                {"narration":"n","seconds":6,"shots":[{"prompt":"a"},{"prompt":"b"}]},
+                {"narration":"","seconds":2,"shots":[{"prompt":"c"}]}]}]}"#,
+        )
+        .unwrap();
+        board.tidy().unwrap();
+        std::fs::create_dir_all(job.shots_dir()).unwrap();
+        std::fs::create_dir_all(job.voice_dir()).unwrap();
+        std::fs::write(job.voice_dir().join("c01s01.wav"), b"x").unwrap();
+        std::fs::write(job.shots_dir().join("c01s01_1.png"), b"x").unwrap();
+        std::fs::write(job.shots_dir().join("c01s01_2.png"), b"x").unwrap();
+        // A colour card standing in for a shot is not a shot made.
+        job.remember_stand_ins(&["c01s01_2".to_owned()]).unwrap();
+        let status = job.status(&board, true);
+        assert_eq!(
+            status,
+            Status {
+                voices: 1,
+                voices_made: 1,
+                shots: 3,
+                shots_made: 1,
+            }
+        );
+        assert_eq!(job.status(&board, false).voices, 0);
+        assert_eq!(
+            job.picture("c01s01_1"),
+            Some(job.shots_dir().join("c01s01_1.png"))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_script_written_again_keeps_only_what_it_did_not_change() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-retire-{}", std::process::id()));
+        let job = Job::new(&root, "retire");
+        let board = |second: &str| -> Storyboard {
+            let mut board: Storyboard = serde_json::from_str(&format!(
+                r#"{{"title":"T","chapters":[{{"title":"A","scenes":[
+                    {{"narration":"same words","seconds":6,"shots":[{{"prompt":"a"}},{{"prompt":"{second}"}}]}}]}}]}}"#
+            ))
+            .unwrap();
+            board.tidy().unwrap();
+            board
+        };
+        std::fs::create_dir_all(job.shots_dir()).unwrap();
+        std::fs::create_dir_all(job.voice_dir()).unwrap();
+        std::fs::write(job.voice_dir().join("c01s01.wav"), b"x").unwrap();
+        for stem in ["c01s01_1", "c01s01_2"] {
+            std::fs::write(job.shots_dir().join(format!("{stem}.png")), b"x").unwrap();
+        }
+        job.retire(&board("b"), &board("something else"));
+        assert!(job.voice_dir().join("c01s01.wav").exists());
+        assert!(job.shots_dir().join("c01s01_1.png").exists());
+        assert!(!job.shots_dir().join("c01s01_2.png").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
