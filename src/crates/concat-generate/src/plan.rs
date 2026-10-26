@@ -431,6 +431,16 @@ pub fn cut(
             }
         }
     }
+    // A lane the plan put nothing on is taken away: a cut with no
+    // narration or music would otherwise show its pictures under empty
+    // rows, out of sight on a phone's short stack of lanes.
+    for (kind, index) in [(Kind::Voice, 1), (Kind::Music, 2), (Kind::Title, 3)] {
+        if !placements.iter().any(|p| p.kind == kind) {
+            editor.apply(Command::RemoveTrack {
+                track_id: lanes[index].clone(),
+            });
+        }
+    }
     Ok(timeline)
 }
 
@@ -689,6 +699,40 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+        }
+    }
+
+    #[test]
+    fn lanes_left_empty_are_taken_away() {
+        let board = board();
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().voice = None;
+        let options = Options {
+            titles: false,
+            ..Options::default()
+        };
+        let placements = plan(&board, &files, &options, None).unwrap();
+        let media = HashMap::from([
+            (
+                "/a.mp4".to_owned(),
+                probed("/a.mp4", MediaKind::Video, Some(4.0)),
+            ),
+            (
+                "/b.mp4".to_owned(),
+                probed("/b.mp4", MediaKind::Video, Some(6.0)),
+            ),
+            (
+                "/c.png".to_owned(),
+                probed("/c.png", MediaKind::Image, None),
+            ),
+        ]);
+        let mut editor = Bare(Editor::default());
+        cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        let active = editor.0.project().active();
+        // The pictures and the captions, and no lane between them.
+        assert_eq!(active.tracks.len(), 2, "{:?}", active.tracks);
+        for track in &active.tracks {
+            assert!(active.clips.iter().any(|c| c.track_id == track.id));
         }
     }
 
