@@ -168,10 +168,14 @@ pub fn plan(
         // The scene's time shared over its shots in proportion to their own
         // lengths, so a ten-second clip is not squeezed to match a four.
         let even = length / made.shots.len() as f64;
+        // A length the probe could not read - none, nought, not a number
+        // - counts as an even share, so one odd file cannot leave every
+        // later shot without a place (#16's phone run: a clip probed at no
+        // length made the shares 0/0).
         let weights: Vec<f64> = made
             .shots
             .iter()
-            .map(|(_, source)| source.unwrap_or(even))
+            .map(|(_, source)| source.filter(|s| s.is_finite() && *s > 0.1).unwrap_or(even))
             .collect();
         let total: f64 = weights.iter().sum();
         let mut at = t;
@@ -278,14 +282,16 @@ pub trait Editing {
 
 /// Lays the plan down on a new timeline named after the video, framed for
 /// its aspect: every file imported (`media` maps a path to its probe), then
-/// each placement as clips. Returns the new timeline's id.
+/// each placement as clips. Returns the new timeline's id, and the files
+/// the timeline would not take - left out, and said, rather than losing the
+/// whole cut over one of them.
 pub fn cut(
     editor: &mut dyn Editing,
     board: &Storyboard,
     placements: &[Placement],
     media: &HashMap<String, NewMedia>,
     options: &Options,
-) -> Result<String, String> {
+) -> Result<(String, Vec<String>), String> {
     let timeline = editor
         .apply(Command::AddTimeline)
         .ok_or("the new timeline could not be made")?;
@@ -347,6 +353,7 @@ pub fn cut(
     let shots: Vec<&Placement> = placements.iter().filter(|p| p.kind == Kind::Shot).collect();
     let last_music = placements.iter().rposition(|p| p.kind == Kind::Music);
     let mut captions: Option<String> = None;
+    let mut left_out = Vec::new();
     for kind in order {
         for (index, p) in placements
             .iter()
@@ -356,15 +363,28 @@ pub fn cut(
             match kind {
                 Kind::Shot | Kind::Voice | Kind::Music => {
                     let file = p.file.as_deref().unwrap_or_default();
-                    let media = media_id(editor, file)?;
-                    let clip = editor
-                        .apply(Command::AddClip {
-                            media_id: media.clone(),
-                            track_id: lane(kind),
-                            start: p.start,
-                            ripple: false,
-                        })
-                        .ok_or_else(|| format!("{file} could not be placed"))?;
+                    let placed = media_id(editor, file).and_then(|media| {
+                        if !p.start.is_finite() || !p.length.is_finite() {
+                            return Err(format!("{file} has no time to go at"));
+                        }
+                        editor
+                            .apply(Command::AddClip {
+                                media_id: media.clone(),
+                                track_id: lane(kind),
+                                start: p.start,
+                                ripple: false,
+                            })
+                            .map(|clip| (media, clip))
+                            .ok_or_else(|| format!("{file} could not be placed"))
+                    });
+                    let (media, clip) = match placed {
+                        Ok(placed) => placed,
+                        Err(error) => {
+                            log::warn!("generate: {error}");
+                            left_out.push(file.to_owned());
+                            continue;
+                        }
+                    };
                     fit(editor, &clip, &media, &lane(kind), p);
                     let mut patch = ClipPatch::default();
                     if kind == Kind::Shot {
@@ -441,7 +461,7 @@ pub fn cut(
             });
         }
     }
-    Ok(timeline)
+    Ok((timeline, left_out))
 }
 
 /// Makes a clip exactly as long as its slot: trimmed when the file is
@@ -449,8 +469,11 @@ pub fn cut(
 /// when it is a shorter video - which then plays again from its top for
 /// whatever is still left, the way an editor loops b-roll.
 fn fit(editor: &mut dyn Editing, clip: &str, media: &str, lane: &str, p: &Placement) {
-    let still = p.source.is_none();
-    let mut natural = p.source.unwrap_or(5.0);
+    // A clip whose length the probe could not read is fitted as a still
+    // is: trimmed to its place, never slowed by a speed of nought.
+    let source = p.source.filter(|s| s.is_finite() && *s > 0.1);
+    let still = source.is_none();
+    let mut natural = source.unwrap_or(5.0);
     if p.kind == Kind::Shot && !still && natural < p.length {
         let speed = (natural / p.length).max(SLOWEST);
         editor.apply(Command::SetClipSpeed {
@@ -727,7 +750,8 @@ mod tests {
             ),
         ]);
         let mut editor = Bare(Editor::default());
-        cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        let (_, left_out) = cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        assert!(left_out.is_empty());
         let active = editor.0.project().active();
         // The pictures and the captions, and no lane between them.
         assert_eq!(active.tracks.len(), 2, "{:?}", active.tracks);
@@ -765,7 +789,7 @@ mod tests {
         ]);
         let mut editor = Bare(Editor::default());
         let before = editor.0.project().timelines.len();
-        let timeline = cut(
+        let (timeline, left_out) = cut(
             &mut editor,
             &board,
             &placements,
@@ -774,6 +798,7 @@ mod tests {
         )
         .unwrap();
 
+        assert!(left_out.is_empty());
         let project = editor.0.project();
         assert_eq!(project.timelines.len(), before + 1);
         let active = project.active();
@@ -813,5 +838,23 @@ mod tests {
         assert_eq!(on(3).len(), 1);
         assert_eq!(on(4).len(), 2);
         assert!(on(4).iter().all(|c| c.kind == ClipKind::Text));
+    }
+
+    #[test]
+    fn a_clip_probed_at_no_length_still_leaves_every_shot_a_place() {
+        let mut files = files();
+        for (_, source) in &mut files.get_mut("c01s01").unwrap().shots {
+            *source = Some(0.0);
+        }
+        let placements = plan(&board(), &files, &Options::default(), None).unwrap();
+        let shots = of(&placements, Kind::Shot);
+        assert!(!shots.is_empty());
+        for shot in shots {
+            assert!(
+                shot.start.is_finite() && shot.length.is_finite(),
+                "{shot:?}"
+            );
+            assert!(shot.length > 0.0, "{shot:?}");
+        }
     }
 }

@@ -25,7 +25,7 @@ use concat_generate::job::{Costs, Idea, Job, Made, Remade, Status, Step};
 use concat_generate::plan::{self, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
-use concat_generate::writer::{self, Brief, Writing};
+use concat_generate::writer::{self, Brief, Suggestion, Writing};
 use concat_project::Command;
 use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
@@ -109,6 +109,11 @@ pub enum GenerateMsg {
     Remake(i32, i32, i32),
     /// Make the shot the selected clip shows again.
     RemakeClip,
+    /// Ask the writer for another picture for one shot: chapter, scene
+    /// and shot.
+    Suggest(i32, i32, i32),
+    /// The writer's other picture, or why there is none.
+    Suggested(usize, usize, usize, Box<Result<Suggestion, String>>),
     /// A shot is made again, or why not: its stem and its job's folder.
     Remade(String, PathBuf, Box<Result<(Remade, NewMedia), String>>),
     /// Small pictures of shots, by stem: width, height and RGBA.
@@ -152,6 +157,9 @@ pub struct GeneratePane {
     thumbs: HashMap<String, slint::Image>,
     /// The shots being made again, by stem.
     remaking: HashSet<String>,
+    /// The shots the writer is finding another picture for: chapter,
+    /// scene and shot.
+    suggesting: HashSet<(usize, usize, usize)>,
     /// The storyboard already in the job's folder, read when the sheet
     /// opens and whenever the idea changes.
     board: Option<Storyboard>,
@@ -198,6 +206,7 @@ impl Default for GeneratePane {
             status: String::new(),
             thumbs: HashMap::new(),
             remaking: HashSet::new(),
+            suggesting: HashSet::new(),
             board: None,
             repeats: HashSet::new(),
             script_open: false,
@@ -337,6 +346,27 @@ impl GeneratePane {
                         Err(error) => studio.notify(&error, true),
                     },
                     None => studio.notify(&t("generate.notAShot"), true),
+                }
+            }
+            GenerateMsg::Suggest(chapter, scene, shot) => {
+                self.suggest(studio, chapter, scene, shot)
+            }
+            GenerateMsg::Suggested(chapter, scene, shot, result) => {
+                self.suggesting.remove(&(chapter, scene, shot));
+                match *result {
+                    Ok(suggestion) => {
+                        let (c, s, n) = (chapter as i32, scene as i32, shot as i32);
+                        if let Some((stem, found)) = self.shot_mut(c, s, n) {
+                            found.prompt = suggestion.prompt;
+                            if found.kind == ShotKind::Video && !suggestion.motion.is_empty() {
+                                found.motion = suggestion.motion;
+                            }
+                            self.stale_shots.insert(stem);
+                            self.dirty = true;
+                            self.changed();
+                        }
+                    }
+                    Err(error) => self.script_message = error,
                 }
             }
             GenerateMsg::Remade(stem, dir, result) => {
@@ -811,6 +841,54 @@ impl GeneratePane {
         );
     }
 
+    /// Asks the writer for another picture for one shot, on a worker; it
+    /// takes the shot's words' place when it comes, to read, edit, and
+    /// make again if it is better.
+    fn suggest(&mut self, studio: &mut Studio, chapter: i32, scene: i32, shot: i32) {
+        let (Ok(chapter), Ok(scene), Ok(shot)) = (
+            usize::try_from(chapter),
+            usize::try_from(scene),
+            usize::try_from(shot),
+        ) else {
+            return;
+        };
+        let Some(board) = self.board.clone() else {
+            return;
+        };
+        if !self.suggesting.insert((chapter, scene, shot)) {
+            return;
+        }
+        let key = studio.prefs.generate.anthropic_key.clone();
+        if key.trim().is_empty() {
+            self.suggesting.remove(&(chapter, scene, shot));
+            self.script_message = t("generate.needAnthropicKey");
+            return;
+        }
+        self.script_message.clear();
+        let brief = self.brief(studio);
+        spawn_in_project(
+            move || {
+                writer::suggest_shot(
+                    &board,
+                    &brief,
+                    chapter,
+                    scene,
+                    shot,
+                    &key,
+                    writer::DEFAULT_MODEL,
+                )
+            },
+            move |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::Suggested(
+                    chapter,
+                    scene,
+                    shot,
+                    Box::new(result),
+                )))
+            },
+        );
+    }
+
     /// Asks Claude for the storyboard on a worker; `then_make` goes on to
     /// make and cut it once it is written.
     fn write(&mut self, studio: &mut Studio, then_make: bool) {
@@ -1140,7 +1218,7 @@ impl GeneratePane {
         };
         let mut editing = Session(studio);
         match plan::cut(&mut editing, board, &placements, &media, &options) {
-            Ok(_) => {
+            Ok((_, left_out)) => {
                 self.open = false;
                 let minutes = plan::total_length(&placements) / 60.0;
                 studio.notify(
@@ -1155,6 +1233,18 @@ impl GeneratePane {
                 }
                 if !made.stand_ins.is_empty() {
                     studio.notify(&tf("generate.standIns", &[&made.stand_ins.len()]), true);
+                }
+                if !left_out.is_empty() {
+                    let names: Vec<String> = left_out
+                        .iter()
+                        .map(|path| {
+                            Path::new(path)
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| path.clone())
+                        })
+                        .collect();
+                    studio.notify(&tf("generate.leftOut", &[&names.join(", ")]), true);
                 }
                 if studio.prefs.generate.auto_export.unwrap_or(true)
                     && let Some(job) = self.job(studio)
@@ -1383,6 +1473,7 @@ impl GeneratePane {
                         has_thumb: self.thumbs.contains_key(&stem),
                         thumb: self.thumbs.get(&stem).cloned().unwrap_or_default(),
                         remaking: self.remaking.contains(&stem),
+                        suggesting: self.suggesting.contains(&(c, s, n)),
                         cost: if paid {
                             let cost = match shot.kind {
                                 ShotKind::Video => prices.clip + prices.still,

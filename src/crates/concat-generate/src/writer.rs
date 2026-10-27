@@ -290,6 +290,108 @@ pub fn rewrite_scene(
     .ok_or_else(|| "the rewritten scene came back without a picture".to_owned())
 }
 
+/// A new picture for one shot, from the writer: what it shows, and for a
+/// clip how it moves.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Suggestion {
+    /// What the shot shows.
+    pub prompt: String,
+    /// How a clip moves; empty for a still.
+    pub motion: String,
+}
+
+/// Asks the writer for another picture for shot `shot` of scene `scene` of
+/// chapter `chapter` (each from 0): one that says what the narration says
+/// as well or better than the picture it has, in the film's look and the
+/// chapter's light, and shows nothing another shot already does. One short
+/// call - the cost of a few hundred words - and nothing is made: the
+/// person reads it, and makes the shot again if they like it.
+pub fn suggest_shot(
+    board: &Storyboard,
+    brief: &Brief,
+    chapter: usize,
+    scene: usize,
+    shot: usize,
+    key: &str,
+    model: &str,
+) -> Result<Suggestion, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to write the script".to_owned());
+    }
+    let prompt = suggest_prompt(board, brief, chapter, scene, shot)?;
+    let video = board.chapters[chapter].scenes[scene].shots[shot].kind == ShotKind::Video;
+    let got = crate::providers::retry(|| call(key, model, &suggest_tool(), &prompt))?;
+    let suggestion = Suggestion {
+        prompt: text(&got["prompt"]),
+        motion: if video {
+            text(&got["motion"])
+        } else {
+            String::new()
+        },
+    };
+    if suggestion.prompt.is_empty() {
+        return Err("the writer suggested no picture".to_owned());
+    }
+    Ok(suggestion)
+}
+
+/// What [`suggest_shot`] asks.
+fn suggest_prompt(
+    board: &Storyboard,
+    brief: &Brief,
+    chapter: usize,
+    scene: usize,
+    shot: usize,
+) -> Result<String, String> {
+    let found = board
+        .chapters
+        .get(chapter)
+        .and_then(|c| c.scenes.get(scene))
+        .and_then(|s| s.shots.get(shot).map(|found| (s, found)));
+    let Some((the_scene, the_shot)) = found else {
+        return Err("no such shot".to_owned());
+    };
+    let the_chapter = &board.chapters[chapter];
+    let others: String = the_scene
+        .shots
+        .iter()
+        .enumerate()
+        .filter(|(n, _)| *n != shot)
+        .map(|(n, other)| format!("- shot {}: {}\n", n + 1, other.prompt.trim()))
+        .collect();
+    let kind = match the_shot.kind {
+        ShotKind::Video => {
+            "a video clip: give the picture and, as motion, how the camera and \
+                            what is in the picture move"
+        }
+        ShotKind::Image => "a still image, moved over slowly by the cut",
+    };
+    let mut prompt = format!(
+        "{}\nVisual style: {}\nChapter \"{}\", its light and palette: {}\n\
+         The scene's narration: \"{}\"\n",
+        brief.text(),
+        board.style.visual,
+        the_chapter.title,
+        the_chapter.mood,
+        the_scene.narration.trim(),
+    );
+    if !others.is_empty() {
+        prompt += &format!("The scene's other shots:\n{others}");
+    }
+    prompt += &format!(
+        "\nShot {} of this scene is {kind}, {:.0} seconds. Its picture now: \"{}\"\n\
+         The producer wants another picture for it. Write one that shows what the narration \
+         says at that moment as well or better, in the film's style and the chapter's light: a \
+         different subject, place, angle or shot size from the one it has, written as an image \
+         prompt (subject, setting, light, lens, composition), in English.",
+        shot + 1,
+        the_shot.seconds,
+        the_shot.prompt.trim(),
+    );
+    prompt += &avoid_list(board, Some(&the_scene.id));
+    Ok(prompt)
+}
+
 /// The prompt for chapter `i`: the brief, the outline, the shape scene by
 /// scene, and the pictures to keep clear of.
 fn chapter_prompt(
@@ -783,6 +885,21 @@ fn scene_tool() -> Value {
     })
 }
 
+fn suggest_tool() -> Value {
+    json!({
+        "name": "suggested_shot",
+        "description": "Another picture for the shot.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "The image prompt."},
+                "motion": {"type": "string", "description": "For a video clip: how it moves."}
+            },
+            "required": ["prompt"]
+        }
+    })
+}
+
 fn revise_tool() -> Value {
     json!({
         "name": "revised_shots",
@@ -993,6 +1110,41 @@ mod tests {
         assert!(prompt.contains("Its mood: ash grey"));
         assert!(prompt.contains("- caravan crossing red dunes at dawn"));
         assert!(prompt.contains("1. One: the founding"));
+    }
+
+    #[test]
+    fn a_shot_is_asked_for_anew_in_its_scene_and_light() {
+        let mut board = Storyboard {
+            title: "T".into(),
+            aspect: "16:9".into(),
+            chapters: vec![Chapter {
+                title: "One".into(),
+                mood: "dusk violet".into(),
+                scenes: vec![
+                    scene(&[("image", "caravan crossing red dunes"), ("video", "a gate")]),
+                    scene(&[("image", "a market at noon")]),
+                ],
+                ..Chapter::default()
+            }],
+            ..Storyboard::default()
+        };
+        board.tidy().ok();
+        let brief = Brief {
+            topic: "lost cities".into(),
+            minutes: 3.0,
+            ..Brief::default()
+        };
+        let prompt = suggest_prompt(&board, &brief, 0, 0, 1).unwrap();
+        assert!(prompt.contains("its light and palette: dusk violet"));
+        assert!(prompt.contains("- shot 1: caravan crossing red dunes"));
+        assert!(prompt.contains("Shot 2 of this scene is a video clip"));
+        assert!(prompt.contains("Its picture now: \"a gate\""));
+        // Other scenes' pictures are kept clear of, this scene's are not
+        // listed twice.
+        assert!(prompt.contains("- a market at noon"));
+        assert!(suggest_prompt(&board, &brief, 0, 0, 9).is_err());
+        let error = suggest_shot(&board, &brief, 0, 0, 1, " ", DEFAULT_MODEL).unwrap_err();
+        assert!(error.contains("API key"));
     }
 
     #[test]

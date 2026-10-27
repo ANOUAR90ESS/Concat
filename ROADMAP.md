@@ -18,23 +18,26 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
 - ✅ Captions without narration (#13); empty lanes taken away (#14).
 - ✅ A run cut short carries on where it stopped without paying again; the
   running view shows the last shot, the steps and what was spent (#15).
+- ✅ Make one shot again, phase 1: Make again under every shot in the
+  script editor, with its picture, and on a generated clip on the
+  timeline; a new take in `takes/`, swapped in place as one undo step
+  (#16). Known gap: after Undo the timeline shows the earlier take, but the
+  script editor's picture and a later full re-cut use the newest take.
 
 ## In progress
 
-- 🚧 **Make one shot again** (phase 1, this pull request): a "Make again"
-  button under every shot in the script editor, with its picture, and on
-  a generated clip selected on the timeline (the phone's clip tools, the
-  desk's clip menu). Only that shot is made again, as a new take in
-  `takes/`; it replaces the old one in place as one undo step, and no file
-  already made is moved or overwritten.
-  - Known gap: after Undo the timeline shows the earlier take, but the
-    script editor's picture and a later full re-cut use the newest take.
+- 🚧 **Make one shot again, phase 2** (this pull request): "Suggest
+  another" under each shot in the script editor - the writer proposes a
+  new picture for that one shot, in the scene's words and the chapter's
+  light, keeping clear of pictures already used; it replaces the prompt
+  for the person to read, edit and then Make again.
+- 🚧 Editing a shot's words no longer deletes what was paid for: the shot
+  is marked (`stale.txt`) and the next run makes it again as a new take.
+- 🚧 A clip the timeline will not take is left out and named, rather
+  than stopping the whole cut ("... could not be placed", owner's phone).
 
 ## Planned
 
-- ⏳ **Make one shot again, phase 2**: "Suggest another" - Claude writes a
-  better prompt for that one shot before it is made again (costs almost
-  nothing).
 - ⏳ **Step 5: animated captions and Shorts** - word-by-word captions in
   the style of short-form video, and a 9:16 cut of the best minute of a
   long video.
