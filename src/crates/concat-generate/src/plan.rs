@@ -41,6 +41,8 @@ pub struct Options {
     pub captions: bool,
     /// At most this many words a caption.
     pub caption_words: usize,
+    /// How the captions look.
+    pub caption_look: CaptionLook,
     /// Each scene's on-screen text, over its start.
     pub titles: bool,
     /// How long a title stays.
@@ -62,11 +64,34 @@ impl Default for Options {
             min_scene: 3.0,
             captions: true,
             caption_words: 7,
+            caption_look: CaptionLook::Classic,
             titles: true,
             title_seconds: 3.0,
             ken_burns: true,
             music_volume: 0.12,
             fade_seconds: 1.0,
+        }
+    }
+}
+
+/// How the captions look.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CaptionLook {
+    /// A sentence at a time, small, on a dark plate, low in the frame.
+    #[default]
+    Classic,
+    /// A few words at a time, big and bold with a heavy outline, each card
+    /// popping in, every other one in yellow: the look of short-form video.
+    Animated,
+}
+
+impl CaptionLook {
+    /// The most words a card holds in this look; `classic` is the sheet's
+    /// own number for the classic one.
+    pub fn words(self, classic: usize) -> usize {
+        match self {
+            CaptionLook::Classic => classic,
+            CaptionLook::Animated => 3,
         }
     }
 }
@@ -210,7 +235,10 @@ pub fn plan(
         // scene when there is not: a cut with no narration still says what
         // the script says, as subtitles.
         if options.captions {
-            let cards = caption_cards(&scene.narration, options.caption_words);
+            let cards = caption_cards(
+                &scene.narration,
+                options.caption_look.words(options.caption_words),
+            );
             let chars: usize = cards.iter().map(|card| card.chars().count()).sum();
             let over = spoken.unwrap_or(length);
             let mut at = t;
@@ -353,6 +381,7 @@ pub fn cut(
     let shots: Vec<&Placement> = placements.iter().filter(|p| p.kind == Kind::Shot).collect();
     let last_music = placements.iter().rposition(|p| p.kind == Kind::Music);
     let mut captions: Option<String> = None;
+    let mut cards = 0usize;
     let mut left_out = Vec::new();
     for kind in order {
         for (index, p) in placements
@@ -439,14 +468,25 @@ pub fn cut(
                     if captions.is_none() {
                         captions = editor.apply(Command::AddTrack { bottom: false });
                     }
-                    editor.apply(Command::AddTextClip {
+                    let text = p.text.clone().unwrap_or_default();
+                    let (style, offset_y) = match options.caption_look {
+                        CaptionLook::Classic => (caption_style(text), 0.38),
+                        CaptionLook::Animated => (animated_style(text, cards % 2 == 1), 0.24),
+                    };
+                    let card = editor.apply(Command::AddTextClip {
                         track_id: captions.clone(),
                         above: true,
                         start: p.start,
-                        style: Some(caption_style(p.text.clone().unwrap_or_default())),
+                        style: Some(style),
                         duration: Some(p.length),
-                        offset_y: Some(0.38),
+                        offset_y: Some(offset_y),
                     });
+                    if options.caption_look == CaptionLook::Animated
+                        && let Some(card) = card
+                    {
+                        pop(editor, &card, p.length);
+                    }
+                    cards += 1;
                 }
             }
         }
@@ -561,6 +601,48 @@ fn caption_style(content: String) -> TextStyle {
         background_padding_x: 0.022,
         background_padding_y: 0.012,
         ..TextStyle::default()
+    }
+}
+
+/// An animated caption: big, heavy, outlined so it reads over any picture
+/// without a plate; `accent` cards in yellow, the rest in white.
+fn animated_style(content: String, accent: bool) -> TextStyle {
+    TextStyle {
+        content,
+        font_size: 0.075,
+        font_weight: 900.0,
+        color: if accent { "#FFD400" } else { "#FFFFFF" }.to_owned(),
+        stroke_width: 0.008,
+        stroke_color: "#000000".to_owned(),
+        shadow: true,
+        max_width: 0.86,
+        ..TextStyle::default()
+    }
+}
+
+/// A caption card's entrance: it pops - in from small and faint, a touch
+/// past full size, then settles - over its first quarter second whatever
+/// the card's length, so short cards and long ones land alike.
+fn pop(editor: &mut dyn Editing, card: &str, length: f64) {
+    if length <= 0.0 {
+        return;
+    }
+    let at = |seconds: f64| (seconds / length).min(0.45);
+    let keys = [
+        (KeyProperty::Scale, 0.0, 0.6, KeyEase::LINEAR),
+        (KeyProperty::Scale, at(0.12), 1.08, KeyEase::OUT),
+        (KeyProperty::Scale, at(0.24), 1.0, KeyEase::IN_OUT),
+        (KeyProperty::Opacity, 0.0, 0.0, KeyEase::LINEAR),
+        (KeyProperty::Opacity, at(0.1), 1.0, KeyEase::OUT),
+    ];
+    for (property, at, value, ease) in keys {
+        editor.apply(Command::SetClipKey {
+            clip_id: card.to_owned(),
+            property,
+            at,
+            value,
+            ease,
+        });
     }
 }
 
@@ -855,6 +937,74 @@ mod tests {
                 "{shot:?}"
             );
             assert!(shot.length > 0.0, "{shot:?}");
+        }
+    }
+
+    #[test]
+    fn animated_captions_pop_in_a_few_words_at_a_time() {
+        let board = board();
+        let options = Options {
+            caption_look: CaptionLook::Animated,
+            ..Options::default()
+        };
+        let placements = plan(&board, &files(), &options, None).unwrap();
+        let captions = of(&placements, Kind::Caption);
+        let words: Vec<_> = captions
+            .iter()
+            .map(|c| c.text.as_deref().unwrap())
+            .collect();
+        // Three words at most a card, sentences kept apart.
+        assert_eq!(words, ["First sentence here.", "Second one."]);
+        assert!(words.iter().all(|w| w.split_whitespace().count() <= 3));
+
+        let media = HashMap::from([
+            (
+                "/v1.wav".to_owned(),
+                probed("/v1.wav", MediaKind::Audio, Some(5.0)),
+            ),
+            (
+                "/a.mp4".to_owned(),
+                probed("/a.mp4", MediaKind::Video, Some(4.0)),
+            ),
+            (
+                "/b.mp4".to_owned(),
+                probed("/b.mp4", MediaKind::Video, Some(6.0)),
+            ),
+            (
+                "/c.png".to_owned(),
+                probed("/c.png", MediaKind::Image, None),
+            ),
+        ]);
+        let mut editor = Bare(Editor::default());
+        let (_, left_out) = cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        assert!(left_out.is_empty());
+        let active = editor.0.project().active();
+        let mut cards: Vec<_> = active
+            .clips
+            .iter()
+            .filter(|c| {
+                c.text
+                    .as_ref()
+                    .is_some_and(|t| words.contains(&t.content.as_str()))
+            })
+            .collect();
+        cards.sort_by(|a, b| a.start.total_cmp(&b.start));
+        assert_eq!(cards.len(), 2);
+        // Every other card in yellow; each pops: small, past full, settled.
+        let colours: Vec<_> = cards
+            .iter()
+            .map(|c| c.text.as_ref().unwrap().color.clone())
+            .collect();
+        assert_eq!(colours, ["#FFFFFF", "#FFD400"]);
+        for card in cards {
+            let scale: Vec<f64> = card
+                .keys
+                .iter()
+                .filter(|k| k.property == KeyProperty::Scale)
+                .map(|k| k.value)
+                .collect();
+            assert_eq!(scale, [0.6, 1.08, 1.0]);
+            assert!(card.text.as_ref().unwrap().stroke_width > 0.0);
         }
     }
 }

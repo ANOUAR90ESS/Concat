@@ -52,6 +52,8 @@ export struct GenerateSheetData {
     /// Row of the music list; 0 is none.
     music: int,
     captions: bool,
+    /// 0 classic, 1 animated
+    caption-look: int,
     titles: bool,
     anthropic-key: string,
     replicate-token: string,
@@ -166,7 +168,7 @@ export component GenerateDialog inherits Modal {
     /// of a still.
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
-    /// 5 music, 6 clips.
+    /// 5 music, 6 clips, 7 caption look.
     callback choice-changed(field: int, index: int);
     /// Which switch: 0 captions, 1 titles, 2 export when done.
     callback toggled(field: int, on: bool);
@@ -503,6 +505,15 @@ export component GenerateDialog inherits Modal {
                                     checked: root.data.captions;
                                     toggled(on) => { root.toggled(0, on); }
                                 }
+                            }
+                        }
+
+                        if root.data.captions: DialogRow {
+                            label: I18n.t("generate.captionLook");
+                            SegmentedControl {
+                                options: [I18n.t("generate.captionClassic"), I18n.t("generate.captionAnimated")];
+                                current: root.data.caption-look;
+                                changed(index) => { root.choice-changed(7, index); }
                             }
                         }
 
