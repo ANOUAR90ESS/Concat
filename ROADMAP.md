@@ -36,22 +36,26 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
   at most) and a hook, or the opening minute is taken; cut 9:16 from the
   files already made, pictures filling the tall frame, captions animated
   (#19).
+- ✅ A run goes on in the background on Android: a foreground service
+  under a notification, with a wake lock; CI declares it in the APK
+  (#20). Back still closes the app and ends the run.
 
 ## In progress
 
-- 🚧 **Keep a run alive in the background on Android** (this pull
-  request): a foreground service (`java/RunService.java`, data-sync kind)
-  under a notification, with a partial wake lock, started when a run or
-  a Make again begins and stopped when it ends; the screen kept on where
-  the service cannot start. cargo-apk cannot declare a service, so CI
-  adds it to the manifest and the dex to the APK
-  (`scripts/ci/android-service.py`), and the emulator smoke test checks
-  it is installed. Known limit: Back closes the app and ends the run (it
-  resumes when reopened); Home or another app does not. Android 13+ asks
-  once to allow notifications; a no hides the notification only.
+- 🚧 **Fixes from the phone test** (this pull request): Make a Short on a
+  line of its own (beside its hint on a phone it had no width and did not
+  show); the script editor's thumbnails read by what the file holds (a
+  service answers a PNG request with JPEG or WebP) and handed over six at
+  a time; a colour card stood in for a failed shot is kept and the shot
+  made again as a take - removing it broke the export of a cut that used
+  it.
 
 ## Planned
 
+- ⏳ **Captions and pictures shown together all through**: on the phone,
+  after about 30 s, either the caption or the picture shows, not both.
+  The cut lays them right (checked); suspect the phone's renderer -
+  waiting to hear whether an export shows it too.
 - ⏳ **Captions timed to the voice word by word**: today a card's time is
   shared out by its length in letters; reading the narration back with
   the local transcriber would place each word where it is said.
