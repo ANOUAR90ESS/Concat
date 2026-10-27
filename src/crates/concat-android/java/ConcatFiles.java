@@ -9,12 +9,15 @@ import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.util.Log;
+import android.view.WindowManager;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -287,5 +290,69 @@ public class ConcatFiles extends Fragment {
             } catch (IOException ignored) {
             }
         }
+    }
+
+    /** Asked for the notification permission once a process, not every run. */
+    private static boolean askedToNotify;
+
+    /**
+     * Keeps a run going while the app is in the background - the words
+     * say what it is doing - or, with no words, lets go. Through
+     * {@link RunService} where the APK declares it; where it does not, or
+     * Android will not start it, the screen is kept on instead, which at
+     * least keeps the run going while the app is in front. True when the
+     * service took it.
+     */
+    public static boolean keepRunning(final Activity activity, String doing) {
+        Intent intent = new Intent().setClassName(activity.getPackageName(), RunService.NAME);
+        if (doing == null || doing.isEmpty()) {
+            try {
+                activity.stopService(intent);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "could not stop the run service", e);
+            }
+            screenOn(activity, false);
+            return true;
+        }
+        askToNotify(activity);
+        intent.putExtra(RunService.DOING, doing);
+        try {
+            if (activity.startForegroundService(intent) != null) {
+                return true;
+            }
+            Log.i(TAG, "this APK declares no run service");
+        } catch (RuntimeException e) {
+            Log.w(TAG, "could not start the run service", e);
+        }
+        screenOn(activity, true);
+        return false;
+    }
+
+    /**
+     * Android 13 shows a service's notification only to an app allowed to
+     * post one; asked once, and a no is kept - the service runs either way.
+     */
+    private static void askToNotify(Activity activity) {
+        if (askedToNotify || Build.VERSION.SDK_INT < 33) {
+            return;
+        }
+        askedToNotify = true;
+        String permission = "android.permission.POST_NOTIFICATIONS";
+        if (activity.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+            activity.requestPermissions(new String[] {permission}, REQUEST_PICK + 1);
+        }
+    }
+
+    private static void screenOn(final Activity activity, final boolean on) {
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (on) {
+                    activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                } else {
+                    activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                }
+            }
+        });
     }
 }

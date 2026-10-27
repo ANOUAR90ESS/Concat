@@ -254,6 +254,7 @@
   "generate.ideaPlaceholder": "What is the video about? A topic, a story, a question…",
   "generate.imageModel": "Image model",
   "generate.imagePrice": "প্রতি ছবির দাম ($)",
+  "generate.keptAlive": "Making your video. It keeps going while you use other apps.",
   "generate.keptNote": "Every shot is saved the moment it is made. If you leave, open Long video again and press Create video: it carries on where it stopped.",
   "generate.language": "Language",
   "generate.leftOut": "Left out of the cut, the timeline would not take it: {0}. Make it again from the script editor.",

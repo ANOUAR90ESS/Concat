@@ -197,6 +197,34 @@ jobs:
           eval "$(scripts/mobile-env.sh ${{ matrix.target }})"
           cargo apk build --release -p concat-android --target ${{ matrix.target }} 2>&1 | tee build.log
 
+      # cargo-apk declares no service and packs no dex, and a Long video
+      # run goes on in the background through one (java/RunService.java in
+      # concat-android). So the manifest it wrote gets the service, the APK
+      # is packaged again with it, the dex build.rs made goes in as
+      # classes.dex, and it is aligned and signed under the run's key again
+      # - a release's own key goes on in the step after.
+      - name: Add the run service
+        working-directory: src
+        run: |
+          set -euo pipefail
+          sdk=${ANDROID_HOME:-$ANDROID_SDK_ROOT}
+          tools=$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          jar=$sdk/platforms/android-35/android.jar
+          [ -f "$jar" ] || jar=$(find "$sdk/platforms" -name android.jar | sort -V | tail -1)
+          dex=$(ls -t target/${{ matrix.target }}/release/build/concat-android-*/out/classes.dex | head -1)
+          apk=target/release/apk/LongCut.apk
+          python3 ../scripts/ci/android-service.py --apk "$apk" \
+            --manifest target/release/apk/AndroidManifest.xml \
+            --res crates/concat-android/res --dex "$dex" \
+            --aapt "$tools/aapt" --android-jar "$jar" --out "$RUNNER_TEMP/unaligned.apk"
+          "$tools/zipalign" -p -f 4 "$RUNNER_TEMP/unaligned.apk" "$apk"
+          "$tools/apksigner" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" --ks-pass pass:concat \
+            --ks-key-alias concat --key-pass pass:concat "$apk" < /dev/null
+          "$tools/apksigner" verify "$apk"
+          "$tools/aapt" dump xmltree "$apk" AndroidManifest.xml > "$RUNNER_TEMP/manifest.txt"
+          grep -A4 'E: service' "$RUNNER_TEMP/manifest.txt"
+          grep -q 'RunService' "$RUNNER_TEMP/manifest.txt"
+
       # A release's APK is signed over again with the repository's key, so
       # it installs over the build before it. Only a release asks (`sign`);
       # the key and its password reach this one step, the password through

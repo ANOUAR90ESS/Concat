@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
 
-//! Compiles the Java the activity needs - the document picker fragment in
-//! java/ - into one dex file the binary carries and loads at run time.
-//! The same way Slint's Android backend builds its own helper: the SDK's
-//! javac and d8, found through ANDROID_HOME and JAVA_HOME. Nothing to do
-//! for any other target.
+//! Compiles the Java the activity needs - the document picker fragment and
+//! the run service in java/ - into one dex file the binary carries and
+//! loads at run time, and which CI also puts into the APK for the run
+//! service's sake (scripts/ci/android-service.py). The same way Slint's
+//! Android backend builds its own helper: the SDK's javac and d8, found
+//! through ANDROID_HOME and JAVA_HOME. Nothing to do for any other target.
 
 fn main() {
     println!("cargo:rerun-if-changed=java/ConcatFiles.java");
+    println!("cargo:rerun-if-changed=java/RunService.java");
     let target = std::env::var("TARGET").unwrap_or_default();
     if !target.contains("android") {
         return;
@@ -25,6 +27,7 @@ fn main() {
     let android_jar = android_build::android_jar(None).expect("no Android platform found");
     let compiled = android_build::JavaBuild::new()
         .file("java/ConcatFiles.java")
+        .file("java/RunService.java")
         .class_path(&android_jar)
         .classes_out_dir(&classes)
         .java_source_version(8)

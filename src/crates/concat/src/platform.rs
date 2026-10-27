@@ -677,6 +677,37 @@ pub fn install_export_publisher(publisher: ExportPublisher) {
     let _ = EXPORT_PUBLISHER.set(publisher);
 }
 
+/// What a phone does to keep a long job going while the person is away
+/// from the app: `Some(words)` starts it - or says what it is doing now -
+/// and `None` lets go. On Android a foreground service, shown as a
+/// notification, which keeps the process from being frozen in the
+/// background; where the APK has none, the screen kept on instead.
+/// Installed by the phone's own crate before the window runs; see
+/// [`install_keep_alive`].
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub type KeepAlive = Box<dyn Fn(Option<String>) + Send + Sync>;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+static KEEP_ALIVE: std::sync::OnceLock<KeepAlive> = std::sync::OnceLock::new();
+
+/// Installs what [`keep_alive`] calls. Once; a second call is ignored.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn install_keep_alive(keep: KeepAlive) {
+    let _ = KEEP_ALIVE.set(keep);
+}
+
+/// Keeps a long job going while the app is in the background - `Some`
+/// with what it is doing - or lets go, with `None`. Nothing on a desktop,
+/// whose processes are not frozen when their window is behind another.
+pub fn keep_alive(doing: Option<String>) {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    if let Some(keep) = KEEP_ALIVE.get() {
+        keep(doing);
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let _ = doing;
+}
+
 /// Where a finished export ends up on this device when that is not the
 /// folder the export writes into: a phone's "Movies/Concat". None on a
 /// desktop, and on a phone too old to be asked, where the file stays where
