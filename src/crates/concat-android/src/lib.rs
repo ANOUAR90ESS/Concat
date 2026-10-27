@@ -377,6 +377,46 @@ mod publisher {
     }
 }
 
+/// Keeping a run going with the app in the background.
+///
+/// A foreground service - java/RunService.java, started and stopped by
+/// `ConcatFiles.keepRunning` - which shows a notification while a Long
+/// video is being made and keeps the process from being frozen; or, in an
+/// APK that does not declare it, the screen kept on.
+#[cfg(target_os = "android")]
+mod keep_alive {
+    use jni::{jni_sig, jni_str};
+    use slint::android::AndroidApp;
+
+    /// Hands the window's crate the way to keep a run going.
+    pub fn install(app: &AndroidApp) {
+        let app = app.clone();
+        concat::install_keep_alive(Box::new(move |doing| {
+            if let Err(error) = keep(&app, doing.as_deref().unwrap_or_default()) {
+                log::warn!("could not keep the run going in the background: {error}");
+            }
+        }));
+    }
+
+    /// `ConcatFiles.keepRunning`: with words, start or update; empty, stop.
+    fn keep(app: &AndroidApp, doing: &str) -> jni::errors::Result<()> {
+        let held = super::java::with_class(app, |env, activity, class| {
+            let doing = env.new_string(doing)?;
+            env.call_static_method(
+                class,
+                jni_str!("keepRunning"),
+                jni_sig!("(Landroid/app/Activity;Ljava/lang/String;)Z"),
+                &[activity.into(), (&doing).into()],
+            )?
+            .z()
+        })?;
+        if !held {
+            log::info!("no run service in this APK: the screen is kept on instead");
+        }
+        Ok(())
+    }
+}
+
 /// Called by the activity's native glue; the name is the contract.
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
@@ -392,6 +432,7 @@ fn android_main(app: slint::android::AndroidApp) {
     // After the backend, which seeds the JavaVM the Java is reached by.
     picker::install(&app);
     publisher::install(&app);
+    keep_alive::install(&app);
     if let Err(error) = concat::run() {
         log::error!("{error}");
     }

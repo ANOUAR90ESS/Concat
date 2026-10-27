@@ -328,6 +328,12 @@ grep -i 'ResumedActivity' "$out/focus.txt" | grep -q "$package/" \
 # and not only that a process by its name exists.
 grep -E -q ' concat +: ([A-Za-z0-9_:]+: )?Concat .* starting' "$logcat_file" \
   || fail "the app's first line (\"Concat <version> starting\") never reached logcat"
+# The run service the build declares (scripts/ci/android-service.py), as
+# the installed package has it: a Long video run goes on in the background
+# through it.
+services=$(adb shell dumpsys package "$package" 2>/dev/null | tr -d '\r' || true)
+grep -q 'app.concat.editor.RunService' <<< "$services" \
+  || fail "the installed app declares no run service (app.concat.editor.RunService)"
 if [ -n "$ready" ] && [ -z "$seen_ready" ]; then
   fail "no line matching '$ready' within ${wait_secs}s"
 fi

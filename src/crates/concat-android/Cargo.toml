@@ -57,6 +57,22 @@ target_sdk_version = 35
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 
+# A Long video run goes on with the app in the background: a foreground
+# service (java/RunService.java), of the data-sync kind, under a
+# notification, holding a partial wake lock. The service itself is
+# declared by CI (scripts/ci/android-service.py): cargo-apk writes none.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.FOREGROUND_SERVICE"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.WAKE_LOCK"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.POST_NOTIFICATIONS"
+
 [package.metadata.android.application]
 label = "LongCut"
 icon = "@mipmap/ic_launcher"

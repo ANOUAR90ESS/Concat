@@ -254,6 +254,7 @@
   "generate.ideaPlaceholder": "What is the video about? A topic, a story, a question…",
   "generate.imageModel": "Image model",
   "generate.imagePrice": "Prix par image ($)",
+  "generate.keptAlive": "Création de votre vidéo. Elle continue pendant que vous utilisez d'autres apps.",
   "generate.keptNote": "Chaque plan est enregistré dès qu'il est fait. Si vous partez, rouvrez Vidéo longue et appuyez sur Créer la vidéo : elle reprend où elle s'était arrêtée.",
   "generate.language": "Language",
   "generate.leftOut": "Laissé hors du montage, la timeline ne l'a pas pris : {0}. Refaites-le depuis l'éditeur de script.",

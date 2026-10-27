@@ -254,6 +254,7 @@
   "generate.ideaPlaceholder": "What is the video about? A topic, a story, a question…",
   "generate.imageModel": "Image model",
   "generate.imagePrice": "Precio por imagen ($)",
+  "generate.keptAlive": "Creando tu vídeo. Sigue en marcha mientras usas otras apps.",
   "generate.keptNote": "Cada toma se guarda en cuanto se hace. Si sales, abre de nuevo Vídeo largo y pulsa Crear vídeo: sigue donde se quedó.",
   "generate.language": "Language",
   "generate.leftOut": "Se quedó fuera del montaje, la línea de tiempo no lo aceptó: {0}. Rehazlo desde el editor de guion.",

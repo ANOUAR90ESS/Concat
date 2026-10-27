@@ -188,6 +188,8 @@ pub struct GeneratePane {
     stale_shots: BTreeSet<String>,
     /// Asked between files by the running worker.
     stop: Arc<AtomicBool>,
+    /// The phone is told to keep the app going: something is being made.
+    kept_alive: bool,
 }
 
 impl Default for GeneratePane {
@@ -224,6 +226,7 @@ impl Default for GeneratePane {
             stale_voices: BTreeSet::new(),
             stale_shots: BTreeSet::new(),
             stop: Arc::new(AtomicBool::new(false)),
+            kept_alive: false,
         }
     }
 }
@@ -232,6 +235,23 @@ impl GeneratePane {
     /// Applies one message. The studio is the rest of the window; while
     /// this runs the studio's copy of the pane is a blank it must not read.
     pub fn update(&mut self, msg: GenerateMsg, studio: &mut Studio) {
+        self.apply(msg, studio);
+        self.hold();
+    }
+
+    /// A phone keeps the app going in the background while a run or a
+    /// shot made again is under way, and lets go when it ends - told only
+    /// when that changes. Nothing on a desktop.
+    fn hold(&mut self) {
+        let busy = self.running || !self.remaking.is_empty();
+        if busy != self.kept_alive {
+            self.kept_alive = busy;
+            crate::platform::keep_alive(busy.then(|| t("generate.keptAlive")));
+        }
+    }
+
+    /// What a message does, before the phone is told.
+    fn apply(&mut self, msg: GenerateMsg, studio: &mut Studio) {
         match msg {
             GenerateMsg::Open => {
                 self.open = true;
@@ -595,6 +615,9 @@ impl GeneratePane {
     /// next project it finds that project's own last job.
     pub fn closed(&mut self) {
         self.stop.store(true, Ordering::Release);
+        if self.kept_alive {
+            crate::platform::keep_alive(None);
+        }
         *self = GeneratePane {
             minutes: self.minutes,
             captions: self.captions,

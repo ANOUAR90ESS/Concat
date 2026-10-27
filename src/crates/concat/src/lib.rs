@@ -46,7 +46,10 @@ mod platform;
 /// phone shows it. See `platform::pick_files_async` and
 /// `platform::publish_export`.
 #[cfg(any(target_os = "android", target_os = "ios"))]
-pub use platform::{ExportPublisher, FilePicker, install_export_publisher, install_file_picker};
+pub use platform::{
+    ExportPublisher, FilePicker, KeepAlive, install_export_publisher, install_file_picker,
+    install_keep_alive,
+};
 mod panes;
 mod prefs;
 mod presets;

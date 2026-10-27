@@ -31,16 +31,24 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
 - ✅ Step 5a: animated captions - Caption style Classic or Animated (two
   or three words a card, big and outlined, popping in, white and yellow)
   (#18).
+- ✅ Step 5b: Shorts - Make a Short, once every shot of a video is made:
+  the writer picks the minute most worth a Short (scenes in a row, 60 s
+  at most) and a hook, or the opening minute is taken; cut 9:16 from the
+  files already made, pictures filling the tall frame, captions animated
+  (#19).
 
 ## In progress
 
-- 🚧 **Step 5b: Shorts** (this pull request) - Make a Short, once every
-  shot of a video is made: the writer picks the minute most worth a
-  Short (scenes in a row, 60 s at most) and a hook of a few words, or,
-  without a key or with a pick that does not fit, the opening minute is
-  taken. It is cut on a 9:16 timeline of its own from the files already
-  made - nothing is paid for again - with every wide picture filling the
-  tall frame and the captions animated.
+- 🚧 **Keep a run alive in the background on Android** (this pull
+  request): a foreground service (`java/RunService.java`, data-sync kind)
+  under a notification, with a partial wake lock, started when a run or
+  a Make again begins and stopped when it ends; the screen kept on where
+  the service cannot start. cargo-apk cannot declare a service, so CI
+  adds it to the manifest and the dex to the APK
+  (`scripts/ci/android-service.py`), and the emulator smoke test checks
+  it is installed. Known limit: Back closes the app and ends the run (it
+  resumes when reopened); Home or another app does not. Android 13+ asks
+  once to allow notifications; a no hides the notification only.
 
 ## Planned
 
@@ -51,9 +59,6 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
   clips) and ElevenLabs on the phone, by the owner; fix what it shows.
 - ⏳ **Spanish and other interface strings**: many Long video lines are
   still English in es.json and the other locales.
-- ⏳ **Keep a run alive in the background on Android**: a foreground
-  service so leaving the app does not pause a run (today it resumes when
-  reopened, which loses nothing but time).
 
 ## Decided against
 
