@@ -364,6 +364,11 @@ export global Editor {
     /// The phone's bar: the long video sheet, which the desk reaches from
     /// the menu the phone has no room for.
     callback long-video();
+    /// The clip selected shows a shot the long video sheet made, which
+    /// `remake-clip` makes again in its place; `remaking` while it is.
+    in-out property <bool> remakable;
+    in-out property <bool> remaking;
+    callback remake-clip();
     /// The tray's record button: starts a voiceover take, or stops it.
     callback record-voiceover();
     /// A voiceover take is running.

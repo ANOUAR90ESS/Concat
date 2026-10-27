@@ -26,7 +26,7 @@ use concat_project::model::MediaKind;
 use crate::cost::{Prices, Spend};
 use crate::plan::SceneFiles;
 use crate::providers::{self, ModelInputs, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
-use crate::storyboard::{ShotKind, Storyboard, shot_stem};
+use crate::storyboard::{Chapter, Shot, ShotKind, Storyboard, shot_stem};
 
 /// One video's folder.
 #[derive(Clone, Debug, PartialEq)]
@@ -222,9 +222,7 @@ impl Job {
             for index in 0..scene.shots.len() {
                 let stem = shot_stem(&scene.id, index);
                 status.shots += 1;
-                if !stood_in.contains(&stem)
-                    && providers::existing(&self.shots_dir(), &stem, &SHOT_EXTENSIONS).is_some()
-                {
+                if !stood_in.contains(&stem) && self.current(&stem).is_some() {
                     status.shots_made += 1;
                 }
             }
@@ -235,8 +233,16 @@ impl Job {
     /// A still of the shot `stem` to show: the shot, or the picture the
     /// clip started from.
     pub fn picture(&self, stem: &str) -> Option<PathBuf> {
-        providers::existing(&self.shots_dir(), stem, &STILL_EXTENSIONS)
-            .or_else(|| providers::existing(&self.frames_dir(), stem, &STILL_EXTENSIONS))
+        let current = self.current(stem)?;
+        let still = current
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|extension| STILL_EXTENSIONS.contains(&extension));
+        if still {
+            return Some(current);
+        }
+        let name = current.file_stem()?.to_str()?;
+        providers::existing(&self.frames_dir(), name, &STILL_EXTENSIONS)
     }
 
     /// The storyboard's file.
@@ -313,6 +319,21 @@ impl Job {
                 }
                 // A shot asked for from the old words is not followed.
                 let _ = std::fs::remove_file(providers::pending(&dir, name));
+            }
+        }
+        // Nor are the takes made from them, nor the stills those started
+        // from.
+        for stem in shots {
+            for (_, take) in self.takes(stem) {
+                if let Some(name) = take.file_stem().and_then(|name| name.to_str()) {
+                    if let Some(frame) =
+                        providers::existing(&self.frames_dir(), name, &SHOT_EXTENSIONS)
+                    {
+                        let _ = std::fs::remove_file(frame);
+                    }
+                    let _ = std::fs::remove_file(providers::pending(&self.takes_dir(), name));
+                }
+                let _ = std::fs::remove_file(take);
             }
         }
     }
@@ -468,12 +489,7 @@ impl Job {
                 if stop() {
                     return Err("cancelled".to_owned());
                 }
-                let seconds = if shot.seconds > 0.0 {
-                    shot.seconds
-                } else {
-                    scene.seconds / scene.shots.len() as f64
-                }
-                .clamp(2.0, 10.0);
+                let seconds = shot_seconds(scene, shot);
                 match shots {
                     Shots::Folder => missing.push(stem.clone()),
                     Shots::Draft => {
@@ -484,94 +500,21 @@ impl Job {
                         });
                         providers::draft(&shots_dir.join(format!("{stem}.png")), width, height, n)?;
                     }
-                    Shots::Replicate {
-                        token,
-                        image_model,
-                        video_model,
-                        video_input,
-                    } => {
+                    Shots::Replicate { .. } => {
                         progress(Step::Shot {
                             n,
                             of: total,
                             prompt: shot.prompt.clone(),
                         });
-                        let prompt = board.prompt(chapter, shot);
-                        // A shot written as a clip moves, when there is a
-                        // video model; a clip that cannot be made becomes a
-                        // still - the one it was to start from, when there
-                        // is one - rather than stopping the run.
-                        let mut made = false;
-                        if shot.kind == ShotKind::Video && !video_model.trim().is_empty() {
-                            let inputs = inputs.get_or_insert_with(|| {
-                                providers::replicate_inputs(token, video_model)
-                                    .inspect_err(|error| {
-                                        log::warn!("{video_model}'s inputs: {error}");
-                                    })
-                                    .ok()
-                            });
-                            let clip = Clip {
-                                token,
-                                image_model,
-                                video_model,
-                                video_input,
-                                prompt: &prompt,
-                                video_prompt: &board.video_prompt(chapter, shot),
-                                seconds,
-                                aspect: &board.aspect,
-                                stem: &stem,
-                            };
-                            match self.clip(&clip, inputs.as_ref(), prices, &mut spend) {
-                                Ok(()) => made = true,
-                                Err(error) if error.starts_with(crate::cost::LIMIT_REACHED) => {
-                                    return Err(error);
-                                }
-                                Err(error) => {
-                                    let frame = providers::existing(
-                                        &self.frames_dir(),
-                                        &stem,
-                                        &SHOT_EXTENSIONS,
-                                    );
-                                    if let Some(frame) = frame {
-                                        let extension = frame
-                                            .extension()
-                                            .and_then(|e| e.to_str())
-                                            .unwrap_or("png");
-                                        let out = shots_dir.join(format!("{stem}.{extension}"));
-                                        std::fs::copy(&frame, &out).map_err(|error| {
-                                            format!("{}: {error}", out.display())
-                                        })?;
-                                        made = true;
-                                    }
-                                    stand_ins.push(format!(
-                                        "{stem}: a still in place of a clip ({error})"
-                                    ));
-                                }
-                            }
-                        }
-                        // And a still that cannot be made becomes a colour
-                        // card: the cut is whole, and the card says which
-                        // shot to make again.
-                        if !made {
-                            spend.take(prices.still)?;
-                            let image = providers::retry(|| {
-                                providers::replicate_image(
-                                    token,
-                                    image_model,
-                                    &prompt,
-                                    &board.aspect,
-                                    &shots_dir,
-                                    &stem,
-                                )
-                            });
-                            if let Err(error) = image {
-                                spend.refund(prices.still);
-                                if providers::refused_for_good(&error)
-                                    || error.contains("needs an API token")
-                                {
-                                    // A key that is wrong or out of credit fails
-                                    // every shot the same way: say so now.
-                                    return Err(error);
-                                }
+                        let order = Order::new(board, chapter, shot, seconds, &shots_dir, &stem);
+                        match self.replicate_shot(shots, &order, &mut inputs, prices, &mut spend)? {
+                            Outcome::Made => {}
+                            Outcome::StillForClip(error) => stand_ins
+                                .push(format!("{stem}: a still in place of a clip ({error})")),
+                            // A still that cannot be made becomes a colour
+                            // card: the cut is whole, and the card says
+                            // which shot to make again.
+                            Outcome::Failed(error) => {
                                 stand_ins.push(format!(
                                     "{stem}: a colour card in place of a still ({error})"
                                 ));
@@ -632,7 +575,8 @@ impl Job {
             }
             for index in 0..scene.shots.len() {
                 let stem = shot_stem(&scene.id, index);
-                let path = providers::existing(&shots_dir, &stem, &SHOT_EXTENSIONS)
+                let path = self
+                    .current(&stem)
                     .ok_or_else(|| format!("shot {stem} is missing"))?;
                 scene_files.shots.push(probe(&path)?);
             }
@@ -643,19 +587,315 @@ impl Job {
     }
 }
 
+/// One shot to make: what [`Job::replicate_shot`] is handed.
+struct Order<'a> {
+    /// The shot's still prompt, for a still or the picture a clip starts
+    /// from.
+    prompt: String,
+    /// The shot's picture and how it moves.
+    video_prompt: String,
+    kind: ShotKind,
+    seconds: f64,
+    aspect: &'a str,
+    /// Where the shot goes, and its file's name without the extension.
+    dir: &'a Path,
+    stem: &'a str,
+}
+
+impl<'a> Order<'a> {
+    fn new(
+        board: &'a Storyboard,
+        chapter: &Chapter,
+        shot: &Shot,
+        seconds: f64,
+        dir: &'a Path,
+        stem: &'a str,
+    ) -> Order<'a> {
+        Order {
+            prompt: board.prompt(chapter, shot),
+            video_prompt: board.video_prompt(chapter, shot),
+            kind: shot.kind,
+            seconds,
+            aspect: &board.aspect,
+            dir,
+            stem,
+        }
+    }
+}
+
+/// What a shot asked of Replicate came to, short of a failure that ends
+/// the run.
+enum Outcome {
+    /// Made as asked.
+    Made,
+    /// A clip that could not be made, stood in for by the still it was to
+    /// start from; why.
+    StillForClip(String),
+    /// Nothing could be made; why.
+    Failed(String),
+}
+
+/// A shot made again: see [`Job::remake`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Remade {
+    /// The new take.
+    pub path: PathBuf,
+    /// The take it replaces, which is kept.
+    pub previous: Option<PathBuf>,
+    /// About what it cost, in dollars.
+    pub spent: f64,
+}
+
+/// The seconds a shot runs for: its own, or its share of the scene's.
+fn shot_seconds(scene: &crate::storyboard::Scene, shot: &Shot) -> f64 {
+    if shot.seconds > 0.0 {
+        shot.seconds
+    } else {
+        scene.seconds / scene.shots.len().max(1) as f64
+    }
+    .clamp(2.0, 10.0)
+}
+
+impl Job {
+    /// Where the takes of a shot made again go: never over a file the
+    /// timeline may be showing, so each take is a file of its own and
+    /// Undo goes back to the one before.
+    pub fn takes_dir(&self) -> PathBuf {
+        self.dir.join("takes")
+    }
+
+    /// The takes of `stem`, oldest first, with their numbers.
+    fn takes(&self, stem: &str) -> Vec<(u32, PathBuf)> {
+        let mut takes: Vec<(u32, PathBuf)> = std::fs::read_dir(self.takes_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let name = path.file_stem()?.to_str()?;
+                let (base, number) = name.rsplit_once('-')?;
+                let number: u32 = number.parse().ok()?;
+                let extension = path.extension()?.to_str()?;
+                (base == stem
+                    && SHOT_EXTENSIONS.contains(&extension)
+                    && path.metadata().is_ok_and(|meta| meta.len() > 0))
+                .then_some((number, path))
+            })
+            .collect();
+        takes.sort();
+        takes
+    }
+
+    /// The file a shot is now: its latest take, or the one first made.
+    pub fn current(&self, stem: &str) -> Option<PathBuf> {
+        self.takes(stem)
+            .pop()
+            .map(|(_, path)| path)
+            .or_else(|| providers::existing(&self.shots_dir(), stem, &SHOT_EXTENSIONS))
+    }
+
+    /// The shot a file of this job's is, by its stem: one first made, or
+    /// a take of one. None for a file that is not one of its shots.
+    pub fn stem_of(&self, path: &Path) -> Option<String> {
+        let parent = path.parent()?;
+        let name = path.file_stem()?.to_str()?;
+        if parent == self.shots_dir() {
+            Some(name.to_owned())
+        } else if parent == self.takes_dir() {
+            let (base, number) = name.rsplit_once('-')?;
+            number.parse::<u32>().ok()?;
+            Some(base.to_owned())
+        } else {
+            None
+        }
+    }
+
+    /// The job a shot's file belongs to, read from where it is: the folder
+    /// above its `shots/` or `takes/`, when that folder holds a storyboard.
+    pub fn of_shot(path: &Path) -> Option<Job> {
+        let folder = path.parent()?;
+        if !matches!(folder.file_name()?.to_str()?, "shots" | "takes") {
+            return None;
+        }
+        let job = Job {
+            dir: folder.parent()?.to_owned(),
+        };
+        job.storyboard().is_file().then_some(job)
+    }
+
+    /// Makes the shot `stem` of `board` again, as a new take beside the
+    /// ones before: nothing already made is moved or written over, so a
+    /// take the person likes less is one Undo away. A take that cannot be
+    /// made as asked - a clip that would have become a still, a still a
+    /// colour card - is not kept, and says why instead.
+    pub fn remake(
+        &self,
+        board: &Storyboard,
+        stem: &str,
+        shots: &Shots,
+        costs: &Costs,
+    ) -> Result<Remade, String> {
+        let (chapter, scene, index) = board
+            .chapters
+            .iter()
+            .flat_map(|chapter| chapter.scenes.iter().map(move |scene| (chapter, scene)))
+            .find_map(|(chapter, scene)| {
+                (0..scene.shots.len())
+                    .find(|index| shot_stem(&scene.id, *index) == stem)
+                    .map(|index| (chapter, scene, index))
+            })
+            .ok_or_else(|| format!("the script has no shot {stem}"))?;
+        let shot = &scene.shots[index];
+        let previous = self.current(stem);
+        let number = self
+            .takes(stem)
+            .last()
+            .map(|(number, _)| number + 1)
+            .unwrap_or(2);
+        let take = format!("{stem}-{number}");
+        let dir = self.takes_dir();
+        std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        let mut spend = Spend::new(costs.limit);
+        match shots {
+            Shots::Folder => {
+                return Err(format!(
+                    "a shot made by hand is made again by hand: save it in {}",
+                    self.shots_dir().display()
+                ));
+            }
+            Shots::Draft => {
+                let (width, height) = board.frame();
+                providers::draft(
+                    &dir.join(format!("{take}.png")),
+                    width,
+                    height,
+                    number as usize + index,
+                )?;
+            }
+            Shots::Replicate { .. } => {
+                let order =
+                    Order::new(board, chapter, shot, shot_seconds(scene, shot), &dir, &take);
+                let refused = match self.replicate_shot(
+                    shots,
+                    &order,
+                    &mut None,
+                    &costs.prices,
+                    &mut spend,
+                )? {
+                    Outcome::Made => None,
+                    Outcome::StillForClip(error) | Outcome::Failed(error) => Some(error),
+                };
+                if let Some(error) = refused {
+                    while let Some(path) = providers::existing(&dir, &take, &SHOT_EXTENSIONS) {
+                        if std::fs::remove_file(&path).is_err() {
+                            break;
+                        }
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let path = providers::existing(&dir, &take, &SHOT_EXTENSIONS)
+            .ok_or_else(|| format!("{take} was not saved"))?;
+        Ok(Remade {
+            path,
+            previous,
+            spent: spend.spent,
+        })
+    }
+
+    /// Makes one shot with Replicate, as `order` says. A shot written as
+    /// a clip moves, when there is a video model; a clip that cannot be
+    /// made becomes a still - the one it was to start from, when there is
+    /// one - rather than stopping the run. Fails outright only for what
+    /// fails every shot alike: the spend limit, or a key that is wrong or
+    /// out of credit.
+    fn replicate_shot(
+        &self,
+        shots: &Shots,
+        order: &Order,
+        inputs: &mut Option<Option<ModelInputs>>,
+        prices: &Prices,
+        spend: &mut Spend,
+    ) -> Result<Outcome, String> {
+        let Shots::Replicate {
+            token,
+            image_model,
+            video_model,
+            video_input,
+        } = shots
+        else {
+            return Err("these shots are not made with Replicate".to_owned());
+        };
+        let mut still_for_clip = None;
+        if order.kind == ShotKind::Video && !video_model.trim().is_empty() {
+            // What the video model takes, read once, when the first clip
+            // is due.
+            let inputs = inputs.get_or_insert_with(|| {
+                providers::replicate_inputs(token, video_model)
+                    .inspect_err(|error| log::warn!("{video_model}'s inputs: {error}"))
+                    .ok()
+            });
+            let clip = Clip {
+                token,
+                image_model,
+                video_model,
+                video_input,
+                order,
+            };
+            match self.clip(&clip, inputs.as_ref(), prices, spend) {
+                Ok(()) => return Ok(Outcome::Made),
+                Err(error) if error.starts_with(crate::cost::LIMIT_REACHED) => return Err(error),
+                Err(error) => {
+                    if let Some(frame) =
+                        providers::existing(&self.frames_dir(), order.stem, &SHOT_EXTENSIONS)
+                    {
+                        let extension = frame.extension().and_then(|e| e.to_str()).unwrap_or("png");
+                        let out = order.dir.join(format!("{}.{extension}", order.stem));
+                        std::fs::copy(&frame, &out)
+                            .map_err(|error| format!("{}: {error}", out.display()))?;
+                        return Ok(Outcome::StillForClip(error));
+                    }
+                    still_for_clip = Some(error);
+                }
+            }
+        }
+        spend.take(prices.still)?;
+        let image = providers::retry(|| {
+            providers::replicate_image(
+                token,
+                image_model,
+                &order.prompt,
+                order.aspect,
+                order.dir,
+                order.stem,
+            )
+        });
+        match image {
+            Ok(_) => Ok(match still_for_clip {
+                Some(error) => Outcome::StillForClip(error),
+                None => Outcome::Made,
+            }),
+            Err(error) => {
+                spend.refund(prices.still);
+                if providers::refused_for_good(&error) || error.contains("needs an API token") {
+                    // A key that is wrong or out of credit fails every
+                    // shot the same way: say so now.
+                    return Err(error);
+                }
+                Ok(Outcome::Failed(error))
+            }
+        }
+    }
+}
+
 /// One clip to make: what [`Job::clip`] is handed.
 struct Clip<'a> {
     token: &'a str,
     image_model: &'a str,
     video_model: &'a str,
     video_input: &'a str,
-    /// The shot's still prompt, for the picture it starts from.
-    prompt: &'a str,
-    /// The shot's picture and how it moves.
-    video_prompt: &'a str,
-    seconds: f64,
-    aspect: &'a str,
-    stem: &'a str,
+    order: &'a Order<'a>,
 }
 
 impl Job {
@@ -670,12 +910,13 @@ impl Job {
         prices: &Prices,
         spend: &mut Spend,
     ) -> Result<(), String> {
+        let order = clip.order;
         let image = match inputs.and_then(ModelInputs::image_field) {
             Some(_) => {
                 let frames = self.frames_dir();
                 std::fs::create_dir_all(&frames)
                     .map_err(|error| format!("{}: {error}", frames.display()))?;
-                let frame = match providers::existing(&frames, clip.stem, &SHOT_EXTENSIONS) {
+                let frame = match providers::existing(&frames, order.stem, &SHOT_EXTENSIONS) {
                     Some(frame) => frame,
                     None => {
                         spend.take(prices.still)?;
@@ -683,10 +924,10 @@ impl Job {
                             providers::replicate_image(
                                 clip.token,
                                 clip.image_model,
-                                clip.prompt,
-                                clip.aspect,
+                                &order.prompt,
+                                order.aspect,
                                 &frames,
-                                clip.stem,
+                                order.stem,
                             )
                         })
                         .inspect_err(|_| spend.refund(prices.still))?
@@ -700,16 +941,16 @@ impl Job {
         };
         let input = match inputs {
             Some(inputs) => inputs.clip(
-                clip.video_prompt,
-                clip.seconds,
-                clip.aspect,
+                &order.video_prompt,
+                order.seconds,
+                order.aspect,
                 image.as_deref(),
             ),
             None => providers::templated_clip(
                 clip.video_input,
-                clip.video_prompt,
-                clip.seconds,
-                clip.aspect,
+                &order.video_prompt,
+                order.seconds,
+                order.aspect,
             )?,
         };
         spend.take(prices.clip)?;
@@ -718,8 +959,8 @@ impl Job {
                 clip.token,
                 clip.video_model,
                 input.clone(),
-                &self.shots_dir(),
-                clip.stem,
+                order.dir,
+                order.stem,
             )
         })
         .inspect_err(|_| spend.refund(prices.clip))
@@ -865,6 +1106,53 @@ mod tests {
         assert!(job.voice_dir().join("c01s01.wav").exists());
         assert!(job.shots_dir().join("c01s01_1.png").exists());
         assert!(!job.shots_dir().join("c01s01_2.png").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_shot_made_again_is_a_new_take_beside_the_old() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-remake-{}", std::process::id()));
+        let job = Job::new(&root, "remake");
+        let mut board: Storyboard = serde_json::from_str(
+            r#"{"title":"T","chapters":[{"title":"A","scenes":[
+                {"narration":"n","seconds":6,"shots":[{"prompt":"a"},{"prompt":"b"}]}]}]}"#,
+        )
+        .unwrap();
+        board.tidy().unwrap();
+        job.keep(&board).unwrap();
+        std::fs::create_dir_all(job.shots_dir()).unwrap();
+        let first = job.shots_dir().join("c01s01_2.png");
+        std::fs::write(&first, b"first").unwrap();
+
+        let costs = Costs::default();
+        let second = job
+            .remake(&board, "c01s01_2", &Shots::Draft, &costs)
+            .unwrap();
+        assert_eq!(second.path, job.takes_dir().join("c01s01_2-2.png"));
+        assert_eq!(second.previous, Some(first.clone()));
+        assert_eq!(std::fs::read(&first).unwrap(), b"first");
+        let third = job
+            .remake(&board, "c01s01_2", &Shots::Draft, &costs)
+            .unwrap();
+        assert_eq!(third.path, job.takes_dir().join("c01s01_2-3.png"));
+        assert_eq!(third.previous, Some(second.path.clone()));
+        assert_eq!(job.current("c01s01_2"), Some(third.path.clone()));
+        assert_eq!(job.picture("c01s01_2"), Some(third.path.clone()));
+        // The other shot is not touched, and the file of a take says
+        // which shot and which job it is.
+        assert_eq!(job.current("c01s01_1"), None);
+        assert_eq!(job.stem_of(&third.path).as_deref(), Some("c01s01_2"));
+        assert_eq!(job.stem_of(&first).as_deref(), Some("c01s01_2"));
+        assert_eq!(Job::of_shot(&third.path), Some(job.clone()));
+        assert_eq!(Job::of_shot(&root.join("elsewhere.png")), None);
+        assert!(
+            job.remake(&board, "c09s09_1", &Shots::Draft, &costs)
+                .is_err()
+        );
+        // Words changed: the takes go with the shot.
+        job.forget(&[], &["c01s01_2".to_owned()]);
+        assert_eq!(job.current("c01s01_2"), None);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

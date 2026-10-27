@@ -342,6 +342,7 @@ export component App inherits Window {
     callback script-edited(chapter: int, scene: int, shot: int, field: int, text: string);
     callback script-kind-changed(chapter: int, scene: int, shot: int, video: bool);
     callback script-rewrite(chapter: int, scene: int);
+    callback script-remake(chapter: int, scene: int, shot: int);
 
     /// Takes focus back from whatever field holds it. The keyboard scope is
     /// where focus rests when nothing is being typed into, so giving it the
@@ -997,6 +998,7 @@ export component App inherits Window {
         edited(chapter, scene, shot, field, text) => { root.script-edited(chapter, scene, shot, field, text); }
         kind-changed(chapter, scene, shot, video) => { root.script-kind-changed(chapter, scene, shot, video); }
         rewrite(chapter, scene) => { root.script-rewrite(chapter, scene); }
+        remake(chapter, scene, shot) => { root.script-remake(chapter, scene, shot); }
     }
 
     // Over the workspace and both sheets, under the menus. A tooltip has to
