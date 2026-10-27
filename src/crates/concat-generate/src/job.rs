@@ -17,7 +17,7 @@
 //! way, or one whose files were replaced by hand, carries on from where it
 //! is; and the folder sits in the project's, so it moves with it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use concat_project::commands::NewMedia;
@@ -213,6 +213,7 @@ impl Job {
                 }
             }
         }
+        let stale = self.stale();
         let stood_in: Vec<String> = std::fs::read_to_string(self.stand_ins())
             .unwrap_or_default()
             .lines()
@@ -222,7 +223,10 @@ impl Job {
             for index in 0..scene.shots.len() {
                 let stem = shot_stem(&scene.id, index);
                 status.shots += 1;
-                if !stood_in.contains(&stem) && self.current(&stem).is_some() {
+                if !stood_in.contains(&stem)
+                    && !stale.contains(&stem)
+                    && self.current(&stem).is_some()
+                {
                     status.shots_made += 1;
                 }
             }
@@ -301,40 +305,67 @@ impl Job {
         self.dir.join("frames")
     }
 
-    /// Removes what was made for scenes and shots the script has changed
-    /// since: the narration of each of `voices` (scene ids) and each of
-    /// `shots` (shot stems) - with the still a clip started from - so the
-    /// next run makes them from the new words.
+    /// The shots whose words changed since they were made, one stem a
+    /// line: made again, as new takes, on the next run.
+    pub fn stale_list(&self) -> PathBuf {
+        self.dir.join("stale.txt")
+    }
+
+    /// The stems in [`Job::stale_list`].
+    fn stale(&self) -> BTreeSet<String> {
+        std::fs::read_to_string(self.stale_list())
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|stem| !stem.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Writes `stems` as the stale list; none removes it.
+    fn set_stale(&self, stems: &BTreeSet<String>) -> Result<(), String> {
+        if stems.is_empty() {
+            let _ = std::fs::remove_file(self.stale_list());
+            return Ok(());
+        }
+        let text: String = stems.iter().map(|stem| format!("{stem}\n")).collect();
+        std::fs::write(self.stale_list(), text)
+            .map_err(|error| format!("{}: {error}", self.stale_list().display()))
+    }
+
+    /// Lets go of what was made for scenes and shots the script has changed
+    /// since, so the next run makes them from the new words: the narration
+    /// of each of `voices` (scene ids) is removed, and each of `shots`
+    /// (shot stems) is marked to be made again - as a new take, leaving the
+    /// picture already paid for, and on the timeline, where it is until
+    /// then.
     pub fn forget(&self, voices: &[String], shots: &[String]) {
-        for (dir, names, extensions) in [
-            (self.voice_dir(), voices, &VOICE_EXTENSIONS[..]),
-            (self.shots_dir(), shots, &SHOT_EXTENSIONS[..]),
-            (self.frames_dir(), shots, &SHOT_EXTENSIONS[..]),
-        ] {
-            for name in names {
-                while let Some(path) = providers::existing(&dir, name, extensions) {
-                    if std::fs::remove_file(&path).is_err() {
-                        break;
-                    }
+        for name in voices {
+            while let Some(path) = providers::existing(&self.voice_dir(), name, &VOICE_EXTENSIONS) {
+                if std::fs::remove_file(&path).is_err() {
+                    break;
                 }
-                // A shot asked for from the old words is not followed.
-                let _ = std::fs::remove_file(providers::pending(&dir, name));
             }
         }
-        // Nor are the takes made from them, nor the stills those started
-        // from.
+        if shots.is_empty() {
+            return;
+        }
+        let mut stale = self.stale();
         for stem in shots {
-            for (_, take) in self.takes(stem) {
-                if let Some(name) = take.file_stem().and_then(|name| name.to_str()) {
-                    if let Some(frame) =
-                        providers::existing(&self.frames_dir(), name, &SHOT_EXTENSIONS)
-                    {
-                        let _ = std::fs::remove_file(frame);
-                    }
-                    let _ = std::fs::remove_file(providers::pending(&self.takes_dir(), name));
-                }
-                let _ = std::fs::remove_file(take);
+            // A shot asked for from the old words is not followed.
+            let _ = std::fs::remove_file(providers::pending(&self.shots_dir(), stem));
+            for (number, _) in self.takes(stem) {
+                let name = format!("{stem}-{}", number + 1);
+                let _ = std::fs::remove_file(providers::pending(&self.takes_dir(), &name));
             }
+            let _ =
+                std::fs::remove_file(providers::pending(&self.takes_dir(), &format!("{stem}-2")));
+            if self.current(stem).is_some() {
+                stale.insert(stem.clone());
+            }
+        }
+        if let Err(error) = self.set_stale(&stale) {
+            log::warn!("{error}");
         }
     }
 
@@ -474,6 +505,7 @@ impl Job {
         let mut stood_in = Vec::new();
         // What the video model takes, read once, when the first clip is due.
         let mut inputs: Option<Option<ModelInputs>> = None;
+        let mut stale = self.stale();
         let mut n = 0;
         for (chapter, scene) in board
             .chapters
@@ -483,11 +515,48 @@ impl Job {
             for (index, shot) in scene.shots.iter().enumerate() {
                 n += 1;
                 let stem = shot_stem(&scene.id, index);
-                if providers::existing(&shots_dir, &stem, &SHOT_EXTENSIONS).is_some() {
+                let again = stale.contains(&stem) && !matches!(shots, Shots::Folder);
+                if self.current(&stem).is_some() && !again {
                     continue;
                 }
                 if stop() {
                     return Err("cancelled".to_owned());
+                }
+                // Made before from words since changed: made again as a new
+                // take, the old one kept - and kept in the cut, said, when
+                // the new one cannot be made.
+                if again {
+                    progress(Step::Shot {
+                        n,
+                        of: total,
+                        prompt: shot.prompt.clone(),
+                    });
+                    let take = self.take(
+                        board,
+                        chapter,
+                        scene,
+                        index,
+                        shots,
+                        prices,
+                        &mut spend,
+                        &mut inputs,
+                    )?;
+                    match take {
+                        Ok(_) => {
+                            stale.remove(&stem);
+                            self.set_stale(&stale)?;
+                        }
+                        Err(error) => stand_ins.push(format!(
+                            "{stem}: the picture made from the old words is kept ({error})"
+                        )),
+                    }
+                    progress(Step::Made {
+                        n,
+                        of: total,
+                        picture: self.picture(&stem),
+                        spent: spend.spent,
+                    });
+                    continue;
                 }
                 let seconds = shot_seconds(scene, shot);
                 match shots {
@@ -745,23 +814,61 @@ impl Job {
                     .map(|index| (chapter, scene, index))
             })
             .ok_or_else(|| format!("the script has no shot {stem}"))?;
-        let shot = &scene.shots[index];
         let previous = self.current(stem);
+        let mut spend = Spend::new(costs.limit);
+        let path = self.take(
+            board,
+            chapter,
+            scene,
+            index,
+            shots,
+            &costs.prices,
+            &mut spend,
+            &mut None,
+        )??;
+        let mut stale = self.stale();
+        if stale.remove(stem) {
+            self.set_stale(&stale)?;
+        }
+        Ok(Remade {
+            path,
+            previous,
+            spent: spend.spent,
+        })
+    }
+
+    /// Makes shot `index` of `scene` as a new take beside the ones before.
+    /// Fails outright for what fails every shot alike - see
+    /// [`Job::replicate_shot`]; a take that could not be made as asked is
+    /// not kept, and the inner error says why.
+    #[allow(clippy::too_many_arguments)]
+    fn take(
+        &self,
+        board: &Storyboard,
+        chapter: &Chapter,
+        scene: &crate::storyboard::Scene,
+        index: usize,
+        shots: &Shots,
+        prices: &Prices,
+        spend: &mut Spend,
+        inputs: &mut Option<Option<ModelInputs>>,
+    ) -> Result<Result<PathBuf, String>, String> {
+        let stem = shot_stem(&scene.id, index);
+        let shot = &scene.shots[index];
         let number = self
-            .takes(stem)
+            .takes(&stem)
             .last()
             .map(|(number, _)| number + 1)
             .unwrap_or(2);
         let take = format!("{stem}-{number}");
         let dir = self.takes_dir();
         std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
-        let mut spend = Spend::new(costs.limit);
         match shots {
             Shots::Folder => {
-                return Err(format!(
+                return Ok(Err(format!(
                     "a shot made by hand is made again by hand: save it in {}",
                     self.shots_dir().display()
-                ));
+                )));
             }
             Shots::Draft => {
                 let (width, height) = board.frame();
@@ -775,13 +882,7 @@ impl Job {
             Shots::Replicate { .. } => {
                 let order =
                     Order::new(board, chapter, shot, shot_seconds(scene, shot), &dir, &take);
-                let refused = match self.replicate_shot(
-                    shots,
-                    &order,
-                    &mut None,
-                    &costs.prices,
-                    &mut spend,
-                )? {
+                let refused = match self.replicate_shot(shots, &order, inputs, prices, spend)? {
                     Outcome::Made => None,
                     Outcome::StillForClip(error) | Outcome::Failed(error) => Some(error),
                 };
@@ -791,17 +892,12 @@ impl Job {
                             break;
                         }
                     }
-                    return Err(error);
+                    return Ok(Err(error));
                 }
             }
         }
-        let path = providers::existing(&dir, &take, &SHOT_EXTENSIONS)
-            .ok_or_else(|| format!("{take} was not saved"))?;
-        Ok(Remade {
-            path,
-            previous,
-            spent: spend.spent,
-        })
+        Ok(providers::existing(&dir, &take, &SHOT_EXTENSIONS)
+            .ok_or_else(|| format!("{take} was not saved")))
     }
 
     /// Makes one shot with Replicate, as `order` says. A shot written as
@@ -990,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    fn an_edited_shot_is_forgotten_with_the_still_it_started_from() {
+    fn an_edited_shot_is_kept_and_marked_to_be_made_again() {
         let root =
             std::env::temp_dir().join(format!("concat-generate-forget-{}", std::process::id()));
         let job = Job::new(&root, "forget");
@@ -1005,10 +1101,19 @@ mod tests {
             std::fs::write(dir.join(name), b"x").unwrap();
         }
         job.forget(&[], &["c01s01_1".to_owned()]);
-        assert!(!job.shots_dir().join("c01s01_1.mp4").exists());
-        assert!(!job.frames_dir().join("c01s01_1.png").exists());
-        assert!(job.shots_dir().join("c01s01_2.png").exists());
-        assert!(job.frames_dir().join("c01s01_2.png").exists());
+        // Paid for, and maybe on the timeline: nothing is removed, the shot
+        // is only marked, and the next run makes it again as a take.
+        for (dir, name) in [
+            (job.shots_dir(), "c01s01_1.mp4"),
+            (job.frames_dir(), "c01s01_1.png"),
+            (job.shots_dir(), "c01s01_2.png"),
+        ] {
+            assert!(dir.join(name).exists(), "{name}");
+        }
+        assert_eq!(job.stale(), BTreeSet::from(["c01s01_1".to_owned()]));
+        // A shot never made is not marked: the next run makes it anyway.
+        job.forget(&[], &["c09s09_1".to_owned()]);
+        assert_eq!(job.stale().len(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1105,7 +1210,8 @@ mod tests {
         job.retire(&board("b"), &board("something else"));
         assert!(job.voice_dir().join("c01s01.wav").exists());
         assert!(job.shots_dir().join("c01s01_1.png").exists());
-        assert!(!job.shots_dir().join("c01s01_2.png").exists());
+        assert!(job.shots_dir().join("c01s01_2.png").exists());
+        assert_eq!(job.stale(), BTreeSet::from(["c01s01_2".to_owned()]));
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1150,9 +1256,17 @@ mod tests {
             job.remake(&board, "c09s09_1", &Shots::Draft, &costs)
                 .is_err()
         );
-        // Words changed: the takes go with the shot.
+        // Words changed: the shot keeps its takes, counts as not made, and
+        // a take made from the new words clears the mark.
         job.forget(&[], &["c01s01_2".to_owned()]);
-        assert_eq!(job.current("c01s01_2"), None);
+        assert_eq!(job.current("c01s01_2"), Some(third.path.clone()));
+        assert_eq!(job.status(&board, false).shots_made, 0);
+        let fourth = job
+            .remake(&board, "c01s01_2", &Shots::Draft, &costs)
+            .unwrap();
+        assert_eq!(fourth.path, job.takes_dir().join("c01s01_2-4.png"));
+        assert!(job.stale().is_empty());
+        assert_eq!(job.status(&board, false).shots_made, 1);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

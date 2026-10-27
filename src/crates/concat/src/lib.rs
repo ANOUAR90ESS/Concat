@@ -1790,6 +1790,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_script_remake(on_window!(|state, chapter: i32, scene: i32, shot: i32| {
         state.handle(Msg::Generate(GenerateMsg::Remake(chapter, scene, shot)));
     }));
+    app.on_script_suggest(on_window!(|state, chapter: i32, scene: i32, shot: i32| {
+        state.handle(Msg::Generate(GenerateMsg::Suggest(chapter, scene, shot)));
+    }));
     app.on_script_rewrite(on_window!(|state, chapter: i32, scene: i32| {
         state.handle(Msg::Generate(GenerateMsg::RewriteScene(chapter, scene)));
     }));

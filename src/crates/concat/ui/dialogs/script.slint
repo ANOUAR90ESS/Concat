@@ -45,6 +45,8 @@ export struct ScriptRow {
     thumb: image,
     /// The shot being made again right now.
     remaking: bool,
+    /// The writer is finding another picture for the shot right now.
+    suggesting: bool,
     /// About what making the shot again costs: "~$0.10"; empty when it is
     /// free.
     cost: string,
@@ -132,6 +134,8 @@ export component ScriptDialog inherits Modal {
     callback rewrite(chapter: int, scene: int);
     /// Make one shot again, alone.
     callback remake(chapter: int, scene: int, shot: int);
+    /// Ask the writer for another picture for one shot.
+    callback suggest(chapter: int, scene: int, shot: int);
 
     open: root.data.open;
     title: I18n.t("script.title");
@@ -351,6 +355,16 @@ export component ScriptDialog inherits Modal {
                             glyph: Glyph.reset;
                             enabled: !row.remaking;
                             clicked => { root.remake(row.chapter, row.scene, row.shot); }
+                        }
+                        // Another picture in words first: the writer's
+                        // idea takes the prompt's place, to read and edit
+                        // before anything is paid to make it.
+                        Button {
+                            label: row.suggesting ? I18n.t("generate.suggesting") : I18n.t("generate.suggest");
+                            glyph: Glyph.sparkle;
+                            ghost: true;
+                            enabled: !row.suggesting && !row.remaking;
+                            clicked => { root.suggest(row.chapter, row.scene, row.shot); }
                         }
                         if row.cost != "": Text {
                             text: row.cost;
