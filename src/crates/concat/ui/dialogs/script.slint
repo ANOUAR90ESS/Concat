@@ -40,6 +40,14 @@ export struct ScriptRow {
     repeat: bool,
     /// A scene being written again right now.
     busy: bool,
+    /// A small picture of what was made for the shot, when it was.
+    has-thumb: bool,
+    thumb: image,
+    /// The shot being made again right now.
+    remaking: bool,
+    /// About what making the shot again costs: "~$0.10"; empty when it is
+    /// free.
+    cost: string,
 }
 
 export struct ScriptSheetData {
@@ -122,6 +130,8 @@ export component ScriptDialog inherits Modal {
     callback edited(chapter: int, scene: int, shot: int, field: int, text: string);
     callback kind-changed(chapter: int, scene: int, shot: int, video: bool);
     callback rewrite(chapter: int, scene: int);
+    /// Make one shot again, alone.
+    callback remake(chapter: int, scene: int, shot: int);
 
     open: root.data.open;
     title: I18n.t("script.title");
@@ -293,6 +303,64 @@ export component ScriptDialog inherits Modal {
                         technical: true;
                         edited(text) => { root.edited(row.chapter, row.scene, row.shot, 1, text); }
                     }
+                }
+                // What was made for the shot, and the way to make it again
+                // alone - from the words above, edited or not.
+                if row.kind == 2: HorizontalLayout {
+                    spacing: 10px;
+
+                    Rectangle {
+                        width: 128px;
+                        height: 72px;
+                        border-radius: Theme.r;
+                        background: Theme.well;
+                        border-width: 1px;
+                        border-color: row.remaking ? Theme.accent : Theme.line;
+                        clip: true;
+
+                        if row.has-thumb: Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: row.thumb;
+                            image-fit: cover;
+                            opacity: row.remaking ? 0.45 : 1;
+                        }
+                        if !row.has-thumb && !row.remaking: Icon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            glyph: row.video ? Glyph.film : Glyph.image;
+                            size: 20px;
+                            tint: Theme.fg-dim;
+                        }
+                        // Being made: a sheen sweeps across.
+                        if row.remaking: Rectangle {
+                            property <float> sweep: Math.mod(animation-tick() / 1400ms, 1);
+                            x: (parent.width * 1.6) * self.sweep - parent.width * 0.6;
+                            width: parent.width * 0.6;
+                            height: parent.height;
+                            background: @linear-gradient(90deg, #ffffff00 0%, #ffffff40 50%, #ffffff00 100%);
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+
+                        Button {
+                            label: row.remaking ? I18n.t("generate.makingAgain") : I18n.t("generate.makeAgain");
+                            glyph: Glyph.reset;
+                            enabled: !row.remaking;
+                            clicked => { root.remake(row.chapter, row.scene, row.shot); }
+                        }
+                        if row.cost != "": Text {
+                            text: row.cost;
+                            color: Theme.fg-dim;
+                            font-family: Theme.font-technical;
+                            font-size: Theme.fs-sm;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
                 }
             }
         }

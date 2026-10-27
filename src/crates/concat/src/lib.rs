@@ -1308,6 +1308,12 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             // through the window's messages rather than the clip's verbs:
             // the sheet opens on this clip's voice, "Use voice from
             // timeline" on, and the clip is selected so it shows which.
+            if action.as_str() == "remake" {
+                state.flush_commit();
+                state.selection = vec![id.clone()];
+                state.handle(Msg::Generate(GenerateMsg::RemakeClip));
+                return;
+            }
             if action.as_str() == "captions" {
                 state.flush_commit();
                 state.transition_selected = None;
@@ -1659,6 +1665,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     editor.on_long_video(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::Open));
     }));
+    editor.on_remake_clip(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::RemakeClip));
+    }));
 
     app.on_captions_closed(on_window!(|state| {
         state.handle(Msg::Captions(CaptionsMsg::Close));
@@ -1778,6 +1787,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             )));
         }
     ));
+    app.on_script_remake(on_window!(|state, chapter: i32, scene: i32, shot: i32| {
+        state.handle(Msg::Generate(GenerateMsg::Remake(chapter, scene, shot)));
+    }));
     app.on_script_rewrite(on_window!(|state, chapter: i32, scene: i32| {
         state.handle(Msg::Generate(GenerateMsg::RewriteScene(chapter, scene)));
     }));

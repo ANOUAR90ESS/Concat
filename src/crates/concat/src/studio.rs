@@ -7873,6 +7873,9 @@ impl Studio {
         });
 
         editor.set_selected_clip(self.selected());
+        let (remakable, remaking) = self.generate.remakable(self);
+        editor.set_remakable(remakable);
+        editor.set_remaking(remaking);
         editor.set_selected_transition(self.selected_transition_data());
         // Written only when it differs: a fresh model is a change to every
         // binding that reads it, and this one is read on every publish.
@@ -8973,6 +8976,17 @@ impl Studio {
         }
     }
 
+    /// The file the one clip selected shows, if it shows one.
+    pub fn selected_media_path(&self) -> Option<String> {
+        let targets = self.edit_targets();
+        let clip = self.clip(targets.first()?)?;
+        self.project()
+            .media
+            .iter()
+            .find(|item| item.id == clip.media_id)
+            .map(|item| item.path.clone())
+    }
+
     fn selected(&self) -> SelectedClipData {
         // The one clip, or the first of a batch of titles: the panel shows
         // its values and writes to all of them; see `edit_targets`.
@@ -9515,7 +9529,7 @@ impl Studio {
         app.set_speech(self.speech.data(self));
         sync(&models.generate_music, self.generate.music_rows(self));
         app.set_generate(self.generate.data(self));
-        sync(&models.script_rows, self.generate.script_rows());
+        sync(&models.script_rows, self.generate.script_rows(self));
         app.set_script(self.generate.script_data(self));
         self.publish_source(app);
         editor.set_recording(self.voiceover.recording());
@@ -9658,6 +9672,17 @@ impl Studio {
             ),
             rule(),
         ];
+        // A shot the Long video sheet made: made again, alone, in its place.
+        if self.generate.remakable(self).0 {
+            rows.push(action(
+                "remake",
+                t("generate.makeAgain"),
+                Glyph::Reset,
+                "",
+                !locked,
+            ));
+            rows.push(rule());
+        }
         // One slot, two verbs: the sound is either on its picture or off it.
         // Shown on every video clip, so the verb is where a person looks for
         // it, and greyed rather than gone when the file has no sound.

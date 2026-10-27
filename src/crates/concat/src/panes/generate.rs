@@ -14,19 +14,20 @@
 //!
 //! See `concat_generate` for the steps themselves.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_generate::budget::{self, Totals};
 use concat_generate::cost::{self, Estimate, Prices};
-use concat_generate::job::{Costs, Idea, Job, Made, Status, Step};
+use concat_generate::job::{Costs, Idea, Job, Made, Remade, Status, Step};
 use concat_generate::plan::{self, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{self, Brief, Writing};
 use concat_project::Command;
+use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
 use slint::SharedString;
 
@@ -104,6 +105,14 @@ pub enum GenerateMsg {
     Progress(f32, String),
     /// The making saying where it is.
     Step(Step),
+    /// Make one shot of the script again: chapter, scene and shot.
+    Remake(i32, i32, i32),
+    /// Make the shot the selected clip shows again.
+    RemakeClip,
+    /// A shot is made again, or why not: its stem and its job's folder.
+    Remade(String, PathBuf, Box<Result<(Remade, NewMedia), String>>),
+    /// Small pictures of shots, by stem: width, height and RGBA.
+    Thumbs(Vec<(String, u32, u32, Vec<u8>)>),
     /// The writer is done; and whether making follows.
     Written(Box<Result<Storyboard, String>>, bool),
     /// The providers are done, and the files probed.
@@ -139,6 +148,10 @@ pub struct GeneratePane {
     spent: f64,
     /// How far the job is, said under the script's summary.
     status: String,
+    /// A small picture of each shot made, by stem, for the script editor.
+    thumbs: HashMap<String, slint::Image>,
+    /// The shots being made again, by stem.
+    remaking: HashSet<String>,
     /// The storyboard already in the job's folder, read when the sheet
     /// opens and whenever the idea changes.
     board: Option<Storyboard>,
@@ -183,6 +196,8 @@ impl Default for GeneratePane {
             counts: String::new(),
             spent: 0.0,
             status: String::new(),
+            thumbs: HashMap::new(),
+            remaking: HashSet::new(),
             board: None,
             repeats: HashSet::new(),
             script_open: false,
@@ -296,6 +311,44 @@ impl GeneratePane {
                 if self.board.is_some() {
                     self.script_open = true;
                     self.script_message.clear();
+                    self.thumbnails(studio, None);
+                }
+            }
+            GenerateMsg::Remake(chapter, scene, shot) => {
+                let stem = self.shot_mut(chapter, scene, shot).map(|(stem, _)| stem);
+                if let (Some(stem), Some(job)) = (stem, self.job(studio)) {
+                    // Made again from the words as they are now: the shot
+                    // is fresh, so closing the editor does not throw it
+                    // away as stale.
+                    self.stale_shots.remove(&stem);
+                    self.keep(studio);
+                    if let Some(board) = self.board.clone() {
+                        self.remake(studio, job, board, stem);
+                    }
+                }
+            }
+            GenerateMsg::RemakeClip => {
+                let found = studio
+                    .selected_media_path()
+                    .and_then(|path| shot_of(Path::new(&path)));
+                match found {
+                    Some((job, stem)) => match Storyboard::read(&job.storyboard()) {
+                        Ok(board) => self.remake(studio, job, board, stem),
+                        Err(error) => studio.notify(&error, true),
+                    },
+                    None => studio.notify(&t("generate.notAShot"), true),
+                }
+            }
+            GenerateMsg::Remade(stem, dir, result) => {
+                self.remaking.remove(&stem);
+                self.remade(studio, &stem, &Job { dir }, *result);
+            }
+            GenerateMsg::Thumbs(thumbs) => {
+                for (stem, width, height, rgba) in thumbs {
+                    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                        &rgba, width, height,
+                    );
+                    self.thumbs.insert(stem, slint::Image::from_rgba8(buffer));
                 }
             }
             GenerateMsg::CloseScript => {
@@ -378,6 +431,7 @@ impl GeneratePane {
                             self.script_open = true;
                             self.script_message.clear();
                             self.tally(studio);
+                            self.thumbnails(studio, None);
                         }
                     }
                     Err(error) => self.failed(error),
@@ -806,6 +860,149 @@ impl GeneratePane {
         );
     }
 
+    /// Makes the shot `stem` of `board` again, on a worker: a new take,
+    /// which then takes the old one's place on the timeline.
+    fn remake(&mut self, studio: &mut Studio, job: Job, board: Storyboard, stem: String) {
+        if self.remaking.contains(&stem) {
+            return;
+        }
+        let prefs = studio.prefs.generate.clone();
+        let shots = shots_of(&prefs);
+        let costs = Costs {
+            prices: prices(studio),
+            limit: spend_limit(studio),
+        };
+        self.script_message.clear();
+        self.remaking.insert(stem.clone());
+        let dir = job.dir.clone();
+        spawn_in_project(
+            move || {
+                // Probed here, off the window's thread, the way an import
+                // is: the cut takes the take as it takes any file.
+                let result = job
+                    .remake(&board, &stem, &shots, &costs)
+                    .and_then(|remade| {
+                        let summary = concat_host::media::probe(&remade.path.to_string_lossy())?;
+                        Ok((remade, summary.to_new_media()))
+                    });
+                (stem, result)
+            },
+            move |studio, _, _, (stem, result)| {
+                studio.handle(Msg::Generate(GenerateMsg::Remade(
+                    stem,
+                    dir,
+                    Box::new(result),
+                )))
+            },
+        );
+    }
+
+    /// A shot made again: the new take takes the place of every clip that
+    /// showed the shot, as one step Undo takes back, and its picture is
+    /// shown in the script editor.
+    fn remade(
+        &mut self,
+        studio: &mut Studio,
+        stem: &str,
+        job: &Job,
+        result: Result<(Remade, NewMedia), String>,
+    ) {
+        let (remade, item) = match result {
+            Ok(made) => made,
+            Err(error) => {
+                if self.script_open {
+                    self.script_message = error;
+                } else {
+                    studio.notify(&error, true);
+                }
+                return;
+            }
+        };
+        // Every clip on the timeline that shows this shot - the take first
+        // made, or one since - and is a picture of the same kind: a still
+        // stays a still, a clip a clip.
+        let still = is_still(&remade.path);
+        let shows = |path: &str| {
+            let path = Path::new(path);
+            is_still(path) == still
+                && shot_of(path)
+                    .is_some_and(|(found, found_stem)| found.dir == job.dir && found_stem == stem)
+        };
+        let media: HashSet<&str> = studio
+            .project()
+            .media
+            .iter()
+            .filter(|media| shows(&media.path))
+            .map(|media| media.id.as_str())
+            .collect();
+        let commands: Vec<Command> = studio
+            .timeline()
+            .clips
+            .iter()
+            .filter(|clip| media.contains(clip.media_id.as_str()))
+            .map(|clip| Command::ReplaceClipMedia {
+                clip_id: clip.id.clone(),
+                item: item.clone(),
+                source_start: None,
+                enhanced: false,
+            })
+            .collect();
+        if !commands.is_empty() {
+            studio.apply(Command::Batch { commands });
+            studio.request_media_art();
+            studio.request_preview();
+        }
+        studio.notify(&t("generate.madeAgain"), false);
+        if remade.spent > 0.0 {
+            studio.notify(&tf("generate.spent", &[&dollars(remade.spent)]), false);
+        }
+        self.thumbnails(studio, Some(stem.to_owned()));
+        self.tally(studio);
+    }
+
+    /// Makes small pictures of the shots made - every one, or `only` that
+    /// one - on a worker, for the script editor.
+    fn thumbnails(&self, studio: &Studio, only: Option<String>) {
+        let (Some(board), Some(job)) = (self.board.as_ref(), self.job(studio)) else {
+            return;
+        };
+        let stems: Vec<String> = match only {
+            Some(stem) => vec![stem],
+            None => board
+                .scenes()
+                .flat_map(|scene| (0..scene.shots.len()).map(|n| shot_stem(&scene.id, n)))
+                .collect(),
+        };
+        spawn_in_project(
+            move || {
+                stems
+                    .into_iter()
+                    .filter_map(|stem| {
+                        let picture = image::open(job.picture(&stem)?).ok()?;
+                        let small = picture.thumbnail(240, 240).to_rgba8();
+                        let (width, height) = small.dimensions();
+                        Some((stem, width, height, small.into_raw()))
+                    })
+                    .collect::<Vec<_>>()
+            },
+            |studio, _, _, thumbs| {
+                studio.handle(Msg::Generate(GenerateMsg::Thumbs(thumbs)));
+            },
+        );
+    }
+
+    /// Whether the clip selected shows a shot this sheet made, which can
+    /// be made again; and whether it is being.
+    pub fn remakable(&self, studio: &Studio) -> (bool, bool) {
+        match studio
+            .selected_media_path()
+            .and_then(|path| shot_of(Path::new(&path)))
+        {
+            Some((_, stem)) => (true, self.remaking.contains(&stem)),
+            None => (false, false),
+        }
+    }
+
     /// Keeps the idea in the job's folder, so the sheet finds the job again.
     fn remember(&self, studio: &mut Studio, job: &Job) {
         let idea = Idea {
@@ -837,16 +1034,7 @@ impl GeneratePane {
             },
             _ => Voice::None,
         };
-        let shots = match prefs.shots {
-            1 => Shots::Replicate {
-                token: prefs.replicate_token.clone(),
-                image_model: prefs.replicate_image_model.clone(),
-                video_model: video_model(&prefs.replicate_model).to_owned(),
-                video_input: REPLICATE_INPUT.to_owned(),
-            },
-            2 => Shots::Folder,
-            _ => Shots::Draft,
-        };
+        let shots = shots_of(&prefs);
         // The window's own voice: the speech model in use and the speaker
         // chosen last in the speech sheet.
         let model = installed(&studio.settings.voices)
@@ -1143,10 +1331,12 @@ impl GeneratePane {
 
     /// The script editor's rows: each chapter, then its scenes, each scene
     /// then its shots.
-    pub fn script_rows(&self) -> Vec<ScriptRow> {
+    pub fn script_rows(&self, studio: &Studio) -> Vec<ScriptRow> {
         let Some(board) = self.board.as_ref().filter(|_| self.script_open) else {
             return Vec::new();
         };
+        let prices = prices(studio);
+        let paid = studio.prefs.generate.shots == 1;
         let mut rows = Vec::new();
         for (c, chapter) in board.chapters.iter().enumerate() {
             rows.push(ScriptRow {
@@ -1190,6 +1380,18 @@ impl GeneratePane {
                         detail: shot.motion.as_str().into(),
                         video: shot.kind == ShotKind::Video,
                         repeat: self.repeats.contains(&stem),
+                        has_thumb: self.thumbs.contains_key(&stem),
+                        thumb: self.thumbs.get(&stem).cloned().unwrap_or_default(),
+                        remaking: self.remaking.contains(&stem),
+                        cost: if paid {
+                            let cost = match shot.kind {
+                                ShotKind::Video => prices.clip + prices.still,
+                                ShotKind::Image => prices.still,
+                            };
+                            format!("~${}", dollars(cost)).into()
+                        } else {
+                            SharedString::default()
+                        },
                         ..ScriptRow::default()
                     });
                 }
@@ -1268,6 +1470,37 @@ impl Editing for Session<'_> {
             .find(|item| item.path == path)
             .map(|item| item.id.clone())
     }
+}
+
+/// Where the shots come from, as the sheet's choices say.
+fn shots_of(prefs: &crate::prefs::GeneratePrefs) -> Shots {
+    match prefs.shots {
+        1 => Shots::Replicate {
+            token: prefs.replicate_token.clone(),
+            image_model: prefs.replicate_image_model.clone(),
+            video_model: video_model(&prefs.replicate_model).to_owned(),
+            video_input: REPLICATE_INPUT.to_owned(),
+        },
+        2 => Shots::Folder,
+        _ => Shots::Draft,
+    }
+}
+
+/// The job and the shot a file is, when it is one of a job's shots.
+fn shot_of(path: &Path) -> Option<(Job, String)> {
+    let job = Job::of_shot(path)?;
+    let stem = job.stem_of(path)?;
+    Some((job, stem))
+}
+
+/// A still rather than a clip, by its file's extension.
+fn is_still(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(
+            e.to_ascii_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "webp"
+        )
+    })
 }
 
 /// The video model to use: the one named, or the default.
