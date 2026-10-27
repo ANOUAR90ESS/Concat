@@ -23,7 +23,9 @@ the film keeps one look - draft colour cards, or shots made by hand), and the
 whole thing is cut on a new timeline - shots fitted to the narration,
 transitions, captions, chapter titles, a music bed - ready to edit and export
 like anything else. The sheet estimates what a video will cost before a cent
-is spent, and a spend limit stops a run before it goes over.
+is spent, and a spend limit stops a run before it goes over. Every shot is
+kept the moment it is made, so a run cut short - the app closed, another
+project opened - carries on where it stopped without paying for it again.
 See `src/crates/concat-generate`.
 
 ## About

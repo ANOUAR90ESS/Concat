@@ -67,13 +67,90 @@ export struct GenerateSheetData {
     has-script: bool,
     /// What that storyboard holds, in words.
     script-summary: string,
+    /// How far the job is: what is made and kept, and what comes next.
+    status: string,
     running: bool,
     /// 0..1
     progress: float,
     /// What the run is doing, in words.
     stage: string,
+    /// The step under way: 0 the script, 1 the narration, 2 the shots,
+    /// 3 the cut.
+    phase: int,
+    /// The run reads its scenes aloud.
+    voiced: bool,
+    /// What the step under way is making, in the script's words.
+    detail: string,
+    /// The last shot made, shown while the next one is.
+    has-preview: bool,
+    preview: image,
+    /// Shots made of how many: "4 / 10".
+    counts: string,
+    /// What the run has paid so far, in words; empty while nothing.
+    spent: string,
     /// Why the last run failed, when it did.
     message: string,
+}
+
+// One step of a run, as the checklist shows it: waiting, under way (a dot
+// circling the ring), done (a tick), or not part of this run.
+component RunStep inherits HorizontalLayout {
+    in property <string> label;
+    /// 0 waiting, 1 under way, 2 done, 3 skipped
+    in property <int> state;
+    in property <string> note;
+
+    spacing: 10px;
+    height: 26px;
+
+    VerticalLayout {
+        alignment: center;
+
+        Rectangle {
+            width: 20px;
+            height: 20px;
+            border-radius: 10px;
+            background: root.state == 2 ? Theme.accent : transparent;
+            border-width: root.state == 2 ? 0px : 1.5px;
+            border-color: root.state == 1 ? Theme.accent-soft : Theme.line;
+
+            if root.state == 2: Icon {
+                x: 4px;
+                y: 4px;
+                glyph: Glyph.check;
+                size: 12px;
+                tint: Theme.on-accent;
+                weight: 3;
+            }
+
+            if root.state == 1: Rectangle {
+                property <angle> turn: animation-tick() / 1100ms * 360deg;
+                x: 10px + 7.5px * Math.cos(self.turn) - 3px;
+                y: 10px + 7.5px * Math.sin(self.turn) - 3px;
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.accent;
+            }
+        }
+    }
+
+    Text {
+        horizontal-stretch: 1;
+        text: root.label;
+        color: root.state == 1 ? Theme.fg : root.state == 2 ? Theme.fg-muted : Theme.fg-dim;
+        font-size: Theme.fs;
+        font-weight: root.state == 1 ? Theme.weight-title : 400;
+        vertical-alignment: center;
+    }
+
+    if root.note != "": Text {
+        text: root.note;
+        color: root.state == 1 ? Theme.accent : Theme.fg-dim;
+        font-family: Theme.font-technical;
+        font-size: Theme.fs-sm;
+        vertical-alignment: center;
+    }
 }
 
 export component GenerateDialog inherits Modal {
@@ -272,6 +349,15 @@ export component GenerateDialog inherits Modal {
                                 ghost: true;
                                 clicked => { root.open-folder(); }
                             }
+                        }
+
+                        // A wrapped line on its own: beside an icon, a
+                        // layout row was given one line's height.
+                        if root.data.has-script && root.data.status != "": Text {
+                            text: root.data.status;
+                            color: Theme.accent;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
                         }
                     }
 
@@ -474,7 +560,174 @@ export component GenerateDialog inherits Modal {
             }
         }
 
-        if root.data.running: Rectangle { vertical-stretch: 1; }
+        // While a run is under way the sheet is its stage: the last shot
+        // made, the words of the one being made, the steps, and what it
+        // has cost - and the reassurance that leaving loses nothing.
+        if root.data.running: Rectangle {
+            vertical-stretch: 1;
+
+            Flickable {
+                content-height: run.preferred-height;
+
+                run := VerticalLayout {
+                    padding: 16px;
+                    spacing: 14px;
+
+                    Rectangle {
+                        height: Math.min(self.width * 9 / 16, 240px);
+                        border-radius: Theme.r * 2;
+                        background: Theme.well;
+                        border-width: 1px;
+                        border-color: Theme.line;
+                        clip: true;
+
+                        if root.data.has-preview: Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: root.data.preview;
+                            image-fit: contain;
+                        }
+
+                        // Nothing to show yet: the mark breathes.
+                        if !root.data.has-preview: Rectangle {
+                            property <float> breath: (1 + Math.sin(animation-tick() / 1600ms * 360deg)) / 2;
+                            width: 64px;
+                            height: 64px;
+                            border-radius: 32px;
+                            background: Theme.accent-soft;
+                            opacity: 0.45 + 0.55 * self.breath;
+
+                            Icon {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                glyph: Glyph.sparkle;
+                                size: 26px + 6px * parent.breath;
+                                tint: Theme.accent;
+                            }
+                        }
+
+                        // A sheen sweeping across: the stage is at work.
+                        Rectangle {
+                            property <float> sweep: Math.mod(animation-tick() / 2200ms, 1);
+                            x: (parent.width * 1.6) * self.sweep - parent.width * 0.6;
+                            width: parent.width * 0.6;
+                            height: parent.height;
+                            background: @linear-gradient(90deg, #ffffff00 0%, #ffffff1f 50%, #ffffff00 100%);
+                        }
+
+                        if root.data.counts != "": Rectangle {
+                            x: 10px;
+                            y: 10px;
+                            width: chip.preferred-width + 16px;
+                            height: 22px;
+                            border-radius: 11px;
+                            background: #000000a0;
+
+                            chip := Text {
+                                text: root.data.counts;
+                                color: #ffffff;
+                                font-family: Theme.font-technical;
+                                font-size: Theme.fs-sm;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.data.stage;
+                            color: Theme.fg;
+                            font-size: Theme.fs-lg;
+                            font-weight: Theme.weight-title;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: "\{Math.floor(root.data.progress * 100)}%";
+                            color: Theme.accent;
+                            font-family: Theme.font-technical;
+                            font-size: Theme.fs-lg;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Progress {
+                        value: root.data.progress;
+                        live: true;
+                    }
+
+                    if root.data.detail != "": Rectangle {
+                        height: Math.min(words.preferred-height, 54px);
+                        clip: true;
+
+                        words := Text {
+                            width: parent.width;
+                            y: 0px;
+                            text: "“" + root.data.detail + "”";
+                            color: Theme.fg-muted;
+                            font-size: Theme.fs-sm;
+                            font-italic: true;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+
+                        RunStep {
+                            label: I18n.t("generate.stepScript");
+                            state: root.data.phase > 0 ? 2 : 1;
+                        }
+
+                        RunStep {
+                            label: I18n.t("generate.stepVoice");
+                            state: root.data.phase < 1 ? 0 : !root.data.voiced ? 3 : root.data.phase > 1 ? 2 : 1;
+                            note: root.data.phase >= 1 && !root.data.voiced ? I18n.t("generate.noVoice") : "";
+                        }
+
+                        RunStep {
+                            label: I18n.t("generate.stepShots");
+                            state: root.data.phase < 2 ? 0 : root.data.phase == 2 ? 1 : 2;
+                            note: root.data.counts;
+                        }
+
+                        RunStep {
+                            label: I18n.t("generate.stepCut");
+                            state: root.data.phase == 3 ? 1 : 0;
+                        }
+                    }
+
+                    if root.data.spent != "": Text {
+                        text: root.data.spent;
+                        color: Theme.fg-muted;
+                        font-family: Theme.font-technical;
+                        font-size: Theme.fs-sm;
+                    }
+
+                    if root.data.phase >= 1: HorizontalLayout {
+                        spacing: 8px;
+
+                        VerticalLayout {
+                            alignment: start;
+                            Icon { glyph: Glyph.check; size: 13px; tint: Theme.fg-dim; }
+                        }
+
+                        Text {
+                            horizontal-stretch: 1;
+                            text: I18n.t("generate.keptNote");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
 
         Rectangle {
             height: 1px;
@@ -510,36 +763,6 @@ export component GenerateDialog inherits Modal {
                         alignment: start;
                         CopyChip { text: root.data.message; }
                     }
-                }
-            }
-
-            if root.data.running: VerticalLayout {
-                spacing: 8px;
-
-                HorizontalLayout {
-                    spacing: 8px;
-
-                    Text {
-                        horizontal-stretch: 1;
-                        text: root.data.stage;
-                        color: Theme.fg;
-                        font-size: Theme.fs;
-                        vertical-alignment: center;
-                        wrap: word-wrap;
-                    }
-
-                    Text {
-                        text: "\{Math.floor(root.data.progress * 100)}%";
-                        color: Theme.fg-muted;
-                        font-family: Theme.font-technical;
-                        font-size: Theme.fs;
-                        vertical-alignment: center;
-                    }
-                }
-
-                Progress {
-                    value: root.data.progress;
-                    live: true;
                 }
             }
 

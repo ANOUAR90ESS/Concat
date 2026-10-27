@@ -7270,6 +7270,7 @@ impl Studio {
         self.captions.pace = Default::default();
         self.speech.running = false;
         self.speech.pace = Default::default();
+        self.generate.closed();
         self.source = None;
         // A take running as the project closes stops, keeping its file;
         // the next project's speakers are not left silent.

@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_generate::budget::{self, Totals};
 use concat_generate::cost::{self, Estimate, Prices};
-use concat_generate::job::{Costs, Job, Made, Step};
+use concat_generate::job::{Costs, Idea, Job, Made, Status, Step};
 use concat_generate::plan::{self, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
@@ -102,6 +102,8 @@ pub enum GenerateMsg {
     Cancel,
     /// A worker saying where it is: `0..=1`, and in words.
     Progress(f32, String),
+    /// The making saying where it is.
+    Step(Step),
     /// The writer is done; and whether making follows.
     Written(Box<Result<Storyboard, String>>, bool),
     /// The providers are done, and the files probed.
@@ -122,6 +124,21 @@ pub struct GeneratePane {
     pub progress: f32,
     pub stage: String,
     pub message: String,
+    /// Which step a run is on: 0 the script, 1 the narration, 2 the shots,
+    /// 3 the cut.
+    phase: i32,
+    /// The run reads its scenes aloud.
+    voiced: bool,
+    /// What the step under way is making, in the script's words.
+    detail: String,
+    /// The last shot made, to show while the next is.
+    preview: Option<slint::Image>,
+    /// Shots made of how many, as the steps show it.
+    counts: String,
+    /// What the run has paid so far, in dollars.
+    spent: f64,
+    /// How far the job is, said under the script's summary.
+    status: String,
     /// The storyboard already in the job's folder, read when the sheet
     /// opens and whenever the idea changes.
     board: Option<Storyboard>,
@@ -159,6 +176,13 @@ impl Default for GeneratePane {
             progress: 0.0,
             stage: String::new(),
             message: String::new(),
+            phase: 0,
+            voiced: false,
+            detail: String::new(),
+            preview: None,
+            counts: String::new(),
+            spent: 0.0,
+            status: String::new(),
             board: None,
             repeats: HashSet::new(),
             script_open: false,
@@ -182,6 +206,17 @@ impl GeneratePane {
                 self.message.clear();
                 if let Some(minutes) = studio.prefs.generate.minutes {
                     self.minutes = minutes.min(MINUTES.len() - 1);
+                }
+                // Opened with no idea typed - the app started again, or the
+                // project opened again - the sheet picks up the job worked
+                // on last, with everything it has made so far.
+                if self.topic.trim().is_empty()
+                    && !self.running
+                    && let Some(project) = studio.session.as_ref().map(|s| s.path().to_owned())
+                    && let Some(idea) = Job::latest(Path::new(&project))
+                {
+                    self.topic = idea.topic;
+                    self.notes = idea.notes;
                 }
                 self.look(studio);
             }
@@ -224,7 +259,12 @@ impl GeneratePane {
                     }
                     1 => prefs.language = index.min(LANGUAGES.len() - 1),
                     2 => prefs.aspect = index.min(ASPECTS.len() - 1),
-                    3 => prefs.voice = Some(index.min(2)),
+                    3 => {
+                        prefs.voice = Some(index.min(2));
+                        studio.prefs.save(&studio.host.dirs);
+                        self.tally(studio);
+                        return;
+                    }
                     4 => prefs.shots = index.min(2),
                     5 => {
                         self.music = index;
@@ -261,6 +301,7 @@ impl GeneratePane {
             GenerateMsg::CloseScript => {
                 self.keep(studio);
                 self.script_open = false;
+                self.tally(studio);
             }
             GenerateMsg::ScriptEdited(chapter, scene, shot, field, text) => {
                 self.edit(chapter, scene, shot, field, text);
@@ -317,6 +358,11 @@ impl GeneratePane {
                     self.stage = stage;
                 }
             }
+            GenerateMsg::Step(step) => {
+                if self.running {
+                    self.step(step);
+                }
+            }
             GenerateMsg::Written(result, then_make) => {
                 self.running = false;
                 match *result {
@@ -326,6 +372,12 @@ impl GeneratePane {
                         self.changed();
                         if then_make {
                             self.make(studio, board);
+                        } else {
+                            // What was written is shown at once, to read
+                            // and edit before a shot is paid for.
+                            self.script_open = true;
+                            self.script_message.clear();
+                            self.tally(studio);
                         }
                     }
                     Err(error) => self.failed(error),
@@ -337,6 +389,7 @@ impl GeneratePane {
                     Ok((board, made)) => self.cut(studio, &board, &made),
                     Err(error) => self.failed(error),
                 }
+                self.tally(studio);
             }
         }
     }
@@ -364,6 +417,88 @@ impl GeneratePane {
         self.stale_voices.clear();
         self.stale_shots.clear();
         self.changed();
+        self.tally(studio);
+    }
+
+    /// Works out again how far the job is, from what its folder holds.
+    fn tally(&mut self, studio: &Studio) {
+        let (Some(board), Some(job)) = (self.board.as_ref(), self.job(studio)) else {
+            self.status.clear();
+            return;
+        };
+        let Status {
+            voices,
+            voices_made,
+            shots,
+            shots_made,
+        } = job.status(board, self.voice_row(studio) != 0);
+        self.status = if shots_made == 0 && voices_made == 0 {
+            t("generate.nextStep")
+        } else if shots_made == shots && voices_made == voices {
+            tf("generate.allMade", &[&shots])
+        } else {
+            tf("generate.madeSoFar", &[&shots_made, &shots])
+        };
+    }
+
+    /// Takes in where the making is.
+    fn step(&mut self, step: Step) {
+        let (fraction, stage) = match &step {
+            Step::Voice { n, of, text } => {
+                self.phase = 1;
+                self.detail = text.clone();
+                (
+                    0.4 * *n as f32 / *of as f32,
+                    tf("generate.readingScene", &[n, of]),
+                )
+            }
+            Step::Shot { n, of, prompt } => {
+                self.phase = 2;
+                self.detail = prompt.clone();
+                self.counts = format!("{} / {of}", n - 1);
+                (
+                    0.4 + 0.55 * (*n - 1) as f32 / *of as f32,
+                    tf("generate.makingShot", &[n, of]),
+                )
+            }
+            Step::Made {
+                n,
+                of,
+                picture,
+                spent,
+            } => {
+                self.phase = 2;
+                self.counts = format!("{n} / {of}");
+                self.spent = *spent;
+                if let Some(image) = picture
+                    .as_ref()
+                    .and_then(|path| slint::Image::load_from_path(path).ok())
+                {
+                    self.preview = Some(image);
+                }
+                (0.4 + 0.55 * *n as f32 / *of as f32, self.stage.clone())
+            }
+            Step::Probing => {
+                self.phase = 3;
+                self.detail.clear();
+                (0.97, t("generate.readingFiles"))
+            }
+        };
+        self.progress = fraction;
+        self.stage = stage;
+    }
+
+    /// The project closed: a run under way stops between two files, so
+    /// what it made is kept, and the sheet forgets the idea - opened in the
+    /// next project it finds that project's own last job.
+    pub fn closed(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        *self = GeneratePane {
+            minutes: self.minutes,
+            captions: self.captions,
+            titles: self.titles,
+            ..GeneratePane::default()
+        };
     }
 
     /// Works out again what follows from the storyboard: which shots repeat.
@@ -556,11 +691,16 @@ impl GeneratePane {
                 &dollars(estimate.voice),
             ],
         );
-        if let Some(limit) = spend_limit(studio)
-            && estimate.total() > limit
-        {
-            line.push(' ');
-            line.push_str(&tf("generate.overLimit", &[&dollars(limit)]));
+        match spend_limit(studio) {
+            Some(limit) if estimate.total() > limit => {
+                line.push(' ');
+                line.push_str(&tf("generate.overLimit", &[&dollars(limit)]));
+            }
+            None if !studio.prefs.generate.spend_limit.trim().is_empty() => {
+                line.push(' ');
+                line.push_str(&t("generate.limitNotNumber"));
+            }
+            _ => {}
         }
         line
     }
@@ -630,8 +770,10 @@ impl GeneratePane {
             return;
         }
         let Some(job) = self.job(studio) else { return };
+        self.remember(studio, &job);
         let brief = self.brief(studio);
         self.begin(t("generate.writingOutline"));
+        self.phase = 0;
         let epoch = crate::host::project_epoch();
         spawn_in_project(
             move || {
@@ -648,7 +790,11 @@ impl GeneratePane {
                             studio.handle(Msg::Generate(GenerateMsg::Progress(fraction, stage)));
                         });
                     })?;
+                let old = Storyboard::read(&job.storyboard()).ok();
                 job.keep(&board)?;
+                if let Some(old) = old {
+                    job.retire(&old, &board);
+                }
                 Ok(board)
             },
             move |studio, _, _, result| {
@@ -660,10 +806,22 @@ impl GeneratePane {
         );
     }
 
+    /// Keeps the idea in the job's folder, so the sheet finds the job again.
+    fn remember(&self, studio: &mut Studio, job: &Job) {
+        let idea = Idea {
+            topic: self.topic.trim().to_owned(),
+            notes: self.notes.clone(),
+        };
+        if let Err(error) = job.remember(&idea) {
+            studio.notify(&error, true);
+        }
+    }
+
     /// Makes the narration and the shots on a worker, then cuts.
     fn make(&mut self, studio: &mut Studio, board: Storyboard) {
         let prefs = studio.prefs.generate.clone();
         let Some(job) = self.job(studio) else { return };
+        self.remember(studio, &job);
         let Some(project) = studio
             .session
             .as_ref()
@@ -709,6 +867,16 @@ impl GeneratePane {
         let dirs = studio.host.dirs.clone();
 
         self.begin(t("generate.makingShots"));
+        self.voiced = voice != Voice::None;
+        self.phase = if self.voiced { 1 } else { 2 };
+        self.counts = format!("0 / {}", board.shot_count());
+        // The shots a run before this one made: the first is shown at once.
+        self.preview = board
+            .scenes()
+            .flat_map(|scene| (0..scene.shots.len()).map(|n| shot_stem(&scene.id, n)))
+            .filter_map(|stem| job.picture(&stem))
+            .last()
+            .and_then(|path| slint::Image::load_from_path(&path).ok());
         let stop = Arc::clone(&self.stop);
         let epoch = crate::host::project_epoch();
         spawn_in_project(
@@ -729,19 +897,8 @@ impl GeneratePane {
                         .map(|spoken| PathBuf::from(spoken.path))
                 };
                 let mut progress = |step: Step| {
-                    let (fraction, stage) = match step {
-                        Step::Voice { n, of } => (
-                            0.4 * n as f32 / of as f32,
-                            tf("generate.readingScene", &[&n, &of]),
-                        ),
-                        Step::Shot { n, of } => (
-                            0.4 + 0.55 * n as f32 / of as f32,
-                            tf("generate.makingShot", &[&n, &of]),
-                        ),
-                        Step::Probing => (0.97, t("generate.readingFiles")),
-                    };
                     on_ui_in_project(epoch, move |studio, _, _| {
-                        studio.handle(Msg::Generate(GenerateMsg::Progress(fraction, stage)));
+                        studio.handle(Msg::Generate(GenerateMsg::Step(step)));
                     });
                 };
                 let made = job.make(
@@ -828,6 +985,10 @@ impl GeneratePane {
         self.message.clear();
         self.progress = 0.0;
         self.stage = stage;
+        self.detail.clear();
+        self.preview = None;
+        self.counts.clear();
+        self.spent = 0.0;
     }
 
     /// Who reads: the remembered choice, or the window's own voices when a
@@ -917,9 +1078,21 @@ impl GeneratePane {
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
             has_script: self.board.is_some(),
             script_summary: summary.unwrap_or_default().into(),
+            status: self.status.as_str().into(),
             running: self.running,
             progress: self.progress,
             stage: self.stage.as_str().into(),
+            phase: self.phase,
+            voiced: self.voiced,
+            detail: self.detail.as_str().into(),
+            has_preview: self.preview.is_some(),
+            preview: self.preview.clone().unwrap_or_default(),
+            counts: self.counts.as_str().into(),
+            spent: if self.spent > 0.0 {
+                tf("generate.spentSoFar", &[&dollars(self.spent)]).into()
+            } else {
+                SharedString::default()
+            },
             message: self.message.as_str().into(),
         }
     }
