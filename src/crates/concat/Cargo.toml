@@ -153,8 +153,9 @@ serde_json.workspace = true
 # Text presets are TOML files, as the effect manifests are.
 toml = "1.1"
 
-# JPEG encoding for the media artwork cache.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# JPEG encoding for the media artwork cache, and reading the Long video
+# shots back as thumbnails, which a service may answer as WebP.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 
 [build-dependencies]
 slint-build = "1.18"

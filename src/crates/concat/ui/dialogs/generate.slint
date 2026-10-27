@@ -370,24 +370,25 @@ export component GenerateDialog inherits Modal {
 
                         // A minute of the finished video, cut again for a
                         // phone held upright: nothing is made or paid for
-                        // again.
+                        // again. The button on a line of its own and the
+                        // words under it: side by side on a phone, the
+                        // wrapped words took the row and left the button
+                        // no width at all.
                         if root.data.can-short: HorizontalLayout {
-                            spacing: 8px;
+                            alignment: start;
 
                             Button {
                                 label: I18n.t("generate.makeShort");
                                 glyph: Glyph.film;
                                 clicked => { root.make-short(); }
                             }
+                        }
 
-                            Text {
-                                horizontal-stretch: 1;
-                                text: I18n.t("generate.makeShortHint");
-                                color: Theme.fg-dim;
-                                font-size: Theme.fs-sm;
-                                vertical-alignment: center;
-                                wrap: word-wrap;
-                            }
+                        if root.data.can-short: Text {
+                            text: I18n.t("generate.makeShortHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
                         }
                     }
 
