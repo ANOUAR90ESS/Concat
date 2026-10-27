@@ -265,19 +265,24 @@ impl Job {
         self.dir.join("stand-ins.txt")
     }
 
-    /// Removes the shots the last run stood in for, so this run makes them.
-    fn forget_stand_ins(&self) {
+    /// Marks the shots the last run stood in for as stale, so this run
+    /// makes them again as takes. Their colour cards are kept: a cut
+    /// already on the timeline uses them, and an export of it failed with
+    /// the file gone when they were removed here.
+    fn forget_stand_ins(&self) -> Result<(), String> {
         let Ok(list) = std::fs::read_to_string(self.stand_ins()) else {
-            return;
+            return Ok(());
         };
-        for stem in list.lines().map(str::trim).filter(|stem| !stem.is_empty()) {
-            while let Some(path) = providers::existing(&self.shots_dir(), stem, &SHOT_EXTENSIONS) {
-                if std::fs::remove_file(&path).is_err() {
-                    break;
-                }
-            }
-        }
+        let mut stale = self.stale();
+        stale.extend(
+            list.lines()
+                .map(str::trim)
+                .filter(|stem| !stem.is_empty())
+                .map(str::to_owned),
+        );
+        self.set_stale(&stale)?;
         let _ = std::fs::remove_file(self.stand_ins());
+        Ok(())
     }
 
     /// Notes the shots this run stood in for; see [`Job::stand_ins`].
@@ -451,7 +456,7 @@ impl Job {
         for dir in [&voice_dir, &shots_dir] {
             std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
         }
-        self.forget_stand_ins();
+        self.forget_stand_ins()?;
 
         // The narration first: it decides every scene's length.
         let spoken: Vec<_> = board
@@ -1085,9 +1090,12 @@ mod tests {
             std::fs::write(job.shots_dir().join(format!("{stem}.png")), b"x").unwrap();
         }
         job.remember_stand_ins(&["c01s01_2".to_owned()]).unwrap();
-        job.forget_stand_ins();
+        job.forget_stand_ins().unwrap();
+        // The card is kept for the cut that uses it, and made again as a
+        // take.
         assert!(job.shots_dir().join("c01s01_1.png").exists());
-        assert!(!job.shots_dir().join("c01s01_2.png").exists());
+        assert!(job.shots_dir().join("c01s01_2.png").exists());
+        assert_eq!(job.stale(), BTreeSet::from(["c01s01_2".to_owned()]));
         assert!(!job.stand_ins().exists());
         std::fs::remove_dir_all(root).unwrap();
     }

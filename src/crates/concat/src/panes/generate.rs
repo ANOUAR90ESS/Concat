@@ -1080,7 +1080,9 @@ impl GeneratePane {
     }
 
     /// Makes small pictures of the shots made - every one, or `only` that
-    /// one - on a worker, for the script editor.
+    /// one - on a worker, for the script editor. They are handed over a few
+    /// at a time, so a long video's first shots show while the rest are
+    /// still being read.
     fn thumbnails(&self, studio: &Studio, only: Option<String>) {
         let (Some(board), Some(job)) = (self.board.as_ref(), self.job(studio)) else {
             return;
@@ -1092,21 +1094,27 @@ impl GeneratePane {
                 .flat_map(|scene| (0..scene.shots.len()).map(|n| shot_stem(&scene.id, n)))
                 .collect(),
         };
+        let epoch = crate::host::project_epoch();
         spawn_in_project(
             move || {
-                stems
-                    .into_iter()
-                    .filter_map(|stem| {
-                        let picture = image::open(job.picture(&stem)?).ok()?;
-                        let small = picture.thumbnail(240, 240).to_rgba8();
-                        let (width, height) = small.dimensions();
-                        Some((stem, width, height, small.into_raw()))
-                    })
-                    .collect::<Vec<_>>()
+                for stems in stems.chunks(THUMBS_AT_ONCE) {
+                    let thumbs: Vec<_> = stems
+                        .iter()
+                        .filter_map(|stem| {
+                            let path = job.picture(stem)?;
+                            let small = thumbnail(&path)?;
+                            let (width, height) = small.dimensions();
+                            Some((stem.clone(), width, height, small.into_raw()))
+                        })
+                        .collect();
+                    if !thumbs.is_empty() {
+                        on_ui_in_project(epoch, move |studio, _, _| {
+                            studio.handle(Msg::Generate(GenerateMsg::Thumbs(thumbs)));
+                        });
+                    }
+                }
             },
-            |studio, _, _, thumbs| {
-                studio.handle(Msg::Generate(GenerateMsg::Thumbs(thumbs)));
-            },
+            |_, _, _, ()| {},
         );
     }
 
@@ -1617,6 +1625,23 @@ fn music_items(studio: &Studio) -> Vec<(String, f64)> {
         .filter(|item| item.kind == MediaKind::Audio)
         .map(|item| (item.path.clone(), item.duration.unwrap_or(0.0)))
         .collect()
+}
+
+/// Thumbnails handed to the sheet at once: the first show at once on a
+/// phone, and a long video's hundred do not wait for one another.
+const THUMBS_AT_ONCE: usize = 6;
+
+/// A shot's picture, small. Read by what the file holds rather than by its
+/// name: a service asked for a PNG may answer with a JPEG or a WebP, which
+/// is saved under the name asked for.
+fn thumbnail(path: &Path) -> Option<image::RgbaImage> {
+    let picture = image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    Some(picture.thumbnail(240, 240).to_rgba8())
 }
 
 /// The window's session as the cut lays itself down through it: every
