@@ -335,6 +335,7 @@ export component App inherits Window {
     callback generate-create();
     callback generate-open-folder();
     callback generate-edit-script();
+    callback generate-make-short();
     callback generate-cancel();
     in property <ScriptSheetData> script;
     in property <[ScriptRow]> script-rows;
@@ -979,6 +980,7 @@ export component App inherits Window {
         create => { root.generate-create(); }
         open-folder => { root.generate-open-folder(); }
         edit-script => { root.generate-edit-script(); }
+        make-short => { root.generate-make-short(); }
         cancel => { root.generate-cancel(); }
     }
 

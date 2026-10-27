@@ -53,6 +53,9 @@ pub struct Options {
     pub music_volume: f64,
     /// The fade up from black and down to it, in seconds.
     pub fade_seconds: f64,
+    /// Every picture enlarged to fill the frame, cropping what spills over,
+    /// rather than fitted inside it: a wide shot on a tall Short.
+    pub fill_frame: bool,
 }
 
 impl Default for Options {
@@ -70,6 +73,7 @@ impl Default for Options {
             ken_burns: true,
             music_volume: 0.12,
             fade_seconds: 1.0,
+            fill_frame: false,
         }
     }
 }
@@ -369,6 +373,8 @@ pub fn cut(
         Ok(id)
     };
 
+    let media_of_path = |path: &str| media.get(path);
+
     // Media first, words last, captions on a lane of their own on top so
     // they sit over everything and hide in one click.
     let order = [
@@ -414,7 +420,14 @@ pub fn cut(
                             continue;
                         }
                     };
-                    fit(editor, &clip, &media, &lane(kind), p);
+                    // How much larger than fitted a picture is drawn to
+                    // fill the frame, when the cut asks it to.
+                    let fill = if kind == Kind::Shot && options.fill_frame {
+                        media_of_path(file).map_or(1.0, |item| cover(item, (width, height)))
+                    } else {
+                        1.0
+                    };
+                    fit(editor, &clip, &media, &lane(kind), p, fill);
                     let mut patch = ClipPatch::default();
                     if kind == Kind::Shot {
                         let n = shots
@@ -431,7 +444,12 @@ pub fn cut(
                         }
                         if p.source.is_none() && options.ken_burns {
                             let (from, to) = if n % 2 == 0 { (1.0, 1.12) } else { (1.12, 1.0) };
-                            key(editor, &clip, KeyProperty::Scale, &[(0.0, from), (1.0, to)]);
+                            key(
+                                editor,
+                                &clip,
+                                KeyProperty::Scale,
+                                &[(0.0, from * fill), (1.0, to * fill)],
+                            );
                         }
                         fade(
                             editor,
@@ -508,7 +526,18 @@ pub fn cut(
 /// longer, stretched when it is a still, and slowed (down to [`SLOWEST`])
 /// when it is a shorter video - which then plays again from its top for
 /// whatever is still left, the way an editor loops b-roll.
-fn fit(editor: &mut dyn Editing, clip: &str, media: &str, lane: &str, p: &Placement) {
+fn fit(editor: &mut dyn Editing, clip: &str, media: &str, lane: &str, p: &Placement, fill: f64) {
+    if fill > 1.001 {
+        editor.apply(Command::SetClipTransform {
+            clip_id: clip.to_owned(),
+            scale: Some(fill),
+            offset_x: None,
+            offset_y: None,
+            rotation: None,
+            stretch_x: None,
+            stretch_y: None,
+        });
+    }
     // A clip whose length the probe could not read is fitted as a still
     // is: trimmed to its place, never slowed by a speed of nought.
     let source = p.source.filter(|s| s.is_finite() && *s > 0.1);
@@ -543,7 +572,7 @@ fn fit(editor: &mut dyn Editing, clip: &str, media: &str, lane: &str, p: &Placem
                 length: delta,
                 ..p.clone()
             };
-            fit(editor, &again, media, lane, &rest);
+            fit(editor, &again, media, lane, &rest, fill);
         }
     }
 }
@@ -601,6 +630,19 @@ fn caption_style(content: String) -> TextStyle {
         background_padding_x: 0.022,
         background_padding_y: 0.012,
         ..TextStyle::default()
+    }
+}
+
+/// How much larger than fitted a picture of `item`'s shape is drawn to fill
+/// a `frame` - the ratio of the two shapes, either way round; 1 for the
+/// same shape, or a size the probe did not read.
+fn cover(item: &NewMedia, frame: (u32, u32)) -> f64 {
+    match (item.width, item.height) {
+        (Some(w), Some(h)) if w > 0 && h > 0 && frame.0 > 0 && frame.1 > 0 => {
+            let ratio = (w as f64 / h as f64) / (frame.0 as f64 / frame.1 as f64);
+            ratio.max(1.0 / ratio).min(8.0)
+        }
+        _ => 1.0,
     }
 }
 
@@ -1006,5 +1048,65 @@ mod tests {
             assert_eq!(scale, [0.6, 1.08, 1.0]);
             assert!(card.text.as_ref().unwrap().stroke_width > 0.0);
         }
+    }
+
+    #[test]
+    fn a_wide_picture_fills_a_tall_frame_when_asked() {
+        let wide = NewMedia {
+            width: Some(1920),
+            height: Some(1080),
+            ..probed("/w.png", MediaKind::Image, None)
+        };
+        let tall = (1080, 1920);
+        let expected = (1920.0 / 1080.0) / (1080.0 / 1920.0);
+        assert!((cover(&wide, tall) - expected).abs() < 1e-9);
+        assert_eq!(cover(&wide, (1920, 1080)), 1.0);
+        let unknown = NewMedia {
+            width: None,
+            ..wide.clone()
+        };
+        assert_eq!(cover(&unknown, tall), 1.0);
+
+        // On the cut: the still's push-in keys are scaled by the fill.
+        let board = board();
+        let mut files = HashMap::new();
+        files.insert(
+            "c01s01".to_owned(),
+            SceneFiles {
+                voice: None,
+                shots: vec![("/w.png".to_owned(), None)],
+            },
+        );
+        files.insert(
+            "c01s02".to_owned(),
+            SceneFiles {
+                voice: None,
+                shots: vec![("/w.png".to_owned(), None)],
+            },
+        );
+        let options = Options {
+            fill_frame: true,
+            captions: false,
+            titles: false,
+            ..Options::default()
+        };
+        let placements = plan(&board, &files, &options, None).unwrap();
+        let media = HashMap::from([("/w.png".to_owned(), wide)]);
+        let mut editor = Bare(Editor::default());
+        cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        let active = editor.0.project().active();
+        let first = active
+            .clips
+            .iter()
+            .min_by(|a, b| a.start.total_cmp(&b.start))
+            .unwrap();
+        let scale: Vec<f64> = first
+            .keys
+            .iter()
+            .filter(|k| k.property == KeyProperty::Scale)
+            .map(|k| k.value)
+            .collect();
+        assert!((scale[0] - expected).abs() < 1e-6, "{scale:?}");
+        assert!((first.scale - expected).abs() < 1e-6, "{}", first.scale);
     }
 }

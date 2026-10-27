@@ -71,6 +71,8 @@ export struct GenerateSheetData {
     script-summary: string,
     /// How far the job is: what is made and kept, and what comes next.
     status: string,
+    /// Every shot is made: a Short can be cut from the video.
+    can-short: bool,
     running: bool,
     /// 0..1
     progress: float,
@@ -176,6 +178,8 @@ export component GenerateDialog inherits Modal {
     callback create();
     callback open-folder();
     callback edit-script();
+    /// Cut a Short: a minute of the video, 9:16.
+    callback make-short();
     callback cancel();
 
     open: root.data.open;
@@ -362,6 +366,28 @@ export component GenerateDialog inherits Modal {
                             color: Theme.accent;
                             font-size: Theme.fs-sm;
                             wrap: word-wrap;
+                        }
+
+                        // A minute of the finished video, cut again for a
+                        // phone held upright: nothing is made or paid for
+                        // again.
+                        if root.data.can-short: HorizontalLayout {
+                            spacing: 8px;
+
+                            Button {
+                                label: I18n.t("generate.makeShort");
+                                glyph: Glyph.film;
+                                clicked => { root.make-short(); }
+                            }
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.makeShortHint");
+                                color: Theme.fg-dim;
+                                font-size: Theme.fs-sm;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
                         }
                     }
 

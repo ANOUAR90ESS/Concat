@@ -24,6 +24,7 @@ use concat_generate::cost::{self, Estimate, Prices};
 use concat_generate::job::{Costs, Idea, Job, Made, Remade, Status, Step};
 use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
+use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{self, Brief, Suggestion, Writing};
 use concat_project::Command;
@@ -118,6 +119,10 @@ pub enum GenerateMsg {
     Remade(String, PathBuf, Box<Result<(Remade, NewMedia), String>>),
     /// Small pictures of shots, by stem: width, height and RGBA.
     Thumbs(Vec<(String, u32, u32, Vec<u8>)>),
+    /// Cut a Short from the video: a minute of it, 9:16.
+    Short,
+    /// The Short's storyboard and the files it is cut from, or why not.
+    ShortReady(Box<Result<(Storyboard, Made), String>>),
     /// The writer is done; and whether making follows.
     Written(Box<Result<Storyboard, String>>, bool),
     /// The providers are done, and the files probed.
@@ -153,6 +158,8 @@ pub struct GeneratePane {
     spent: f64,
     /// How far the job is, said under the script's summary.
     status: String,
+    /// Every shot the script asks for is made: a Short can be cut.
+    all_made: bool,
     /// A small picture of each shot made, by stem, for the script editor.
     thumbs: HashMap<String, slint::Image>,
     /// The shots being made again, by stem.
@@ -204,6 +211,7 @@ impl Default for GeneratePane {
             counts: String::new(),
             spent: 0.0,
             status: String::new(),
+            all_made: false,
             thumbs: HashMap::new(),
             remaking: HashSet::new(),
             suggesting: HashSet::new(),
@@ -349,6 +357,14 @@ impl GeneratePane {
                     None => studio.notify(&t("generate.notAShot"), true),
                 }
             }
+            GenerateMsg::Short => self.short(studio),
+            GenerateMsg::ShortReady(result) => {
+                self.running = false;
+                match *result {
+                    Ok((board, made)) => self.cut(studio, &board, &made, true),
+                    Err(error) => self.failed(error),
+                }
+            }
             GenerateMsg::Suggest(chapter, scene, shot) => {
                 self.suggest(studio, chapter, scene, shot)
             }
@@ -471,7 +487,7 @@ impl GeneratePane {
             GenerateMsg::Made(result) => {
                 self.running = false;
                 match *result {
-                    Ok((board, made)) => self.cut(studio, &board, &made),
+                    Ok((board, made)) => self.cut(studio, &board, &made, false),
                     Err(error) => self.failed(error),
                 }
                 self.tally(studio);
@@ -517,6 +533,7 @@ impl GeneratePane {
             shots,
             shots_made,
         } = job.status(board, self.voice_row(studio) != 0);
+        self.all_made = shots == shots_made && shots > 0;
         self.status = if shots_made == 0 && voices_made == 0 {
             t("generate.nextStep")
         } else if shots_made == shots && voices_made == voices {
@@ -1186,7 +1203,40 @@ impl GeneratePane {
     }
 
     /// Lays the cut on a new timeline, as one undo step, and closes.
-    fn cut(&mut self, studio: &mut Studio, board: &Storyboard, made: &Made) {
+    /// Picks a minute of the video for a Short - the writer's pick, or the
+    /// opening when there is no key or the pick does not fit - and gathers
+    /// its files, on a worker; nothing is made again.
+    fn short(&mut self, studio: &mut Studio) {
+        let (Some(board), Some(job)) = (self.board.clone(), self.job(studio)) else {
+            return;
+        };
+        let key = studio.prefs.generate.anthropic_key.clone();
+        let brief = self.brief(studio);
+        self.begin(t("generate.pickingShort"));
+        self.phase = 3;
+        spawn_in_project(
+            move || {
+                let pick = if key.trim().is_empty() {
+                    shorts::opening(&board)
+                } else {
+                    writer::pick_short(&board, &brief, &key, writer::DEFAULT_MODEL).unwrap_or_else(
+                        |error| {
+                            log::warn!("generate: the Short's minute: {error}");
+                            shorts::opening(&board)
+                        },
+                    )
+                };
+                let short = shorts::board(&board, &pick);
+                let made = job.gather(&short, true)?;
+                Ok((short, made))
+            },
+            |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::ShortReady(Box::new(result))))
+            },
+        );
+    }
+
+    fn cut(&mut self, studio: &mut Studio, board: &Storyboard, made: &Made, short: bool) {
         let music = self.music.checked_sub(1).and_then(|row| {
             music_items(studio)
                 .get(row)
@@ -1199,12 +1249,16 @@ impl GeneratePane {
             media.insert(path.clone(), summary.to_new_media());
         }
         let options = Options {
-            captions: self.captions,
-            titles: self.titles,
+            // A Short is captioned, a few words at a time, and its wide
+            // pictures fill the tall frame.
+            captions: self.captions || short,
+            titles: self.titles || short,
             caption_look: match studio.prefs.generate.caption_look {
+                _ if short => CaptionLook::Animated,
                 1 => CaptionLook::Animated,
                 _ => CaptionLook::Classic,
             },
+            fill_frame: short,
             ..Options::default()
         };
         let placements = match plan::plan(
@@ -1363,6 +1417,7 @@ impl GeneratePane {
             has_script: self.board.is_some(),
             script_summary: summary.unwrap_or_default().into(),
             status: self.status.as_str().into(),
+            can_short: self.all_made && !self.running,
             running: self.running,
             progress: self.progress,
             stage: self.stage.as_str().into(),

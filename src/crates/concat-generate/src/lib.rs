@@ -33,5 +33,6 @@ pub mod cost;
 pub mod job;
 pub mod plan;
 pub mod providers;
+pub mod shorts;
 pub mod storyboard;
 pub mod writer;

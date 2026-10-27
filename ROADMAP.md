@@ -28,19 +28,22 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
   words keeps what was paid for (marked in `stale.txt`, made again as a
   take); a clip the timeline will not take is left out and named rather
   than ending the cut; no Open folder on a phone (#17).
+- ✅ Step 5a: animated captions - Caption style Classic or Animated (two
+  or three words a card, big and outlined, popping in, white and yellow)
+  (#18).
 
 ## In progress
 
-- 🚧 **Step 5a: animated captions** (this pull request) - a Captions
-  style choice in the sheet: Classic (a sentence on a dark plate) or
-  Animated (two or three words at a time, big and bold, each card
-  popping in, every other one in the accent yellow), in the style of
-  short-form video.
+- 🚧 **Step 5b: Shorts** (this pull request) - Make a Short, once every
+  shot of a video is made: the writer picks the minute most worth a
+  Short (scenes in a row, 60 s at most) and a hook of a few words, or,
+  without a key or with a pick that does not fit, the opening minute is
+  taken. It is cut on a 9:16 timeline of its own from the files already
+  made - nothing is paid for again - with every wide picture filling the
+  tall frame and the captions animated.
 
 ## Planned
 
-- ⏳ **Step 5b: Shorts** - a 9:16 cut of the best minute of a long video,
-  its pictures reframed to fill the tall frame, with animated captions.
 - ⏳ **Captions timed to the voice word by word**: today a card's time is
   shared out by its length in letters; reading the narration back with
   the local transcriber would place each word where it is said.

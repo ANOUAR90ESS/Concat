@@ -1763,6 +1763,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_generate_open_folder(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::OpenFolder));
     }));
+    app.on_generate_make_short(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::Short));
+    }));
     app.on_generate_edit_script(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::EditScript));
     }));
