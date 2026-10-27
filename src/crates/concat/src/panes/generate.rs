@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use concat_generate::budget::{self, Totals};
 use concat_generate::cost::{self, Estimate, Prices};
 use concat_generate::job::{Costs, Idea, Job, Made, Remade, Status, Step};
-use concat_generate::plan::{self, Editing, Options};
+use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{self, Brief, Suggestion, Writing};
@@ -295,6 +295,7 @@ impl GeneratePane {
                         return;
                     }
                     6 => prefs.clips = Some(index.min(CLIP_SHARES.len() - 1)),
+                    7 => prefs.caption_look = index.min(1),
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -1200,6 +1201,10 @@ impl GeneratePane {
         let options = Options {
             captions: self.captions,
             titles: self.titles,
+            caption_look: match studio.prefs.generate.caption_look {
+                1 => CaptionLook::Animated,
+                _ => CaptionLook::Classic,
+            },
             ..Options::default()
         };
         let placements = match plan::plan(
@@ -1346,6 +1351,7 @@ impl GeneratePane {
             shots: prefs.shots as i32,
             music: self.music as i32,
             captions: self.captions,
+            caption_look: prefs.caption_look as i32,
             titles: self.titles,
             anthropic_key: prefs.anthropic_key.as_str().into(),
             replicate_token: prefs.replicate_token.as_str().into(),

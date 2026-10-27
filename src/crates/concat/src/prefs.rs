@@ -144,6 +144,8 @@ pub struct GeneratePrefs {
     /// What one still from the image model costs, as typed; empty for the
     /// default model's.
     pub image_price: String,
+    /// How the captions look: 0 classic, 1 animated.
+    pub caption_look: usize,
 }
 
 impl Preferences {

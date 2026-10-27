@@ -23,24 +23,27 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
   timeline; a new take in `takes/`, swapped in place as one undo step
   (#16). Known gap: after Undo the timeline shows the earlier take, but the
   script editor's picture and a later full re-cut use the newest take.
+- ✅ Make one shot again, phase 2: Suggest another - the writer proposes a
+  new picture for one shot to read, edit and Make again. Editing a shot's
+  words keeps what was paid for (marked in `stale.txt`, made again as a
+  take); a clip the timeline will not take is left out and named rather
+  than ending the cut; no Open folder on a phone (#17).
 
 ## In progress
 
-- 🚧 **Make one shot again, phase 2** (this pull request): "Suggest
-  another" under each shot in the script editor - the writer proposes a
-  new picture for that one shot, in the scene's words and the chapter's
-  light, keeping clear of pictures already used; it replaces the prompt
-  for the person to read, edit and then Make again.
-- 🚧 Editing a shot's words no longer deletes what was paid for: the shot
-  is marked (`stale.txt`) and the next run makes it again as a new take.
-- 🚧 A clip the timeline will not take is left out and named, rather
-  than stopping the whole cut ("... could not be placed", owner's phone).
+- 🚧 **Step 5a: animated captions** (this pull request) - a Captions
+  style choice in the sheet: Classic (a sentence on a dark plate) or
+  Animated (two or three words at a time, big and bold, each card
+  popping in, every other one in the accent yellow), in the style of
+  short-form video.
 
 ## Planned
 
-- ⏳ **Step 5: animated captions and Shorts** - word-by-word captions in
-  the style of short-form video, and a 9:16 cut of the best minute of a
-  long video.
+- ⏳ **Step 5b: Shorts** - a 9:16 cut of the best minute of a long video,
+  its pictures reframed to fill the tall frame, with animated captions.
+- ⏳ **Captions timed to the voice word by word**: today a card's time is
+  shared out by its length in letters; reading the narration back with
+  the local transcriber would place each word where it is said.
 - ⏳ **Real test with paid keys**: a full run with Replicate (images and
   clips) and ElevenLabs on the phone, by the owner; fix what it shows.
 - ⏳ **Spanish and other interface strings**: many Long video lines are
