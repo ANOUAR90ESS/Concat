@@ -335,6 +335,63 @@ pub fn suggest_shot(
     Ok(suggestion)
 }
 
+/// Asks the writer for the minute of the video most worth a Short: a run
+/// of scenes in a row, a minute at most, that holds on its own, and a hook
+/// of a few words for its first second. A pick that is not such a run is
+/// refused; the caller falls back to [`crate::shorts::opening`].
+pub fn pick_short(
+    board: &Storyboard,
+    brief: &Brief,
+    key: &str,
+    model: &str,
+) -> Result<crate::shorts::Pick, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to write the script".to_owned());
+    }
+    let got =
+        crate::providers::retry(|| call(key, model, &short_tool(), &short_prompt(board, brief)))?;
+    let scenes: Vec<String> = got["scenes"]
+        .as_array()
+        .map(|ids| ids.iter().map(text).filter(|id| !id.is_empty()).collect())
+        .unwrap_or_default();
+    if !crate::shorts::fits(board, &scenes) {
+        return Err(format!(
+            "the writer picked scenes that are not a minute in a row: {}",
+            scenes.join(", ")
+        ));
+    }
+    Ok(crate::shorts::Pick {
+        scenes,
+        hook: text(&got["hook"]),
+    })
+}
+
+/// What [`pick_short`] asks.
+fn short_prompt(board: &Storyboard, brief: &Brief) -> String {
+    let scenes: String = board
+        .scenes()
+        .map(|scene| {
+            format!(
+                "- {} ({:.0} s): {}\n",
+                scene.id,
+                scene.seconds,
+                scene.narration.trim()
+            )
+        })
+        .collect();
+    format!(
+        "{}\nThe video \"{}\", scene by scene, with each scene's length:\n{scenes}\n\
+         Pick the stretch of it most worth a Short for TikTok, Reels and YouTube Shorts: \
+         scenes in a row, together {:.0} seconds at most, that make sense on their own and \
+         grip from the first line - a surprise, a question, a turn. Give their ids in order, \
+         and a hook: at most six words over the first second that make a scroller stop, in \
+         the narration's language.",
+        brief.text(),
+        board.title,
+        crate::shorts::LONGEST,
+    )
+}
+
 /// What [`suggest_shot`] asks.
 fn suggest_prompt(
     board: &Storyboard,
@@ -885,6 +942,22 @@ fn scene_tool() -> Value {
     })
 }
 
+fn short_tool() -> Value {
+    json!({
+        "name": "short",
+        "description": "The minute picked for a Short.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "scenes": {"type": "array", "items": {"type": "string"},
+                           "description": "The scenes' ids, in order, in a row."},
+                "hook": {"type": "string", "description": "At most six words."}
+            },
+            "required": ["scenes", "hook"]
+        }
+    })
+}
+
 fn suggest_tool() -> Value {
     json!({
         "name": "suggested_shot",
@@ -1144,6 +1217,31 @@ mod tests {
         assert!(prompt.contains("- a market at noon"));
         assert!(suggest_prompt(&board, &brief, 0, 0, 9).is_err());
         let error = suggest_shot(&board, &brief, 0, 0, 1, " ", DEFAULT_MODEL).unwrap_err();
+        assert!(error.contains("API key"));
+    }
+
+    #[test]
+    fn the_writer_is_shown_every_scene_to_pick_a_short_from() {
+        let mut board = Storyboard {
+            title: "Lost cities".into(),
+            chapters: vec![Chapter {
+                title: "One".into(),
+                scenes: vec![scene(&[("image", "a")]), scene(&[("image", "b")])],
+                ..Chapter::default()
+            }],
+            ..Storyboard::default()
+        };
+        board.tidy().ok();
+        let brief = Brief {
+            topic: "lost cities".into(),
+            minutes: 3.0,
+            ..Brief::default()
+        };
+        let prompt = short_prompt(&board, &brief);
+        assert!(prompt.contains("- c01s01 ("));
+        assert!(prompt.contains("- c01s02 ("));
+        assert!(prompt.contains("60 seconds at most"));
+        let error = pick_short(&board, &brief, "", DEFAULT_MODEL).unwrap_err();
         assert!(error.contains("API key"));
     }
 

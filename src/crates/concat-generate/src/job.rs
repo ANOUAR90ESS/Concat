@@ -620,11 +620,18 @@ impl Job {
         }
 
         progress(Step::Probing);
-        let mut made = Made {
-            stand_ins,
-            spent: spend.spent,
-            ..Made::default()
-        };
+        let mut made = self.gather(board, *voice != Voice::None)?;
+        made.stand_ins = stand_ins;
+        made.spent = spend.spent;
+        Ok(made)
+    }
+
+    /// Probes what the job holds for `board` - each scene's narration, when
+    /// `voiced`, and the take each shot is now - for a cut: what a run ends
+    /// with, and what a Short is cut from without making anything again.
+    pub fn gather(&self, board: &Storyboard, voiced: bool) -> Result<Made, String> {
+        let voice_dir = self.voice_dir();
+        let mut made = Made::default();
         let mut probe = |path: &Path| -> Result<(String, Option<f64>), String> {
             let path_text = path.to_string_lossy().into_owned();
             let summary = concat_host::media::probe(&path_text)?;
@@ -636,7 +643,7 @@ impl Job {
         let mut files = HashMap::new();
         for scene in board.scenes() {
             let mut scene_files = SceneFiles::default();
-            if *voice != Voice::None
+            if voiced
                 && let Some(path) = providers::existing(&voice_dir, &scene.id, &VOICE_EXTENSIONS)
             {
                 let (path, length) = probe(&path)?;
