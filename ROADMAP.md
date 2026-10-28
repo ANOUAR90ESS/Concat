@@ -43,16 +43,19 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
   script editor's thumbnails read by content and handed over six at a
   time; a stood-in colour card kept and the shot made again as a take,
   so a cut using it still exports (#21).
+- ✅ A run of cross-fades stays under the track above it: from the fifth
+  shot of a Long video the pictures climbed onto the captions' lane in
+  the export (#22).
 
 ## In progress
 
-- 🚧 **Captions and pictures shown together all through** (this pull
-  request): from the fifth shot or so of a run of cross-fades, a caption
-  showed over black or a picture with no caption, on the monitor and in
-  the export alike. Each cross-fade puts the incoming shot a lane above
-  the one it crosses, and the export spread a track over two lanes only,
-  so a long run of shots climbed onto the captions' lane and over it. A
-  track now gets as many lanes as it has cuts, plus one.
+- 🚧 **Pictures saved as clips** (this pull request): Replicate's image
+  addresses carry no file type, and a shot was saved as `.mp4` when its
+  address had none: a picture then went on the timeline as a clip one
+  frame long - shown in the cross-fade into it, black after, captions
+  over black in every export. A download is now named for what its bytes
+  hold, and a shot already misnamed is renamed when the video is cut
+  again (Create video), so nothing is paid for again.
 
 ## Planned
 

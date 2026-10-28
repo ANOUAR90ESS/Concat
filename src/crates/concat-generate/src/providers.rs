@@ -112,6 +112,59 @@ pub fn existing(dir: &Path, stem: &str, extensions: &[&str]) -> Option<PathBuf> 
         .find(|path| path.metadata().is_ok_and(|meta| meta.len() > 0))
 }
 
+/// What a shot file holds, read from its first bytes rather than its name:
+/// the extension it ought to have, or None for anything not known here.
+pub fn sniffed_extension(path: &Path) -> Option<&'static str> {
+    let mut head = [0u8; 12];
+    let read = std::fs::File::open(path).ok()?.read(&mut head).ok()?;
+    let head = &head[..read];
+    if head.starts_with(b"\x89PNG") {
+        Some("png")
+    } else if head.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpg")
+    } else if head.len() == 12 && head.starts_with(b"RIFF") && &head[8..] == b"WEBP" {
+        Some("webp")
+    } else if head.len() >= 8 && &head[4..8] == b"ftyp" {
+        Some(if head.get(8..10) == Some(b"qt") {
+            "mov"
+        } else {
+            "mp4"
+        })
+    } else if head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+        Some("webm")
+    } else {
+        None
+    }
+}
+
+/// `path` under the extension its bytes call for, renamed there when its
+/// own says the other kind - a picture named as a clip, or a clip as a
+/// picture - and where it now is. A file of the right kind keeps its name.
+///
+/// A service's address need not end in a file type, and one that did not
+/// was saved as `.mp4`: a picture then went on the timeline as a clip one
+/// frame long, shown only in the cross-fade into it and black after.
+pub fn true_name(path: &Path) -> PathBuf {
+    const STILLS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+    let Some(sniffed) = sniffed_extension(path) else {
+        return path.to_owned();
+    };
+    let own = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if STILLS.contains(&own.as_str()) == STILLS.contains(&sniffed) {
+        return path.to_owned();
+    }
+    let renamed = path.with_extension(sniffed);
+    if renamed.exists() || std::fs::rename(path, &renamed).is_err() {
+        return path.to_owned();
+    }
+    log::info!("generate: {} holds a {sniffed}; renamed", path.display());
+    renamed
+}
+
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(20))
@@ -572,7 +625,7 @@ fn replicate(
         let _ = std::fs::remove_file(&pending);
     })?;
     let _ = std::fs::remove_file(&pending);
-    Ok(out)
+    Ok(true_name(&out))
 }
 
 /// Where the address of a shot asked for but not yet saved is kept, so a
@@ -741,6 +794,33 @@ mod tests {
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
         assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
+    }
+
+    #[test]
+    fn a_picture_saved_as_a_clip_is_named_for_what_it_holds() {
+        let dir = std::env::temp_dir().join(format!("concat-sniff-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A picture under a clip's name is renamed for what it is.
+        let picture = dir.join("c01s01_1.mp4");
+        draft(&picture, 8, 8, 1).unwrap();
+        assert_eq!(sniffed_extension(&picture), Some("png"));
+        let renamed = true_name(&picture);
+        assert_eq!(renamed, dir.join("c01s01_1.png"));
+        assert!(renamed.exists() && !picture.exists());
+        // A clip keeps its own name, and so does a picture already named
+        // as one, of whichever kind.
+        let clip = dir.join("c01s01_2.mov");
+        std::fs::write(&clip, b"\0\0\0\x20ftypisom\0\0\0\0").unwrap();
+        assert_eq!(sniffed_extension(&clip), Some("mp4"));
+        assert_eq!(true_name(&clip), clip);
+        let jpeg = dir.join("c01s01_3.png");
+        std::fs::write(&jpeg, [0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10]).unwrap();
+        assert_eq!(true_name(&jpeg), jpeg);
+        // Nothing known: left be.
+        let other = dir.join("c01s01_4.mp4");
+        std::fs::write(&other, b"hello").unwrap();
+        assert_eq!(true_name(&other), other);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
