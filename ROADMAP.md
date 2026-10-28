@@ -39,23 +39,23 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
 - ✅ A run goes on in the background on Android: a foreground service
   under a notification, with a wake lock; CI declares it in the APK
   (#20). Back still closes the app and ends the run.
+- ✅ Fixes from the phone test: Make a Short on a line of its own; the
+  script editor's thumbnails read by content and handed over six at a
+  time; a stood-in colour card kept and the shot made again as a take,
+  so a cut using it still exports (#21).
 
 ## In progress
 
-- 🚧 **Fixes from the phone test** (this pull request): Make a Short on a
-  line of its own (beside its hint on a phone it had no width and did not
-  show); the script editor's thumbnails read by what the file holds (a
-  service answers a PNG request with JPEG or WebP) and handed over six at
-  a time; a colour card stood in for a failed shot is kept and the shot
-  made again as a take - removing it broke the export of a cut that used
-  it.
+- 🚧 **Captions and pictures shown together all through** (this pull
+  request): from the fifth shot or so of a run of cross-fades, a caption
+  showed over black or a picture with no caption, on the monitor and in
+  the export alike. Each cross-fade puts the incoming shot a lane above
+  the one it crosses, and the export spread a track over two lanes only,
+  so a long run of shots climbed onto the captions' lane and over it. A
+  track now gets as many lanes as it has cuts, plus one.
 
 ## Planned
 
-- ⏳ **Captions and pictures shown together all through**: on the phone,
-  after about 30 s, either the caption or the picture shows, not both.
-  The cut lays them right (checked); suspect the phone's renderer -
-  waiting to hear whether an export shows it too.
 - ⏳ **Captions timed to the voice word by word**: today a card's time is
   shared out by its length in letters; reading the narration back with
   the local transcriber would place each word where it is said.
