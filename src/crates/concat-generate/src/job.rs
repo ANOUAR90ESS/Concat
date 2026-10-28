@@ -659,7 +659,9 @@ impl Job {
                 let path = self
                     .current(&stem)
                     .ok_or_else(|| format!("shot {stem} is missing"))?;
-                scene_files.shots.push(probe(&path)?);
+                // Named for what it holds before it is probed: a picture
+                // an earlier build saved as `.mp4` went in as a clip.
+                scene_files.shots.push(probe(&providers::true_name(&path))?);
             }
             files.insert(scene.id.clone(), scene_files);
         }
