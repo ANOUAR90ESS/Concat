@@ -523,11 +523,17 @@ pub(crate) fn transitions_at(shapes: &[TransitionShape], frame: i64) -> Vec<Tran
 /// for the compositor to combine over; every other kind needs nothing more
 /// than what it already baked into the clips themselves.
 ///
-/// Track indices are doubled first, so an incoming clip gets an odd lane of
-/// its own directly above the pair it crosses over - stacking against every
-/// other track is preserved, and nothing else occupies odd lanes. Cuts are
-/// collected before anything mutates, so resolving one transition cannot
-/// unhook the adjacency test of the next.
+/// Track indices are spread out first - doubled, or more where one track
+/// runs several transitions back to back - so an incoming clip gets a lane
+/// of its own directly above the clip it crosses over, and stacking against
+/// every other track is preserved. Each incoming clip sits one lane above
+/// its outgoing one, so a run of cuts climbs a lane a cut: a track with `n`
+/// of them is given `n + 1` lanes, and its last shot still sits under the
+/// next track up. Spread by two alone, the fifth shot of a run of
+/// cross-fades rose onto the captions' lane and the sixth over it, and
+/// every caption after was drawn under the pictures. Cuts are collected
+/// before anything mutates, so resolving one transition cannot unhook the
+/// adjacency test of the next.
 ///
 /// Every kind but the fades to a colour is built on one overlap, centred on
 /// the cut the way the timeline draws it: the incoming clip extends
@@ -556,8 +562,9 @@ fn resolve_transitions_at(
     rate: FrameRate,
     origin: f64,
 ) -> Vec<TransitionSpan> {
+    let stride = lane_stride(clips);
     for clip in clips.iter_mut() {
-        clip.track *= 2;
+        clip.track *= stride;
     }
     let mut spans: Vec<TransitionSpan> = Vec::new();
 
@@ -745,6 +752,19 @@ fn resolve_transitions_at(
         }
     }
     spans
+}
+
+/// How far apart [`resolve_transitions_at`] spreads the tracks: two lanes
+/// a track, or one more than the most transitions any one track has, since
+/// every cut on a track lifts its incoming clip a lane above the last.
+fn lane_stride(clips: &[ExportClip]) -> usize {
+    let mut cuts: HashMap<usize, usize> = HashMap::new();
+    for clip in clips {
+        if clip.transition.is_some() && !clip.hidden && clip.kind.is_visual() {
+            *cuts.entry(clip.track).or_insert(0) += 1;
+        }
+    }
+    cuts.into_values().max().map_or(2, |most| (most + 1).max(2))
 }
 
 /// A cut with a transition on it: which clip comes in, which goes out, and
@@ -2966,6 +2986,33 @@ mod tests {
         assert_eq!(a.fade_out, 1.0, "and its sound fades out across it");
         assert_eq!(a.track, 0, "outgoing stays on its doubled lane");
         assert_eq!(clips.len(), 2, "no hold: both sides have footage");
+    }
+
+    /// A run of cross-fades stays under the track above it: every
+    /// incoming shot climbs a lane over the one it crosses, and with two
+    /// lanes a track the fifth shot of a Long video landed on its
+    /// captions' lane and the rest over them, hiding every caption after.
+    #[test]
+    fn a_run_of_cross_fades_stays_under_the_track_above() {
+        let mut clips: Vec<ExportClip> = (0..8)
+            .map(|n| {
+                let mut shot = clip("image", 0, f64::from(n) * 2.0, 2.0, 0.0);
+                if n > 0 {
+                    shot.transition = spec("cross-fade", 0.5);
+                }
+                shot
+            })
+            .collect();
+        clips.push(clip("image", 1, 0.0, 16.0, 0.0));
+        resolve_transitions(&mut clips, FrameRate::THIRTY);
+        let caption = clips[8].track;
+        for shot in &clips[..8] {
+            assert!(shot.track < caption, "{} not under {caption}", shot.track);
+        }
+        // Each still sits directly above the one it crosses over.
+        for pair in clips[..8].windows(2) {
+            assert_eq!(pair[1].track, pair[0].track + 1);
+        }
     }
 
     /// A clip lengthened for a transition keeps its keys at the instants
