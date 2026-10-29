@@ -103,11 +103,12 @@ runs no CI, so nothing is built until then.
   made for it on Replicate (one still's price) or, without Replicate,
   the video's first picture, with the words large in yellow over it -
   editable like any title; Save Video Frame As makes the picture.
-- 🚧 **Stage 6: interface strings.** Arabic is complete (0 lines left in
-  English); Spanish and French have every line translated but words that
-  are the same in both (Audio, Normal, Idea...). The other 21 locales
-  still show the Long video sheet and the script editor in English: 110
-  lines each.
+- ✅ **Stage 6: interface strings** (on the branch). Arabic is complete
+  (0 lines left in English); Spanish and French have every line
+  translated but words that are the same in both (Audio, Normal,
+  Idea...). The owner chose to stop there for now.
+- ⏳ **Later: the other 21 locales.** The Long video sheet and the script
+  editor are still English in them: 110 lines each.
 
 ## Done since alpha.14
 
