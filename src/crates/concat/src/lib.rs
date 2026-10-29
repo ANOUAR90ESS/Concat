@@ -1769,6 +1769,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_generate_make_short(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::Short));
     }));
+    app.on_generate_publish(on_window!(|state| {
+        state.handle(Msg::Generate(GenerateMsg::Publish));
+    }));
     app.on_generate_edit_script(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::EditScript));
     }));

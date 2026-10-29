@@ -382,6 +382,148 @@ pub fn music_prompt(board: &Storyboard, key: &str, model: &str) -> Result<String
     Ok(prompt)
 }
 
+/// What goes up with the video on YouTube, written for it: the words a
+/// person would otherwise write last and in a hurry.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Publishing {
+    /// The video's title on YouTube, in the video's language.
+    pub title: String,
+    /// What it is about, in a few short paragraphs, without the chapters:
+    /// [`Publishing::description_with`] adds them from the cut.
+    pub description: String,
+    /// Search tags, in the video's language and in English.
+    pub tags: Vec<String>,
+    /// The few words written large on the thumbnail.
+    pub thumbnail_text: String,
+    /// The thumbnail's picture, in English, as an image prompt.
+    pub thumbnail_prompt: String,
+    /// When each chapter starts in the cut, by its title: set from the
+    /// cut, not by the writer.
+    #[serde(default)]
+    pub chapters: Vec<(String, f64)>,
+}
+
+impl Publishing {
+    /// The description with the chapters' start times under it, as YouTube
+    /// reads them: when there are three or more, the first at 0:00, and
+    /// none shorter than ten seconds - otherwise without them.
+    pub fn full_description(&self) -> String {
+        let chapters = &self.chapters;
+        let usable = chapters.len() >= 3
+            && chapters.first().is_some_and(|(_, at)| *at < 0.5)
+            && chapters
+                .windows(2)
+                .all(|pair| pair[1].1 - pair[0].1 >= 10.0);
+        let mut out = self.description.trim().to_owned();
+        if usable {
+            out.push_str("\n\n");
+            for (n, (title, at)) in chapters.iter().enumerate() {
+                let at = if n == 0 { 0.0 } else { *at };
+                out.push_str(&format!("{} {}\n", timestamp(at), title.trim()));
+            }
+            out = out.trim_end().to_owned();
+        }
+        out
+    }
+
+    /// The tags as YouTube takes them: comma-separated.
+    pub fn tag_line(&self) -> String {
+        self.tags
+            .iter()
+            .map(|tag| tag.trim())
+            .filter(|tag| !tag.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Everything, to keep beside the video as a text file.
+    pub fn sheet(&self) -> String {
+        format!(
+            "{}\n\n{}\n\n{}\n",
+            self.title.trim(),
+            self.full_description(),
+            self.tag_line()
+        )
+    }
+}
+
+/// A time as YouTube writes one: 0:00, 12:34, 1:02:03.
+pub fn timestamp(seconds: f64) -> String {
+    let total = seconds.max(0.0).floor() as u64;
+    let (h, m, s) = (total / 3600, total / 60 % 60, total % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// Asks the writer for what goes up with the video: a title, a
+/// description, tags, and a thumbnail's words and picture.
+pub fn publishing(board: &Storyboard, key: &str, model: &str) -> Result<Publishing, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to write the script".to_owned());
+    }
+    let got =
+        crate::providers::retry(|| call(key, model, &publishing_tool(), &publishing_ask(board)))?;
+    let tags = got["tags"]
+        .as_array()
+        .map(|tags| {
+            tags.iter()
+                .map(text)
+                .filter(|tag| !tag.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let publishing = Publishing {
+        title: text(&got["title"]),
+        description: text(&got["description"]),
+        tags,
+        thumbnail_text: text(&got["thumbnail_text"]),
+        thumbnail_prompt: text(&got["thumbnail_prompt"]),
+        chapters: Vec::new(),
+    };
+    if publishing.title.is_empty() {
+        return Err("the writer wrote no title".to_owned());
+    }
+    Ok(publishing)
+}
+
+/// What [`publishing`] asks.
+fn publishing_ask(board: &Storyboard) -> String {
+    let chapters: String = board
+        .chapters
+        .iter()
+        .map(|chapter| format!("- {}: {}\n", chapter.title.trim(), chapter.summary.trim()))
+        .collect();
+    let opening: String = board
+        .scenes()
+        .take(4)
+        .map(|scene| scene.narration.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "The video \"{}\", in {}. Its chapters:\n{chapters}It opens: {opening}\n\n\
+         Write what goes up with it on YouTube, in {}:\n\
+         - a title of at most 70 characters that makes a person curious without lying \
+         about the video, no clickbait capitals, no emoji;\n\
+         - a description: two or three short paragraphs on what the viewer will learn \
+         and why it matters, the first line able to stand alone in search results; no \
+         chapter list, no links, no hashtags;\n\
+         - 10 to 15 search tags, in {} and in English, each a few words;\n\
+         - the thumbnail's words: at most four, large and bold, that the title does not \
+         already say;\n\
+         - the thumbnail's picture, in English, as an image prompt: one striking subject \
+         from the video, close and clear, with empty space on one side for the words, \
+         high contrast, no text in the picture. Visual style: {}",
+        board.title.trim(),
+        board.language,
+        board.language,
+        board.language,
+        board.style.visual.trim(),
+    )
+}
+
 /// The music bed's description where the writer cannot be asked: a calm
 /// score that sits under any narration.
 pub fn plain_music_prompt() -> String {
@@ -1009,6 +1151,24 @@ fn music_tool() -> Value {
     })
 }
 
+fn publishing_tool() -> Value {
+    json!({
+        "name": "publishing",
+        "description": "What goes up with the video on YouTube.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "At most 70 characters."},
+                "description": {"type": "string", "description": "Two or three short paragraphs."},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "thumbnail_text": {"type": "string", "description": "At most four words."},
+                "thumbnail_prompt": {"type": "string", "description": "An image prompt, in English."}
+            },
+            "required": ["title", "description", "tags", "thumbnail_text", "thumbnail_prompt"]
+        }
+    })
+}
+
 fn short_tool() -> Value {
     json!({
         "name": "short",
@@ -1373,5 +1533,48 @@ mod tests {
         assert_eq!(shot.prompt, "torchlit tunnel under the citadel");
         assert_eq!(shot.motion, "slow dolly forward");
         assert!(board.repeats().is_empty());
+    }
+
+    #[test]
+    fn chapters_go_under_the_description_only_as_youtube_reads_them() {
+        let mut publishing = Publishing {
+            title: "T".to_owned(),
+            description: "About it.".to_owned(),
+            tags: vec!["a".to_owned(), " b ".to_owned(), "".to_owned()],
+            ..Publishing::default()
+        };
+        let chapters = vec![
+            ("One".to_owned(), 0.2),
+            ("Two".to_owned(), 65.0),
+            ("Three".to_owned(), 3725.0),
+        ];
+        publishing.chapters = chapters.clone();
+        assert_eq!(
+            publishing.full_description(),
+            "About it.\n\n0:00 One\n1:05 Two\n1:02:05 Three"
+        );
+        // Two chapters, or one under ten seconds: none listed.
+        publishing.chapters = chapters[..2].to_vec();
+        assert_eq!(publishing.full_description(), "About it.");
+        publishing.chapters = vec![
+            ("One".to_owned(), 0.0),
+            ("Two".to_owned(), 5.0),
+            ("Three".to_owned(), 30.0),
+        ];
+        assert_eq!(publishing.full_description(), "About it.");
+        assert_eq!(publishing.tag_line(), "a, b");
+    }
+
+    #[test]
+    fn the_publishing_ask_is_in_the_videos_language() {
+        let board: Storyboard = serde_json::from_str(
+            r#"{"title":"Butterfly","language":"Arabic","chapters":[{"title":"One",
+                "summary":"chaos","scenes":[{"narration":"Hello.","shots":[]}]}]}"#,
+        )
+        .unwrap();
+        let ask = publishing_ask(&board);
+        assert!(ask.contains("in Arabic:"));
+        assert!(ask.contains("- One: chaos"));
+        assert!(ask.contains("It opens: Hello."));
     }
 }

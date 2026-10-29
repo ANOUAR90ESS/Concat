@@ -27,6 +27,7 @@ use crate::cost::{Prices, Spend};
 use crate::plan::{SceneFiles, Word};
 use crate::providers::{self, ModelInputs, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
 use crate::storyboard::{Chapter, Shot, ShotKind, Storyboard, shot_stem};
+use crate::writer::Publishing;
 
 /// One video's folder.
 #[derive(Clone, Debug, PartialEq)]
@@ -694,6 +695,67 @@ impl Job {
     /// The music bed made for this video, when there is one.
     pub fn music(&self) -> Option<PathBuf> {
         providers::existing(&self.dir, "music", &MUSIC_EXTENSIONS)
+    }
+
+    /// Where what goes up with the video on YouTube is kept.
+    pub fn publishing_file(&self) -> PathBuf {
+        self.dir.join("publishing.json")
+    }
+
+    /// What goes up with the video on YouTube, once written.
+    pub fn publishing(&self) -> Option<Publishing> {
+        let text = std::fs::read_to_string(self.publishing_file()).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    /// Keeps what goes up with the video, and the same as text beside it:
+    /// `publishing.txt`, to copy from on any device.
+    pub fn keep_publishing(&self, publishing: &Publishing) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|error| format!("{}: {error}", self.dir.display()))?;
+        let json = serde_json::to_string_pretty(publishing).map_err(|error| error.to_string())?;
+        let file = self.publishing_file();
+        std::fs::write(&file, json).map_err(|error| format!("{}: {error}", file.display()))?;
+        let text = self.dir.join("publishing.txt");
+        std::fs::write(&text, publishing.sheet())
+            .map_err(|error| format!("{}: {error}", text.display()))
+    }
+
+    /// The thumbnail's picture: one made for it and kept, else - with
+    /// shots on Replicate - one made now from `prompt`, a still's price,
+    /// else the first picture the video has.
+    pub fn thumbnail_picture(
+        &self,
+        board: &Storyboard,
+        shots: &Shots,
+        prompt: &str,
+    ) -> Result<PathBuf, String> {
+        if let Some(kept) = providers::existing(&self.dir, "thumbnail", &STILL_EXTENSIONS) {
+            return Ok(kept);
+        }
+        if let Shots::Replicate {
+            token, image_model, ..
+        } = shots
+            && !prompt.trim().is_empty()
+        {
+            let prompt = format!("{}, {}", prompt.trim(), board.style.visual.trim());
+            let made = providers::retry(|| {
+                providers::replicate_image(
+                    token,
+                    image_model,
+                    &prompt,
+                    "16:9",
+                    &self.dir,
+                    "thumbnail",
+                )
+            })?;
+            return Ok(providers::true_name(&made));
+        }
+        board
+            .scenes()
+            .flat_map(|scene| (0..scene.shots.len()).map(|n| shot_stem(&scene.id, n)))
+            .find_map(|stem| self.picture(&stem))
+            .ok_or_else(|| "the video has no picture for a thumbnail yet".to_owned())
     }
 
     /// Probes what the job holds for `board` - each scene's narration, when
@@ -1420,5 +1482,24 @@ mod tests {
         assert!((first - 0.5).abs() < 0.01, "{first}");
         assert!((last - 1.5).abs() < 0.01, "{last}");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn what_goes_up_on_youtube_is_kept_as_json_and_text() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-publish-{}", std::process::id()));
+        let job = Job::new(&root, "publish");
+        assert_eq!(job.publishing(), None);
+        let publishing = Publishing {
+            title: "Title".to_owned(),
+            description: "About.".to_owned(),
+            tags: vec!["a".to_owned()],
+            ..Publishing::default()
+        };
+        job.keep_publishing(&publishing).unwrap();
+        assert_eq!(job.publishing(), Some(publishing));
+        let text = std::fs::read_to_string(job.dir.join("publishing.txt")).unwrap();
+        assert_eq!(text, "Title\n\nAbout.\n\na\n");
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -26,7 +26,7 @@ use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
-use concat_generate::writer::{self, Brief, Suggestion, Writing};
+use concat_generate::writer::{self, Brief, Publishing, Suggestion, Writing};
 use concat_project::Command;
 use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
@@ -130,6 +130,11 @@ pub enum GenerateMsg {
     Written(Box<Result<Storyboard, String>>, bool),
     /// The providers are done, and the files probed.
     Made(Box<Result<(Storyboard, Made), String>>),
+    /// Write what goes up with the video on YouTube, and its thumbnail.
+    Publish,
+    /// What goes up with it, kept; the thumbnail's picture, probed, or why
+    /// there is none; or why nothing was written.
+    Published(Box<Result<(Publishing, Result<NewMedia, String>), String>>),
 }
 
 /// The Long video sheet's state.
@@ -168,6 +173,10 @@ pub struct GeneratePane {
     thumbs: HashMap<String, slint::Image>,
     /// The shots being made again, by stem.
     remaking: HashSet<String>,
+    /// What goes up with the video on YouTube, once written.
+    publishing: Option<Publishing>,
+    /// The writer is writing it.
+    publishing_busy: bool,
     /// What each shot made looks like, roughly, by stem: to tell a picture
     /// too like the one before it.
     likeness: HashMap<String, Likeness>,
@@ -226,6 +235,8 @@ impl Default for GeneratePane {
             all_made: false,
             thumbs: HashMap::new(),
             likeness: HashMap::new(),
+            publishing: None,
+            publishing_busy: false,
             lookalikes: HashSet::new(),
             remaking: HashSet::new(),
             suggesting: HashSet::new(),
@@ -390,6 +401,42 @@ impl GeneratePane {
                 }
             }
             GenerateMsg::Short => self.short(studio),
+            GenerateMsg::Publish => self.publish(studio),
+            GenerateMsg::Published(result) => {
+                self.publishing_busy = false;
+                match *result {
+                    Ok((publishing, picture)) => {
+                        match picture {
+                            Ok(picture) => {
+                                let name = format!(
+                                    "{} · {}",
+                                    publishing.title.trim(),
+                                    t("generate.thumbnail")
+                                );
+                                let mut editing = Session(studio);
+                                match plan::thumbnail(
+                                    &mut editing,
+                                    &name,
+                                    &picture,
+                                    &publishing.thumbnail_text,
+                                ) {
+                                    Ok(_) => {
+                                        self.open = false;
+                                        studio.notify(&t("generate.thumbnailReady"), false);
+                                    }
+                                    Err(error) => self.message = error,
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("generate: the thumbnail: {error}");
+                                studio.notify(&tf("generate.noThumbnail", &[&error]), true);
+                            }
+                        }
+                        self.publishing = Some(publishing);
+                    }
+                    Err(error) => self.failed(error),
+                }
+            }
             GenerateMsg::ShortReady(result) => {
                 self.running = false;
                 match *result {
@@ -561,6 +608,11 @@ impl GeneratePane {
             .job(studio)
             .filter(|_| !self.topic.trim().is_empty())
             .and_then(|job| Storyboard::read(&job.storyboard()).ok());
+        self.publishing = self
+            .board
+            .as_ref()
+            .and(self.job(studio))
+            .and_then(|job| job.publishing());
         self.dirty = false;
         self.stale_voices.clear();
         self.stale_shots.clear();
@@ -1305,6 +1357,49 @@ impl GeneratePane {
         );
     }
 
+    /// Writes what goes up with the video on YouTube - a title, a
+    /// description with the chapters' times, tags - and makes its
+    /// thumbnail's picture, on a worker: kept in the job's folder, and the
+    /// thumbnail laid on a timeline of its own when it comes back.
+    fn publish(&mut self, studio: &mut Studio) {
+        let (Some(board), Some(job)) = (self.board.clone(), self.job(studio)) else {
+            return;
+        };
+        let prefs = studio.prefs.generate.clone();
+        if prefs.anthropic_key.trim().is_empty() {
+            self.message = t("generate.needAnthropicKey");
+            return;
+        }
+        self.message.clear();
+        self.publishing_busy = true;
+        let shots = shots_of(&prefs);
+        let voiced = self.voice_row(studio) != 0;
+        spawn_in_project(
+            move || {
+                let mut publishing =
+                    writer::publishing(&board, &prefs.anthropic_key, writer::DEFAULT_MODEL)?;
+                // Timed as the cut is; a video not made yet has no times.
+                publishing.chapters = job
+                    .gather(&board, voiced)
+                    .ok()
+                    .and_then(|made| plan::plan(&board, &made.files, &Options::default(), None).ok())
+                    .map(|placements| plan::chapter_starts(&board, &placements))
+                    .unwrap_or_default();
+                job.keep_publishing(&publishing)?;
+                let picture = job
+                    .thumbnail_picture(&board, &shots, &publishing.thumbnail_prompt)
+                    .and_then(|path| {
+                        concat_host::media::probe(&path.to_string_lossy())
+                            .map(|summary| summary.to_new_media())
+                    });
+                Ok((publishing, picture))
+            },
+            |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::Published(Box::new(result))))
+            },
+        );
+    }
+
     /// Lays the cut on a new timeline, as one undo step, and closes.
     /// Picks a minute of the video for a Short - the writer's pick, or the
     /// opening when there is no key or the pick does not fit - and gathers
@@ -1541,6 +1636,26 @@ impl GeneratePane {
                 SharedString::default()
             },
             message: self.message.as_str().into(),
+            publishing: self.publishing_busy,
+            has_publishing: self.publishing.is_some(),
+            publish_title: self
+                .publishing
+                .as_ref()
+                .map(|p| p.title.trim().to_owned())
+                .unwrap_or_default()
+                .into(),
+            publish_description: self
+                .publishing
+                .as_ref()
+                .map(Publishing::full_description)
+                .unwrap_or_default()
+                .into(),
+            publish_tags: self
+                .publishing
+                .as_ref()
+                .map(Publishing::tag_line)
+                .unwrap_or_default()
+                .into(),
         }
     }
 }

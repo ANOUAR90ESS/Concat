@@ -409,6 +409,110 @@ pub trait Editing {
     fn media_of(&self, path: &str) -> Option<String>;
 }
 
+/// When each chapter starts in the cut: its first scene's first shot.
+/// The plan lays every scene's shots down in order, one placement a shot.
+pub fn chapter_starts(board: &Storyboard, placements: &[Placement]) -> Vec<(String, f64)> {
+    let mut shots = placements.iter().filter(|p| p.kind == Kind::Shot);
+    let mut starts = Vec::new();
+    for chapter in &board.chapters {
+        let mut first = None;
+        for scene in &chapter.scenes {
+            for _ in &scene.shots {
+                if let Some(shot) = shots.next() {
+                    first.get_or_insert(shot.start);
+                }
+            }
+        }
+        if let Some(at) = first {
+            starts.push((chapter.title.clone(), at));
+        }
+    }
+    starts
+}
+
+/// The thumbnail, on a timeline of its own beside the video's, 1280x720 as
+/// YouTube takes one: `picture` filling the frame and `words` large over
+/// it, yellow outlined in black, to move and change like any title; Save
+/// Video Frame As makes it a picture. Returns the timeline's id.
+pub fn thumbnail(
+    editor: &mut dyn Editing,
+    name: &str,
+    picture: &NewMedia,
+    words: &str,
+) -> Result<String, String> {
+    let timeline = editor
+        .apply(Command::AddTimeline)
+        .ok_or("the thumbnail's timeline could not be made")?;
+    editor.apply(Command::RenameTimeline {
+        timeline_id: timeline.clone(),
+        name: name.to_owned(),
+    });
+    let frame = (1280, 720);
+    editor.apply(Command::SetTimelineVideo {
+        timeline_id: timeline.clone(),
+        video: VideoSettings {
+            width: frame.0,
+            height: frame.1,
+            rate_num: 30,
+            rate_den: 1,
+            ..VideoSettings::default()
+        },
+    });
+    let lanes = editor.lanes();
+    let lane = lanes
+        .first()
+        .cloned()
+        .ok_or("the thumbnail's timeline has no lane")?;
+    let media = editor
+        .apply(Command::AddMedia {
+            item: picture.clone(),
+        })
+        .or_else(|| editor.media_of(&picture.path))
+        .ok_or_else(|| format!("{} could not be imported", picture.path))?;
+    let clip = editor
+        .apply(Command::AddClip {
+            media_id: media.clone(),
+            track_id: lane.clone(),
+            start: 0.0,
+            ripple: false,
+        })
+        .ok_or("the thumbnail's picture could not be placed")?;
+    let place = Placement {
+        kind: Kind::Shot,
+        start: 0.0,
+        length: THUMBNAIL_SECONDS,
+        file: Some(picture.path.clone()),
+        source: None,
+        from: 0.0,
+        text: None,
+    };
+    fit(editor, &clip, &media, &lane, &place, cover(picture, frame));
+    if !words.trim().is_empty() {
+        editor.apply(Command::AddTextClip {
+            track_id: lanes.get(3).cloned(),
+            above: false,
+            start: 0.0,
+            style: Some(TextStyle {
+                content: words.trim().to_owned(),
+                font_size: 0.14,
+                font_weight: 900.0,
+                color: "#FFD400".to_owned(),
+                stroke_width: 0.012,
+                stroke_color: "#000000".to_owned(),
+                shadow: true,
+                max_width: 0.6,
+                ..TextStyle::default()
+            }),
+            duration: Some(THUMBNAIL_SECONDS),
+            offset_y: Some(0.18),
+        });
+    }
+    Ok(timeline)
+}
+
+/// How long the thumbnail's timeline runs: long enough to see and work on.
+const THUMBNAIL_SECONDS: f64 = 5.0;
+
 /// Lays the plan down on a new timeline named after the video, framed for
 /// its aspect: every file imported (`media` maps a path to its probe), then
 /// each placement as clips. Returns the new timeline's id, and the files
@@ -1333,5 +1437,58 @@ mod tests {
         let voice = of(&placements, Kind::Voice)[0];
         assert!((voice.from - 0.25).abs() < 1e-9);
         assert!((voice.length - (4.75 - 0.25)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn each_chapter_starts_with_its_first_shot() {
+        let mut board = board();
+        let mut second = board.chapters[0].clone();
+        second.title = "Two".to_owned();
+        second.scenes.truncate(1);
+        second.scenes[0].id = "c02s01".to_owned();
+        board.chapters.push(second);
+        let mut files = files();
+        files.insert(
+            "c02s01".to_owned(),
+            SceneFiles {
+                shots: vec![("/d.png".into(), None), ("/e.png".into(), None)],
+                ..SceneFiles::default()
+            },
+        );
+        let placements = plan(&board, &files, &Options::default(), None).unwrap();
+        let starts = chapter_starts(&board, &placements);
+        assert_eq!(starts.len(), 2);
+        assert_eq!(starts[0], ("One".to_owned(), 0.0));
+        assert_eq!(starts[1].0, "Two");
+        assert!((starts[1].1 - 8.35).abs() < 1e-9, "{}", starts[1].1);
+    }
+
+    #[test]
+    fn the_thumbnail_is_a_timeline_of_its_own() {
+        let mut editor = Bare(Editor::default());
+        let before = editor.0.project().timelines.len();
+        let picture = probed("/t.png", MediaKind::Image, None);
+        let timeline = thumbnail(&mut editor, "Desert · thumbnail", &picture, "Lost city").unwrap();
+        let project = editor.0.project();
+        assert_eq!(project.timelines.len(), before + 1);
+        let active = project.active();
+        assert_eq!(active.id, timeline);
+        assert_eq!((active.video.width, active.video.height), (1280, 720));
+        assert_eq!(
+            active
+                .clips
+                .iter()
+                .filter(|c| c.kind == ClipKind::Image)
+                .count(),
+            1
+        );
+        assert_eq!(
+            active
+                .clips
+                .iter()
+                .filter(|c| c.kind == ClipKind::Text)
+                .count(),
+            1
+        );
     }
 }

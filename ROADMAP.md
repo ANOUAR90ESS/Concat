@@ -92,8 +92,17 @@ runs no CI, so nothing is built until then.
   to where its waveform sounds. Each line is also sent with the lines
   either side (`previous_text` / `next_text`), so one paragraph runs on
   from the last in the same voice rather than starting afresh.
-- ⏳ **Stage 5: publishing**: a thumbnail, and a title, description and
-  tags for YouTube, written by the writer.
+- ✅ **Stage 5: publishing** (on the branch). "Write for YouTube" in the
+  Long video sheet asks the writer (about $0.01) for a title, a
+  description, 10-15 tags in the video's language and English, and a
+  thumbnail's words and picture. The description gets the chapters'
+  start times from the cut, as YouTube reads them (three or more, the
+  first at 0:00, none under ten seconds). Each has a Copy button, and
+  all of it is kept as `publishing.txt` in the video's folder. The
+  thumbnail is laid on a timeline of its own, 1280x720: its picture
+  made for it on Replicate (one still's price) or, without Replicate,
+  the video's first picture, with the words large in yellow over it -
+  editable like any title; Save Video Frame As makes the picture.
 - ⏳ **Stage 6: interface strings**: many Long video lines are still
   English in ar.json, es.json and the other locales.
 
