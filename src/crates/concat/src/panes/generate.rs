@@ -121,7 +121,7 @@ pub enum GenerateMsg {
     /// Small pictures of shots made, by stem, each with its likeness
     /// when it has detail enough to compare; and whether it is the last
     /// of them.
-    Thumbs(Vec<(String, u32, u32, Vec<u8>, Option<Likeness>)>, bool),
+    Thumbs(Vec<Thumb>, bool),
     /// Cut a Short from the video: a minute of it, 9:16.
     Short,
     /// The Short's storyboard and the files it is cut from, or why not.
@@ -1709,6 +1709,10 @@ fn music_items(studio: &Studio) -> Vec<(String, f64)> {
         .map(|item| (item.path.clone(), item.duration.unwrap_or(0.0)))
         .collect()
 }
+
+/// A shot's small picture as a worker hands it over: its stem, width,
+/// height and RGBA pixels, and its likeness when it has one.
+pub type Thumb = (String, u32, u32, Vec<u8>, Option<Likeness>);
 
 /// Thumbnails handed to the sheet at once: the first show at once on a
 /// phone, and a long video's hundred do not wait for one another.
