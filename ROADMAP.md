@@ -54,12 +54,14 @@ after another on the branch, each tested locally and committed there, and
 go up as **one** pull request and one release at the end - a branch push
 runs no CI, so nothing is built until then.
 
-- 🚧 **Stage 1: export quality.** The owner's alpha.15 export of a 60 s
-  1080p video came out at 0.83 Mbit/s - soft, smeared detail. Raise what a
-  Long video exports at, and make its pictures sharper: Replicate's
-  stills are 1344x768, enlarged to 1920x1080 and then by the Ken Burns
-  move.
-- ⏳ **Stage 2: sound.** That video had no audio stream at all: make sure
+- ✅ **Stage 1: export quality** (on the branch). A phone's encoder ran
+  its VBR far under the target on stills - 0.83 Mbit/s for a 60 s 1080p
+  video asked for 9: the quality setting now runs as CBR on a phone, at
+  three fifths of what the CRF implies (5.5 Mbit/s at 1080p30). A still
+  is enlarged with Lanczos rather than bilinear when it is decoded - once,
+  so it costs nothing - which keeps the edges of a 1344x768 picture
+  brought up to 1080p (about a sixth more edge detail, measured).
+- 🚧 **Stage 2: sound.** That video had no audio stream at all: make sure
   narration (the built-in voices, ElevenLabs) works on the phone, and add
   background music chosen to the mood.
 - ⏳ **Stage 3: no repeated pictures.** Two shots of one scene came out

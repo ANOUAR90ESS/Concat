@@ -526,7 +526,17 @@ fn video_filter(
         }
         _ => String::new(),
     };
-    parts.push(format!("scale={width}:{height}:flags=bilinear{convert}"));
+    // A still is scaled once and shown for seconds, often enlarged - a
+    // generated picture of 1344x768 brought up to 1920x1080 - so it gets
+    // Lanczos, which keeps its edges; bilinear left an export soft. Video
+    // keeps bilinear, which is what a frame every 1/30th of a second can
+    // pay for.
+    let fit = if options.looping {
+        "lanczos"
+    } else {
+        "bilinear"
+    };
+    parts.push(format!("scale={width}:{height}:flags={fit}{convert}"));
     if let Some(chain) = &options.filter_chain {
         parts.push(chain.clone());
         parts.push(format!("scale={width}:{height}:flags=bilinear"));
@@ -1199,6 +1209,20 @@ mod tests {
         let options = DecodeOptions::default();
         assert!(video_filter(90, &options, 1080, 1920, None).starts_with("transpose=clock,"));
         assert!(video_filter(0, &options, 1920, 1080, None).starts_with("scale="));
+    }
+
+    /// A still is scaled once and shown for seconds, so it is enlarged
+    /// with Lanczos; footage keeps bilinear.
+    #[test]
+    fn a_still_is_enlarged_with_lanczos() {
+        let still = DecodeOptions::default().repeating();
+        assert!(
+            video_filter(0, &still, 1920, 1080, None).starts_with("scale=1920:1080:flags=lanczos")
+        );
+        assert!(
+            video_filter(0, &DecodeOptions::default(), 1920, 1080, None)
+                .starts_with("scale=1920:1080:flags=bilinear")
+        );
     }
 
     #[test]
