@@ -1382,7 +1382,9 @@ impl GeneratePane {
                 publishing.chapters = job
                     .gather(&board, voiced)
                     .ok()
-                    .and_then(|made| plan::plan(&board, &made.files, &Options::default(), None).ok())
+                    .and_then(|made| {
+                        plan::plan(&board, &made.files, &Options::default(), None).ok()
+                    })
                     .map(|placements| plan::chapter_starts(&board, &placements))
                     .unwrap_or_default();
                 job.keep_publishing(&publishing)?;
