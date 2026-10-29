@@ -136,7 +136,13 @@ the phone's chip ignored the CBR of stage 1 - and took about 7 minutes.
   sheet shows the file's real size; and a phone file under 40% of the
   estimate is said to have come out soft. Needs the owner's phone to
   confirm.
-- ⏳ **B: making faster** - shots and voice lines four at a time.
+- ✅ **B: making faster.** The shots asked of Replicate are made four
+  at a time (each takes its price from a purse the run shares, so the
+  spend limit still holds), ElevenLabs lines two at a time; what each
+  came to is seen to in the order they finish. A failure that ends the
+  run - the limit, a refused key - starts no more. Waits that took one
+  after the other now overlap: about three to four times faster on
+  Replicate.
 - ⏳ **D: Play and Share** on the done sheet.
 - ⏳ **F: the making sheet redesigned** - a ring, the chapters as they
   are written, no empty picture box.

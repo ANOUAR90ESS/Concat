@@ -111,11 +111,12 @@ pub fn estimate(
 /// it from a shot that merely failed.
 pub const LIMIT_REACHED: &str = "stopped at the spend limit";
 
-/// What a run has paid for so far, held against a limit.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// What a run has paid for so far, held against a limit. Shared by the
+/// shots a run makes at once: each takes its price before its call.
+#[derive(Debug, Default)]
 pub struct Spend {
     /// Spent this run, in dollars.
-    pub spent: f64,
+    spent: std::sync::Mutex<f64>,
     /// The most this run may spend; None for no limit.
     pub limit: Option<f64>,
 }
@@ -123,29 +124,48 @@ pub struct Spend {
 impl Spend {
     /// A run that may spend up to `limit`.
     pub fn new(limit: Option<f64>) -> Spend {
-        Spend { spent: 0.0, limit }
+        Spend {
+            spent: std::sync::Mutex::new(0.0),
+            limit,
+        }
+    }
+
+    /// Spent this run, in dollars.
+    pub fn spent(&self) -> f64 {
+        *self
+            .spent
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Takes `cost` from what is left, or says why not: the run stops
     /// before a call the limit does not cover, never after it.
-    pub fn take(&mut self, cost: f64) -> Result<(), String> {
+    pub fn take(&self, cost: f64) -> Result<(), String> {
+        let mut spent = self
+            .spent
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(limit) = self.limit
-            && self.spent + cost > limit + 1e-9
+            && *spent + cost > limit + 1e-9
         {
             return Err(format!(
                 "{LIMIT_REACHED} of ${limit:.2} (${:.2} spent): what is made is kept; \
                  raise the limit and press Create video to carry on",
-                self.spent
+                *spent
             ));
         }
-        self.spent += cost;
+        *spent += cost;
         Ok(())
     }
 
     /// Gives back what a failed call was charged: a call that fails is
     /// mostly not billed, and a limit should not end a run for one.
-    pub fn refund(&mut self, cost: f64) {
-        self.spent = (self.spent - cost).max(0.0);
+    pub fn refund(&self, cost: f64) {
+        let mut spent = self
+            .spent
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *spent = (*spent - cost).max(0.0);
     }
 }
 
@@ -182,15 +202,15 @@ mod tests {
 
     #[test]
     fn a_limit_stops_before_the_call_it_does_not_cover() {
-        let mut spend = Spend::new(Some(0.25));
+        let spend = Spend::new(Some(0.25));
         assert!(spend.take(0.10).is_ok());
         assert!(spend.take(0.10).is_ok());
         let refused = spend.take(0.10).unwrap_err();
         assert!(refused.contains("$0.25"), "{refused}");
-        assert!((spend.spent - 0.20).abs() < 1e-9);
+        assert!((spend.spent() - 0.20).abs() < 1e-9);
         spend.refund(0.10);
         assert!(spend.take(0.05).is_ok());
-        let mut free = Spend::new(None);
+        let free = Spend::new(None);
         assert!(free.take(1e6).is_ok());
     }
 }

@@ -485,7 +485,7 @@ impl Job {
     ) -> Result<Made, String> {
         let voice_dir = self.voice_dir();
         let shots_dir = self.shots_dir();
-        let mut spend = Spend::new(costs.limit);
+        let spend = Spend::new(costs.limit);
         let prices = &costs.prices;
         for dir in [&voice_dir, &shots_dir] {
             std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
@@ -497,7 +497,73 @@ impl Job {
             .scenes()
             .filter(|scene| !scene.narration.trim().is_empty())
             .collect();
-        if *voice != Voice::None {
+        if let Voice::ElevenLabs { key, voice_id } = voice {
+            // A few lines at a time: each is a wait on the service, and
+            // each is read in the light of its neighbours' words, not of
+            // their sound, so none waits on another.
+            let todo: Vec<usize> = (0..spoken.len())
+                .filter(|&i| {
+                    providers::existing(&voice_dir, &spoken[i].id, &VOICE_EXTENSIONS).is_none()
+                })
+                .collect();
+            let around = |n: Option<usize>| {
+                n.and_then(|n| spoken.get(n))
+                    .map_or("", |scene| scene.narration.trim())
+            };
+            for lines in todo.chunks(VOICES_AT_ONCE) {
+                if stop() {
+                    return Err("cancelled".to_owned());
+                }
+                for &i in lines {
+                    progress(Step::Voice {
+                        n: i + 1,
+                        of: spoken.len(),
+                        text: spoken[i].narration.trim().to_owned(),
+                    });
+                }
+                let read: Vec<(usize, Result<Vec<Word>, String>)> = std::thread::scope(|scope| {
+                    let readers: Vec<_> = lines
+                        .iter()
+                        .map(|&i| {
+                            let (spend, voice_dir, around, spoken) =
+                                (&spend, &voice_dir, &around, &spoken);
+                            scope.spawn(move || {
+                                let scene = spoken[i];
+                                let text = scene.narration.trim();
+                                let cost =
+                                    text.chars().count() as f64 / 1000.0 * prices.voice_per_1k;
+                                let words = spend.take(cost).and_then(|()| {
+                                    providers::retry(|| {
+                                        providers::elevenlabs(
+                                            key,
+                                            voice_id,
+                                            text,
+                                            around(i.checked_sub(1)),
+                                            around(Some(i + 1)),
+                                            &voice_dir.join(format!("{}.mp3", scene.id)),
+                                        )
+                                    })
+                                    .inspect_err(|_| spend.refund(cost))
+                                });
+                                (i, words)
+                            })
+                        })
+                        .collect();
+                    readers
+                        .into_iter()
+                        .map(|reader| {
+                            reader.join().unwrap_or_else(|_| {
+                                (usize::MAX, Err("a reader stopped".to_owned()))
+                            })
+                        })
+                        .collect()
+                });
+                for (i, words) in read {
+                    let words = words?;
+                    self.keep_words(&spoken[i].id, &words)?;
+                }
+            }
+        } else if *voice == Voice::BuiltIn {
             for (i, scene) in spoken.iter().enumerate() {
                 if stop() {
                     return Err("cancelled".to_owned());
@@ -510,39 +576,13 @@ impl Job {
                     of: spoken.len(),
                     text: scene.narration.trim().to_owned(),
                 });
-                match voice {
-                    Voice::None => {}
-                    Voice::BuiltIn => {
-                        let made = speak(scene.narration.trim())?;
-                        let extension = made.extension().and_then(|e| e.to_str()).unwrap_or("wav");
-                        let out = voice_dir.join(format!("{}.{extension}", scene.id));
-                        std::fs::copy(&made, &out)
-                            .map_err(|error| format!("{}: {error}", out.display()))?;
-                        // Untimed: the cut shares its captions out.
-                        let _ = std::fs::remove_file(self.words_file(&scene.id));
-                    }
-                    Voice::ElevenLabs { key, voice_id } => {
-                        let text = scene.narration.trim();
-                        let cost = text.chars().count() as f64 / 1000.0 * prices.voice_per_1k;
-                        spend.take(cost)?;
-                        let around = |n: Option<usize>| {
-                            n.and_then(|n| spoken.get(n))
-                                .map_or("", |scene| scene.narration.trim())
-                        };
-                        let words = providers::retry(|| {
-                            providers::elevenlabs(
-                                key,
-                                voice_id,
-                                text,
-                                around(i.checked_sub(1)),
-                                around(Some(i + 1)),
-                                &voice_dir.join(format!("{}.mp3", scene.id)),
-                            )
-                        })
-                        .inspect_err(|_| spend.refund(cost))?;
-                        self.keep_words(&scene.id, &words)?;
-                    }
-                }
+                let made = speak(scene.narration.trim())?;
+                let extension = made.extension().and_then(|e| e.to_str()).unwrap_or("wav");
+                let out = voice_dir.join(format!("{}.{extension}", scene.id));
+                std::fs::copy(&made, &out)
+                    .map_err(|error| format!("{}: {error}", out.display()))?;
+                // Untimed: the cut shares its captions out.
+                let _ = std::fs::remove_file(self.words_file(&scene.id));
             }
         }
 
@@ -555,6 +595,10 @@ impl Job {
         let mut inputs: Option<Option<ModelInputs>> = None;
         let mut stale = self.stale();
         let mut n = 0;
+        // The shots asked of Replicate, made a few at a time once the
+        // rest are seen to: a minute of waiting a shot, one after the
+        // other, was most of a long video's making.
+        let mut queue: Vec<Queued> = Vec::new();
         for (chapter, scene) in board
             .chapters
             .iter()
@@ -586,7 +630,7 @@ impl Job {
                         index,
                         shots,
                         prices,
-                        &mut spend,
+                        &spend,
                         &mut inputs,
                     )?;
                     match take {
@@ -602,7 +646,7 @@ impl Job {
                         n,
                         of: total,
                         picture: self.picture(&stem),
-                        spent: spend.spent,
+                        spent: spend.spent(),
                     });
                     continue;
                 }
@@ -618,35 +662,14 @@ impl Job {
                         providers::draft(&shots_dir.join(format!("{stem}.png")), width, height, n)?;
                     }
                     Shots::Replicate { .. } => {
-                        progress(Step::Shot {
+                        queue.push(Queued {
                             n,
-                            of: total,
-                            prompt: shot.prompt.clone(),
+                            chapter,
+                            shot,
+                            seconds,
+                            stem,
                         });
-                        let order = Order::new(board, chapter, shot, seconds, &shots_dir, &stem);
-                        match self.replicate_shot(shots, &order, &mut inputs, prices, &mut spend)? {
-                            Outcome::Made => {}
-                            Outcome::StillForClip(error) => stand_ins
-                                .push(format!("{stem}: a still in place of a clip ({error})")),
-                            // A still that cannot be made becomes a colour
-                            // card: the cut is whole, and the card says
-                            // which shot to make again.
-                            Outcome::Failed(error) => {
-                                stand_ins.push(format!(
-                                    "{stem}: a colour card in place of a still ({error})"
-                                ));
-                                stood_in.push(stem.clone());
-                                providers::draft(
-                                    &shots_dir.join(format!("{stem}.png")),
-                                    width,
-                                    height,
-                                    n,
-                                )?;
-                                // Noted as it happens: a run that ends early
-                                // still makes this shot again next time.
-                                self.remember_stand_ins(&stood_in)?;
-                            }
-                        }
+                        continue;
                     }
                 }
                 if !matches!(shots, Shots::Folder) {
@@ -654,10 +677,30 @@ impl Job {
                         n,
                         of: total,
                         picture: self.picture(&stem),
-                        spent: spend.spent,
+                        spent: spend.spent(),
                     });
                 }
             }
+        }
+        if !queue.is_empty() {
+            let batch = Batch {
+                board,
+                shots,
+                prices,
+                spend: &spend,
+                dir: &shots_dir,
+                total,
+                frame: (width, height),
+            };
+            self.make_at_once(
+                &batch,
+                &queue,
+                &mut inputs,
+                &mut stand_ins,
+                &mut stood_in,
+                progress,
+                stop,
+            )?;
         }
         if !missing.is_empty() {
             return Err(format!(
@@ -688,7 +731,7 @@ impl Job {
         progress(Step::Probing);
         let mut made = self.gather(board, *voice != Voice::None)?;
         made.stand_ins = stand_ins;
-        made.spent = spend.spent;
+        made.spent = spend.spent();
         Ok(made)
     }
 
@@ -821,6 +864,186 @@ fn sounding(path: &str) -> Option<(f64, f64)> {
 /// The level, of full scale, under which a narration is silent: -42 dB,
 /// under a breath, over a quiet file's hiss.
 const SOUNDING: f32 = 0.008;
+
+/// How many narration lines are asked of ElevenLabs at once: under the
+/// fewest requests its smaller plans run side by side.
+const VOICES_AT_ONCE: usize = 2;
+
+/// How many shots are asked of Replicate at once: four waits overlap
+/// where one followed another, well inside what an account may run.
+const AT_ONCE: usize = 4;
+
+/// A shot waiting to be made on Replicate: its number in the run, and
+/// where it is in the storyboard.
+struct Queued<'a> {
+    n: usize,
+    chapter: &'a Chapter,
+    shot: &'a Shot,
+    seconds: f64,
+    stem: String,
+}
+
+/// What every shot of a batch shares.
+struct Batch<'a> {
+    board: &'a Storyboard,
+    shots: &'a Shots,
+    prices: &'a Prices,
+    spend: &'a Spend,
+    dir: &'a Path,
+    total: usize,
+    frame: (u32, u32),
+}
+
+/// What a worker of [`Job::make_at_once`] says.
+enum Said {
+    /// It has started on the queue's shot `.0`.
+    Started(usize),
+    /// It is done with it.
+    Done(usize, Result<Outcome, String>),
+}
+
+impl Job {
+    /// Makes `queue`'s shots on Replicate, [`AT_ONCE`] at a time. Each
+    /// takes its price from the run's purse before its call; what each
+    /// came to is seen to here, on the caller's thread, in the order they
+    /// finish. A failure that ends the run - the limit, a key refused -
+    /// or `stop` lets the shots under way finish and starts no more.
+    #[allow(clippy::too_many_arguments)]
+    fn make_at_once(
+        &self,
+        batch: &Batch,
+        queue: &[Queued],
+        inputs: &mut Option<Option<ModelInputs>>,
+        stand_ins: &mut Vec<String>,
+        stood_in: &mut Vec<String>,
+        progress: &mut dyn FnMut(Step),
+        stop: &dyn Fn() -> bool,
+    ) -> Result<(), String> {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        // What the video model takes, read once before the workers start.
+        if let Shots::Replicate {
+            token, video_model, ..
+        } = batch.shots
+            && inputs.is_none()
+            && !video_model.trim().is_empty()
+            && queue.iter().any(|q| q.shot.kind == ShotKind::Video)
+        {
+            *inputs = Some(
+                providers::replicate_inputs(token, video_model)
+                    .inspect_err(|error| log::warn!("{video_model}'s inputs: {error}"))
+                    .ok(),
+            );
+        }
+        let ready = inputs.clone();
+        let next = AtomicUsize::new(0);
+        let halt = AtomicBool::new(false);
+        let (tell, heard) = std::sync::mpsc::channel::<Said>();
+        std::thread::scope(|scope| {
+            for _ in 0..AT_ONCE.min(queue.len()) {
+                let tell = tell.clone();
+                let (next, halt, ready) = (&next, &halt, &ready);
+                scope.spawn(move || {
+                    while !halt.load(Ordering::Acquire) {
+                        let i = next.fetch_add(1, Ordering::AcqRel);
+                        let Some(queued) = queue.get(i) else {
+                            break;
+                        };
+                        let _ = tell.send(Said::Started(i));
+                        let order = Order::new(
+                            batch.board,
+                            queued.chapter,
+                            queued.shot,
+                            queued.seconds,
+                            batch.dir,
+                            &queued.stem,
+                        );
+                        let mut inputs = ready.clone();
+                        let outcome = self.replicate_shot(
+                            batch.shots,
+                            &order,
+                            &mut inputs,
+                            batch.prices,
+                            batch.spend,
+                        );
+                        // A failure that ends the run starts no more
+                        // shots from here, before it is even heard.
+                        if outcome.is_err() {
+                            halt.store(true, Ordering::Release);
+                        }
+                        let _ = tell.send(Said::Done(i, outcome));
+                    }
+                });
+            }
+            drop(tell);
+            let mut failure: Option<String> = None;
+            loop {
+                let said = match heard.recv_timeout(std::time::Duration::from_millis(250)) {
+                    Ok(said) => said,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        if failure.is_none() && stop() {
+                            halt.store(true, Ordering::Release);
+                            failure = Some("cancelled".to_owned());
+                        }
+                        continue;
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                };
+                match said {
+                    Said::Started(i) => progress(Step::Shot {
+                        n: queue[i].n,
+                        of: batch.total,
+                        prompt: queue[i].shot.prompt.clone(),
+                    }),
+                    Said::Done(i, outcome) => {
+                        let queued = &queue[i];
+                        let stem = &queued.stem;
+                        match outcome {
+                            Ok(Outcome::Made) => {}
+                            Ok(Outcome::StillForClip(error)) => stand_ins
+                                .push(format!("{stem}: a still in place of a clip ({error})")),
+                            // A still that cannot be made becomes a colour
+                            // card: the cut is whole, and the card says
+                            // which shot to make again.
+                            Ok(Outcome::Failed(error)) => {
+                                stand_ins.push(format!(
+                                    "{stem}: a colour card in place of a still ({error})"
+                                ));
+                                stood_in.push(stem.clone());
+                                let (width, height) = batch.frame;
+                                // Noted as it happens: a run that ends
+                                // early still makes this shot again next
+                                // time.
+                                let noted = providers::draft(
+                                    &batch.dir.join(format!("{stem}.png")),
+                                    width,
+                                    height,
+                                    queued.n,
+                                )
+                                .and_then(|()| self.remember_stand_ins(stood_in));
+                                if let Err(error) = noted {
+                                    halt.store(true, Ordering::Release);
+                                    failure.get_or_insert(error);
+                                }
+                            }
+                            Err(error) => {
+                                halt.store(true, Ordering::Release);
+                                failure.get_or_insert(error);
+                                continue;
+                            }
+                        }
+                        progress(Step::Made {
+                            n: queued.n,
+                            of: batch.total,
+                            picture: self.picture(stem),
+                            spent: batch.spend.spent(),
+                        });
+                    }
+                }
+            }
+            failure.map_or(Ok(()), Err)
+        })
+    }
+}
 
 /// One shot to make: what [`Job::replicate_shot`] is handed.
 struct Order<'a> {
@@ -981,7 +1204,7 @@ impl Job {
             })
             .ok_or_else(|| format!("the script has no shot {stem}"))?;
         let previous = self.current(stem);
-        let mut spend = Spend::new(costs.limit);
+        let spend = Spend::new(costs.limit);
         let path = self.take(
             board,
             chapter,
@@ -989,7 +1212,7 @@ impl Job {
             index,
             shots,
             &costs.prices,
-            &mut spend,
+            &spend,
             &mut None,
         )??;
         let mut stale = self.stale();
@@ -999,7 +1222,7 @@ impl Job {
         Ok(Remade {
             path,
             previous,
-            spent: spend.spent,
+            spent: spend.spent(),
         })
     }
 
@@ -1016,7 +1239,7 @@ impl Job {
         index: usize,
         shots: &Shots,
         prices: &Prices,
-        spend: &mut Spend,
+        spend: &Spend,
         inputs: &mut Option<Option<ModelInputs>>,
     ) -> Result<Result<PathBuf, String>, String> {
         let stem = shot_stem(&scene.id, index);
@@ -1078,7 +1301,7 @@ impl Job {
         order: &Order,
         inputs: &mut Option<Option<ModelInputs>>,
         prices: &Prices,
-        spend: &mut Spend,
+        spend: &Spend,
     ) -> Result<Outcome, String> {
         let Shots::Replicate {
             token,
@@ -1170,7 +1393,7 @@ impl Job {
         clip: &Clip,
         inputs: Option<&ModelInputs>,
         prices: &Prices,
-        spend: &mut Spend,
+        spend: &Spend,
     ) -> Result<(), String> {
         let order = clip.order;
         let image = match inputs.and_then(ModelInputs::image_field) {
@@ -1500,6 +1723,49 @@ mod tests {
         assert_eq!(job.publishing(), Some(publishing));
         let text = std::fs::read_to_string(job.dir.join("publishing.txt")).unwrap();
         assert_eq!(text, "Title\n\nAbout.\n\na\n");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_batch_stops_at_a_failure_that_ends_the_run() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-batch-{}", std::process::id()));
+        let job = Job::new(&root, "batch");
+        let mut board: Storyboard = serde_json::from_str(
+            r#"{"title":"T","chapters":[{"title":"A","scenes":[
+                {"narration":"","seconds":6,"shots":[{"prompt":"a"},{"prompt":"b"},
+                 {"prompt":"c"},{"prompt":"d"},{"prompt":"e"},{"prompt":"f"}]}]}]}"#,
+        )
+        .unwrap();
+        board.tidy().unwrap();
+        // No token: every shot is refused alike, and the run says so
+        // rather than standing in a colour card for each.
+        let shots = Shots::Replicate {
+            token: String::new(),
+            image_model: String::new(),
+            video_model: String::new(),
+            video_input: String::new(),
+        };
+        let mut started = 0;
+        let error = job
+            .make(
+                &board,
+                &Voice::None,
+                &shots,
+                &Costs::default(),
+                None,
+                &mut |_| Err("no voice".to_owned()),
+                &mut |step| {
+                    if matches!(step, Step::Shot { .. }) {
+                        started += 1;
+                    }
+                },
+                &|| false,
+            )
+            .unwrap_err();
+        assert!(error.contains("API token"), "{error}");
+        assert!((1..=AT_ONCE).contains(&started), "{started} started");
+        assert!(job.current("c01s01_1").is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 }
