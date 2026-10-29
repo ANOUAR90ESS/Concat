@@ -123,6 +123,28 @@ runs no CI, so nothing is built until then.
   and content suggestions that learn from the owner's own videos and,
   once signed in to YouTube, from how they did.
 
+## After alpha.16 (owner's test, 29 Oct)
+
+Built on the branch overnight and sent up as one PR, as before. The
+owner's 1:16 export came out at 0.79 Mbit/s where 5.5 were asked for -
+the phone's chip ignored the CBR of stage 1 - and took about 7 minutes.
+
+- ✅ **A: export quality on a phone.** The H.264/HEVC encoder is also
+  given a quantiser ceiling (I/P/B at CRF+4/+6/+8: 24/26/28), a floor
+  under the picture whatever the chip does with the bitrate (read from
+  Android 12 on). The log says what the encoder was asked for; the done
+  sheet shows the file's real size; and a phone file under 40% of the
+  estimate is said to have come out soft. Needs the owner's phone to
+  confirm.
+- ⏳ **B: making faster** - shots and voice lines four at a time.
+- ⏳ **D: Play and Share** on the done sheet.
+- ⏳ **F: the making sheet redesigned** - a ring, the chapters as they
+  are written, no empty picture box.
+- ⏳ **C: export faster** - time each stage in the log, then the
+  certain wins.
+- ⏳ **E: keep using the app** while a video is made or exported - the
+  sheet minimised to a pill.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

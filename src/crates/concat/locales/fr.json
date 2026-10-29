@@ -195,6 +195,7 @@
   "export.exportFinished": "Export terminé",
   "export.inBackground": "Export de {0}",
   "export.keepsGoing": "Vous pouvez quitter l’app : l’export continue, et la notification montre où il en est.",
+  "export.lowBitrate": "L’encodeur de ce téléphone a écrit le fichier bien en dessous de la qualité demandée : il peut paraître flou. Le journal indique ce qui lui a été demandé.",
   "export.exportTo": "Exporter vers",
   "export.exported": "Exporté · {0}",
   "export.finalisingFile": "Finalisation du fichier",

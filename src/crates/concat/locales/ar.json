@@ -195,6 +195,7 @@
   "export.exportFinished": "اكتمل التصدير",
   "export.inBackground": "جارٍ تصدير {0}",
   "export.keepsGoing": "يمكنك الخروج من التطبيق: يستمر التصدير، ويظهر تقدّمه في الإشعار.",
+  "export.lowBitrate": "مُرمِّز هذا الهاتف كتب الملف بجودة أقل بكثير من المطلوبة، فقد يبدو ضبابياً. السجل يذكر ما طُلب منه.",
   "export.exportTo": "تصدير إلى",
   "export.exported": "تم التصدير · {0}",
   "export.finalisingFile": "جارٍ إنهاء الملف",
