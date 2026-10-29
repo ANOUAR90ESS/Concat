@@ -26,7 +26,7 @@ use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
-use concat_generate::writer::{self, Brief, Suggestion, Writing};
+use concat_generate::writer::{self, Brief, Publishing, Suggestion, Writing};
 use concat_project::Command;
 use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
@@ -118,7 +118,10 @@ pub enum GenerateMsg {
     /// A shot is made again, or why not: its stem and its job's folder.
     Remade(String, PathBuf, Box<Result<(Remade, NewMedia), String>>),
     /// Small pictures of shots, by stem: width, height and RGBA.
-    Thumbs(Vec<(String, u32, u32, Vec<u8>)>),
+    /// Small pictures of shots made, by stem, each with its likeness
+    /// when it has detail enough to compare; and whether it is the last
+    /// of them.
+    Thumbs(Vec<Thumb>, bool),
     /// Cut a Short from the video: a minute of it, 9:16.
     Short,
     /// The Short's storyboard and the files it is cut from, or why not.
@@ -127,6 +130,11 @@ pub enum GenerateMsg {
     Written(Box<Result<Storyboard, String>>, bool),
     /// The providers are done, and the files probed.
     Made(Box<Result<(Storyboard, Made), String>>),
+    /// Write what goes up with the video on YouTube, and its thumbnail.
+    Publish,
+    /// What goes up with it, kept; the thumbnail's picture, probed, or why
+    /// there is none; or why nothing was written.
+    Published(Box<Result<Published, String>>),
 }
 
 /// The Long video sheet's state.
@@ -137,7 +145,8 @@ pub struct GeneratePane {
     pub minutes: usize,
     pub captions: bool,
     pub titles: bool,
-    /// Row of [`GeneratePane::music_rows`]; 0 is none.
+    /// Row of [`GeneratePane::music_rows`]; 0 is none, 1 music made for
+    /// the video ([`AI_MUSIC`]).
     pub music: usize,
     pub running: bool,
     pub progress: f32,
@@ -164,6 +173,16 @@ pub struct GeneratePane {
     thumbs: HashMap<String, slint::Image>,
     /// The shots being made again, by stem.
     remaking: HashSet<String>,
+    /// What goes up with the video on YouTube, once written.
+    publishing: Option<Publishing>,
+    /// The writer is writing it.
+    publishing_busy: bool,
+    /// What each shot made looks like, roughly, by stem: to tell a picture
+    /// too like the one before it.
+    likeness: HashMap<String, Likeness>,
+    /// The shots whose pictures came out too like the shot's before them,
+    /// by stem: made again, they come out otherwise.
+    lookalikes: HashSet<String>,
     /// The shots the writer is finding another picture for: chapter,
     /// scene and shot.
     suggesting: HashSet<(usize, usize, usize)>,
@@ -215,6 +234,10 @@ impl Default for GeneratePane {
             status: String::new(),
             all_made: false,
             thumbs: HashMap::new(),
+            likeness: HashMap::new(),
+            publishing: None,
+            publishing_busy: false,
+            lookalikes: HashSet::new(),
             remaking: HashSet::new(),
             suggesting: HashSet::new(),
             board: None,
@@ -378,6 +401,42 @@ impl GeneratePane {
                 }
             }
             GenerateMsg::Short => self.short(studio),
+            GenerateMsg::Publish => self.publish(studio),
+            GenerateMsg::Published(result) => {
+                self.publishing_busy = false;
+                match *result {
+                    Ok((publishing, picture)) => {
+                        match picture {
+                            Ok(picture) => {
+                                let name = format!(
+                                    "{} · {}",
+                                    publishing.title.trim(),
+                                    t("generate.thumbnail")
+                                );
+                                let mut editing = Session(studio);
+                                match plan::thumbnail(
+                                    &mut editing,
+                                    &name,
+                                    &picture,
+                                    &publishing.thumbnail_text,
+                                ) {
+                                    Ok(_) => {
+                                        self.open = false;
+                                        studio.notify(&t("generate.thumbnailReady"), false);
+                                    }
+                                    Err(error) => self.message = error,
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("generate: the thumbnail: {error}");
+                                studio.notify(&tf("generate.noThumbnail", &[&error]), true);
+                            }
+                        }
+                        self.publishing = Some(publishing);
+                    }
+                    Err(error) => self.failed(error),
+                }
+            }
             GenerateMsg::ShortReady(result) => {
                 self.running = false;
                 match *result {
@@ -410,12 +469,23 @@ impl GeneratePane {
                 self.remaking.remove(&stem);
                 self.remade(studio, &stem, &Job { dir }, *result);
             }
-            GenerateMsg::Thumbs(thumbs) => {
-                for (stem, width, height, rgba) in thumbs {
+            GenerateMsg::Thumbs(thumbs, last) => {
+                for (stem, width, height, rgba, likeness) in thumbs {
                     let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
                         &rgba, width, height,
                     );
-                    self.thumbs.insert(stem, slint::Image::from_rgba8(buffer));
+                    self.thumbs
+                        .insert(stem.clone(), slint::Image::from_rgba8(buffer));
+                    match likeness {
+                        Some(likeness) => self.likeness.insert(stem, likeness),
+                        None => self.likeness.remove(&stem),
+                    };
+                }
+                self.find_lookalikes();
+                // Said once a run's pictures are all read; the script
+                // editor shows each.
+                if last && !self.script_open && !self.lookalikes.is_empty() {
+                    studio.notify(&tf("generate.lookalikes", &[&self.lookalikes.len()]), false);
                 }
             }
             GenerateMsg::CloseScript => {
@@ -507,7 +577,11 @@ impl GeneratePane {
             GenerateMsg::Made(result) => {
                 self.running = false;
                 match *result {
-                    Ok((board, made)) => self.cut(studio, &board, &made, false),
+                    Ok((board, made)) => {
+                        self.cut(studio, &board, &made, false);
+                        // Read for pictures too like their neighbours.
+                        self.thumbnails(studio, None);
+                    }
                     Err(error) => self.failed(error),
                 }
                 self.tally(studio);
@@ -534,6 +608,11 @@ impl GeneratePane {
             .job(studio)
             .filter(|_| !self.topic.trim().is_empty())
             .and_then(|job| Storyboard::read(&job.storyboard()).ok());
+        self.publishing = self
+            .board
+            .as_ref()
+            .and(self.job(studio))
+            .and_then(|job| job.publishing());
         self.dirty = false;
         self.stale_voices.clear();
         self.stale_shots.clear();
@@ -600,6 +679,10 @@ impl GeneratePane {
                 }
                 (0.4 + 0.55 * *n as f32 / *of as f32, self.stage.clone())
             }
+            Step::Music => {
+                self.detail.clear();
+                (0.95, t("generate.makingMusic"))
+            }
             Step::Probing => {
                 self.phase = 3;
                 self.detail.clear();
@@ -639,6 +722,29 @@ impl GeneratePane {
                     .collect()
             })
             .unwrap_or_default();
+    }
+
+    /// Works out again which shots came out too like the shot before
+    /// them, from the likeness of each picture read so far.
+    fn find_lookalikes(&mut self) {
+        let Some(board) = self.board.as_ref() else {
+            self.lookalikes.clear();
+            return;
+        };
+        let stems: Vec<String> = board
+            .scenes()
+            .flat_map(|scene| (0..scene.shots.len()).map(|n| shot_stem(&scene.id, n)))
+            .collect();
+        self.lookalikes = stems
+            .windows(2)
+            .filter(
+                |pair| match (self.likeness.get(&pair[0]), self.likeness.get(&pair[1])) {
+                    (Some(before), Some(this)) => before.alike(this),
+                    _ => false,
+                },
+            )
+            .map(|pair| pair[1].clone())
+            .collect();
     }
 
     /// Writes the edited storyboard back to the job's folder, and removes
@@ -1097,19 +1203,21 @@ impl GeneratePane {
         let epoch = crate::host::project_epoch();
         spawn_in_project(
             move || {
-                for stems in stems.chunks(THUMBS_AT_ONCE) {
+                let batches = stems.chunks(THUMBS_AT_ONCE).count();
+                for (n, stems) in stems.chunks(THUMBS_AT_ONCE).enumerate() {
                     let thumbs: Vec<_> = stems
                         .iter()
                         .filter_map(|stem| {
                             let path = job.picture(stem)?;
-                            let small = thumbnail(&path)?;
+                            let (small, likeness) = thumbnail(&path)?;
                             let (width, height) = small.dimensions();
-                            Some((stem.clone(), width, height, small.into_raw()))
+                            Some((stem.clone(), width, height, small.into_raw(), likeness))
                         })
                         .collect();
-                    if !thumbs.is_empty() {
+                    let last = n + 1 == batches;
+                    if !thumbs.is_empty() || last {
                         on_ui_in_project(epoch, move |studio, _, _| {
-                            studio.handle(Msg::Generate(GenerateMsg::Thumbs(thumbs)));
+                            studio.handle(Msg::Generate(GenerateMsg::Thumbs(thumbs, last)));
                         });
                     }
                 }
@@ -1177,6 +1285,13 @@ impl GeneratePane {
             prices: prices(studio),
             limit: spend_limit(studio),
         };
+        // Music made for the video, where it is asked for and the shots
+        // come from Replicate, which makes it; described by the writer
+        // once, before the first bed is paid for.
+        let ai_music = self.music == AI_MUSIC
+            && matches!(shots, Shots::Replicate { .. })
+            && job.music().is_none();
+        let writer_key = prefs.anthropic_key.clone();
         let speaker = studio.prefs.tts_voice.unwrap_or(DEFAULT_SPEAKER);
         let speech = Arc::clone(&studio.host.speech);
         let dirs = studio.host.dirs.clone();
@@ -1216,11 +1331,20 @@ impl GeneratePane {
                         studio.handle(Msg::Generate(GenerateMsg::Step(step)));
                     });
                 };
+                let music = ai_music.then(|| {
+                    writer::music_prompt(&board, &writer_key, writer::DEFAULT_MODEL).unwrap_or_else(
+                        |error| {
+                            log::warn!("generate: the music's description: {error}");
+                            writer::plain_music_prompt()
+                        },
+                    )
+                });
                 let made = job.make(
                     &board,
                     &voice,
                     &shots,
                     &costs,
+                    music.as_deref(),
                     &mut speak,
                     &mut progress,
                     &|| stop.load(Ordering::Acquire),
@@ -1229,6 +1353,51 @@ impl GeneratePane {
             },
             |studio, _, _, result| {
                 studio.handle(Msg::Generate(GenerateMsg::Made(Box::new(result))))
+            },
+        );
+    }
+
+    /// Writes what goes up with the video on YouTube - a title, a
+    /// description with the chapters' times, tags - and makes its
+    /// thumbnail's picture, on a worker: kept in the job's folder, and the
+    /// thumbnail laid on a timeline of its own when it comes back.
+    fn publish(&mut self, studio: &mut Studio) {
+        let (Some(board), Some(job)) = (self.board.clone(), self.job(studio)) else {
+            return;
+        };
+        let prefs = studio.prefs.generate.clone();
+        if prefs.anthropic_key.trim().is_empty() {
+            self.message = t("generate.needAnthropicKey");
+            return;
+        }
+        self.message.clear();
+        self.publishing_busy = true;
+        let shots = shots_of(&prefs);
+        let voiced = self.voice_row(studio) != 0;
+        spawn_in_project(
+            move || {
+                let mut publishing =
+                    writer::publishing(&board, &prefs.anthropic_key, writer::DEFAULT_MODEL)?;
+                // Timed as the cut is; a video not made yet has no times.
+                publishing.chapters = job
+                    .gather(&board, voiced)
+                    .ok()
+                    .and_then(|made| {
+                        plan::plan(&board, &made.files, &Options::default(), None).ok()
+                    })
+                    .map(|placements| plan::chapter_starts(&board, &placements))
+                    .unwrap_or_default();
+                job.keep_publishing(&publishing)?;
+                let picture = job
+                    .thumbnail_picture(&board, &shots, &publishing.thumbnail_prompt)
+                    .and_then(|path| {
+                        concat_host::media::probe(&path.to_string_lossy())
+                            .map(|summary| summary.to_new_media())
+                    });
+                Ok((publishing, picture))
+            },
+            |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::Published(Box::new(result))))
             },
         );
     }
@@ -1268,11 +1437,14 @@ impl GeneratePane {
     }
 
     fn cut(&mut self, studio: &mut Studio, board: &Storyboard, made: &Made, short: bool) {
-        let music = self.music.checked_sub(1).and_then(|row| {
-            music_items(studio)
-                .get(row)
-                .map(|(path, length)| (path.clone(), *length))
-        });
+        let music = match self.music {
+            AI_MUSIC => made.music.clone(),
+            row => row.checked_sub(AI_MUSIC + 1).and_then(|row| {
+                music_items(studio)
+                    .get(row)
+                    .map(|(path, length)| (path.clone(), *length))
+            }),
+        };
         let mut media = made.media.clone();
         if let Some((path, _)) = &music
             && let Ok(summary) = concat_host::media::probe(path)
@@ -1371,9 +1543,11 @@ impl GeneratePane {
         })
     }
 
-    /// The music list's rows: none, then every recording in the bin.
+    /// The music list's rows: none, music made for the video, then every
+    /// recording in the bin.
     pub fn music_rows(&self, studio: &Studio) -> Vec<SharedString> {
-        std::iter::once(t("generate.noMusic"))
+        [t("generate.noMusic"), t("generate.aiMusic")]
+            .into_iter()
             .chain(music_items(studio).into_iter().map(|(path, _)| {
                 Path::new(&path)
                     .file_name()
@@ -1464,6 +1638,26 @@ impl GeneratePane {
                 SharedString::default()
             },
             message: self.message.as_str().into(),
+            publishing: self.publishing_busy,
+            has_publishing: self.publishing.is_some(),
+            publish_title: self
+                .publishing
+                .as_ref()
+                .map(|p| p.title.trim().to_owned())
+                .unwrap_or_default()
+                .into(),
+            publish_description: self
+                .publishing
+                .as_ref()
+                .map(Publishing::full_description)
+                .unwrap_or_default()
+                .into(),
+            publish_tags: self
+                .publishing
+                .as_ref()
+                .map(Publishing::tag_line)
+                .unwrap_or_default()
+                .into(),
         }
     }
 }
@@ -1502,11 +1696,16 @@ impl GeneratePane {
                 ],
             )
             .into(),
-            warning: if self.repeats.is_empty() {
-                SharedString::default()
-            } else {
-                tf("script.repeats", &[&self.repeats.len()]).into()
-            },
+            warning: [
+                (!self.repeats.is_empty()).then(|| tf("script.repeats", &[&self.repeats.len()])),
+                (!self.lookalikes.is_empty())
+                    .then(|| tf("script.lookalikes", &[&self.lookalikes.len()])),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .into(),
             message: self.script_message.as_str().into(),
         }
     }
@@ -1562,6 +1761,7 @@ impl GeneratePane {
                         detail: shot.motion.as_str().into(),
                         video: shot.kind == ShotKind::Video,
                         repeat: self.repeats.contains(&stem),
+                        lookalike: self.lookalikes.contains(&stem),
                         has_thumb: self.thumbs.contains_key(&stem),
                         thumb: self.thumbs.get(&stem).cloned().unwrap_or_default(),
                         remaking: self.remaking.contains(&stem),
@@ -1627,22 +1827,101 @@ fn music_items(studio: &Studio) -> Vec<(String, f64)> {
         .collect()
 }
 
+/// What goes up with the video, written and kept, and the thumbnail's
+/// picture probed - or why there is none.
+pub type Published = (Publishing, Result<NewMedia, String>);
+
+/// A shot's small picture as a worker hands it over: its stem, width,
+/// height and RGBA pixels, and its likeness when it has one.
+pub type Thumb = (String, u32, u32, Vec<u8>, Option<Likeness>);
+
 /// Thumbnails handed to the sheet at once: the first show at once on a
 /// phone, and a long video's hundred do not wait for one another.
 const THUMBS_AT_ONCE: usize = 6;
 
-/// A shot's picture, small. Read by what the file holds rather than by its
-/// name: a service asked for a PNG may answer with a JPEG or a WebP, which
-/// is saved under the name asked for.
-fn thumbnail(path: &Path) -> Option<image::RgbaImage> {
+/// A shot's picture, small, and its likeness. Read by what the file holds
+/// rather than by its name: a service asked for a PNG may answer with a
+/// JPEG or a WebP, which is saved under the name asked for.
+fn thumbnail(path: &Path) -> Option<(image::RgbaImage, Option<Likeness>)> {
     let picture = image::ImageReader::open(path)
         .ok()?
         .with_guessed_format()
         .ok()?
         .decode()
         .ok()?;
-    Some(picture.thumbnail(240, 240).to_rgba8())
+    let small = picture.thumbnail(240, 240);
+    let likeness = Likeness::of(&small);
+    Some((small.to_rgba8(), likeness))
 }
+
+/// What a picture looks like, roughly: where it is lighter and darker
+/// (a difference hash, 64 bits) and its colour on the whole. Two shots of
+/// one scene that came out the same picture in other words - the same
+/// subject, framed alike - agree on both.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Likeness {
+    shape: u64,
+    colour: [u8; 3],
+}
+
+impl Likeness {
+    /// Of a picture with detail enough to tell; `None` for a colour card
+    /// or another wash, which every draft shot is and which would read
+    /// as alike.
+    fn of(picture: &image::DynamicImage) -> Option<Likeness> {
+        use image::imageops::FilterType;
+        let grey = picture
+            .resize_exact(32, 32, FilterType::Triangle)
+            .to_luma8();
+        let mut detail = 0.0;
+        for y in 1..31 {
+            for x in 1..31 {
+                let at = |dx: i32, dy: i32| {
+                    f64::from(grey.get_pixel((x + dx) as u32, (y + dy) as u32)[0])
+                };
+                detail += (4.0 * at(0, 0) - at(-1, 0) - at(1, 0) - at(0, -1) - at(0, 1)).abs();
+            }
+        }
+        if detail / (30.0 * 30.0) < LEAST_DETAIL {
+            return None;
+        }
+        let small = picture.resize_exact(9, 8, FilterType::Triangle).to_luma8();
+        let mut shape = 0u64;
+        for y in 0..8 {
+            for x in 0..8 {
+                shape <<= 1;
+                if small.get_pixel(x, y)[0] > small.get_pixel(x + 1, y)[0] {
+                    shape |= 1;
+                }
+            }
+        }
+        let one = picture.resize_exact(1, 1, FilterType::Triangle).to_rgb8();
+        Some(Likeness {
+            shape,
+            colour: one.get_pixel(0, 0).0,
+        })
+    }
+
+    /// Near enough to read as the same picture twice.
+    fn alike(&self, other: &Likeness) -> bool {
+        let colour: u32 = self
+            .colour
+            .iter()
+            .zip(other.colour)
+            .map(|(a, b)| u32::from(a.abs_diff(b)))
+            .sum();
+        (self.shape ^ other.shape).count_ones() <= MOST_SHAPE_BITS && colour <= MOST_COLOUR
+    }
+}
+
+/// The least mean edge, on a 32x32 grey copy, of a picture worth
+/// comparing: a photograph has many times this, a colour card none.
+const LEAST_DETAIL: f64 = 3.0;
+/// Of the 64 bits of shape, the most two alike pictures differ in.
+const MOST_SHAPE_BITS: u32 = 10;
+/// The most two alike pictures' colours differ by, summed over red, green
+/// and blue.
+const MOST_COLOUR: u32 = 60;
 
 /// The window's session as the cut lays itself down through it: every
 /// command folded into one undo step.
@@ -1723,6 +2002,9 @@ fn amount(text: &str) -> Option<f64> {
         .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
+/// The music row that is music made for the video by MusicGen.
+const AI_MUSIC: usize = 1;
+
 /// What each thing costs: the prices typed in the sheet, the defaults'
 /// where none is.
 fn prices(studio: &Studio) -> Prices {
@@ -1746,5 +2028,51 @@ fn dollars(value: f64) -> String {
         format!("{value:.3}")
     } else {
         format!("{value:.2}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{DynamicImage, Rgb, RgbImage};
+
+    /// A sun over hills on a striped ground, `sun_x` across: detail
+    /// enough to compare, and a shape that moves with the sun.
+    fn scene(sun_x: f64, light: u8) -> DynamicImage {
+        DynamicImage::ImageRgb8(RgbImage::from_fn(320, 180, |x, y| {
+            let (fx, fy) = (f64::from(x), f64::from(y));
+            let sun = ((fx - sun_x).powi(2) + (fy - 50.0).powi(2)).sqrt() < 30.0;
+            let hill = fy > 120.0 + 20.0 * (fx / 40.0).sin();
+            let stripe = if (x / 6 + y / 6) % 2 == 0 { 25 } else { 0 };
+            match (sun, hill) {
+                (true, _) => Rgb([250, 220, 120]),
+                (_, true) => Rgb([40, 110 + stripe, 50]),
+                _ => Rgb([90 + stripe, 140, 200].map(|c: u8| c.saturating_add(light))),
+            }
+        }))
+    }
+
+    #[test]
+    fn a_colour_card_is_not_compared() {
+        let card = DynamicImage::ImageRgb8(RgbImage::from_fn(320, 180, |x, y| {
+            Rgb([(x / 2) as u8, (y / 2) as u8, 120])
+        }));
+        assert_eq!(Likeness::of(&card), None);
+    }
+
+    #[test]
+    fn the_same_picture_a_little_lighter_reads_as_alike() {
+        let a = Likeness::of(&scene(80.0, 0)).unwrap();
+        let b = Likeness::of(&scene(84.0, 12)).unwrap();
+        assert!(a.alike(&b));
+    }
+
+    #[test]
+    fn another_framing_does_not() {
+        let a = Likeness::of(&scene(80.0, 0)).unwrap();
+        let b = Likeness::of(&scene(240.0, 0)).unwrap();
+        assert!(!a.alike(&b));
+        let flipped = Likeness::of(&scene(80.0, 0).fliph()).unwrap();
+        assert!(!a.alike(&flipped));
     }
 }

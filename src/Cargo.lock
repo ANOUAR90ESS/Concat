@@ -1240,6 +1240,7 @@ dependencies = [
 name = "concat-generate"
 version = "0.2.8"
 dependencies = [
+ "base64 0.22.1",
  "concat-host",
  "concat-project",
  "log",

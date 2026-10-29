@@ -94,6 +94,39 @@ export struct GenerateSheetData {
     spent: string,
     /// Why the last run failed, when it did.
     message: string,
+    /// The writer is writing what goes up with the video on YouTube.
+    publishing: bool,
+    /// It has been written: the title, the description with the chapters'
+    /// times, and the tags, comma-separated.
+    has-publishing: bool,
+    publish-title: string,
+    publish-description: string,
+    publish-tags: string,
+}
+
+// One text to put on YouTube: what it is, a copy button, and the text.
+component PublishLine inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 4px;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            color: Theme.fg-muted;
+            font-size: Theme.fs-sm;
+            vertical-alignment: center;
+        }
+        CopyChip { text: root.value; }
+    }
+    Text {
+        text: root.value;
+        color: Theme.fg;
+        font-size: Theme.fs-sm;
+        wrap: word-wrap;
+    }
 }
 
 // One step of a run, as the checklist shows it: waiting, under way (a dot
@@ -180,6 +213,7 @@ export component GenerateDialog inherits Modal {
     callback edit-script();
     /// Cut a Short: a minute of the video, 9:16.
     callback make-short();
+    callback publish();
     callback cancel();
 
     open: root.data.open;
@@ -577,6 +611,40 @@ export component GenerateDialog inherits Modal {
                                     checked: root.data.titles;
                                     toggled(on) => { root.toggled(1, on); }
                                 }
+                            }
+                        }
+                    }
+
+                    DialogSection {
+                        title: I18n.t("generate.publishing");
+                        hint: I18n.t("generate.publishingHint");
+
+                        if root.data.has-publishing: PublishLine {
+                            label: I18n.t("generate.publishTitle");
+                            value: root.data.publish-title;
+                        }
+                        if root.data.has-publishing: PublishLine {
+                            label: I18n.t("generate.publishDescription");
+                            value: root.data.publish-description;
+                        }
+                        if root.data.has-publishing: PublishLine {
+                            label: I18n.t("generate.publishTags");
+                            value: root.data.publish-tags;
+                        }
+
+                        HorizontalLayout {
+                            alignment: start;
+
+                            Button {
+                                label: root.data.publishing
+                                    ? I18n.t("generate.publishBusy")
+                                    : root.data.has-publishing
+                                    ? I18n.t("generate.publishAgain")
+                                    : I18n.t("generate.publish");
+                                glyph: Glyph.tag;
+                                enabled: root.data.has-script && !root.data.publishing
+                                    && !root.data.running;
+                                clicked => { root.publish(); }
                             }
                         }
                     }

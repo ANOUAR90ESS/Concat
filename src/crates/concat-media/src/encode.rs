@@ -589,6 +589,24 @@ fn implied_kbps(
     (mbps * 1000.0).round().clamp(500.0, 200_000.0) as u32
 }
 
+/// How a phone's encoder is steered: its own VBR only where the export
+/// asks for an average bitrate by name, and CBR otherwise - for the
+/// quality setting, VBR, as well as for CBR. A phone's VBR runs far under
+/// its target wherever little moves: a Long video of stills under a slow
+/// zoom, asked for 9 Mbit/s at 1080p, came out at 0.83 and smeared every
+/// detail.
+fn phone_mode(average: bool) -> &'static str {
+    if average { "vbr" } else { "cbr" }
+}
+
+/// The bitrate a phone is held to for the quality setting: three fifths
+/// of what the CRF implies. Held to, not let fall under, so less is
+/// needed than the CRF's ceiling: 5.5 Mbit/s at 1080p30, about 400 MB for
+/// ten minutes.
+fn phone_kbps(implied: u32) -> u32 {
+    (implied / 5 * 3).max(500)
+}
+
 /// One encoder's context, set up and opened for the file: the frame's
 /// size, rate and tags, and the settings `encoder_name` is steered by.
 /// Returns the encoder and the pixel format it takes its pictures in.
@@ -669,6 +687,14 @@ fn open_video(
     if family.steered_by_bitrate() {
         let kbps = if cbr || average {
             options.bitrate_kbps
+        } else if family == Family::MediaCodec {
+            phone_kbps(implied_kbps(
+                options.codec,
+                options.crf,
+                width,
+                height,
+                rate,
+            ))
         } else {
             implied_kbps(options.codec, options.crf, width, height, rate)
         };
@@ -775,7 +801,7 @@ fn open_video(
         // A phone's chip. The NDK's MediaCodec, not the Java one: no
         // JavaVM is handed to FFmpeg, and the NDK needs none.
         _ if family == Family::MediaCodec => ffmpeg::dict! {
-            "bitrate_mode" => if cbr { "cbr" } else { "vbr" },
+            "bitrate_mode" => phone_mode(average),
         },
         // Windows' Media Foundation, whatever the machine has behind it.
         _ if family == Family::MediaFoundation => ffmpeg::dict! {
@@ -2095,6 +2121,24 @@ mod tests {
             assert_eq!(Family::of(gpu).pixel_format(false), Pixel::NV12, "{gpu}");
             assert!(!Family::of(gpu).steered_by_bitrate(), "{gpu}");
         }
+    }
+
+    /// A phone's quality setting is held to a constant rate - its VBR ran
+    /// at a tenth of the target on stills - three fifths of the CRF's.
+    #[test]
+    fn a_phone_holds_the_quality_setting_to_a_constant_rate() {
+        assert_eq!(phone_mode(false), "cbr");
+        assert_eq!(phone_mode(true), "vbr", "an average asked for by name");
+        let implied = implied_kbps(
+            VideoCodec::H264,
+            20,
+            1920,
+            1080,
+            ffmpeg::Rational::new(30, 1),
+        );
+        assert_eq!(implied, 9190);
+        assert_eq!(phone_kbps(implied), 5514);
+        assert_eq!(phone_kbps(100), 500);
     }
 
     /// Every codec has an encoder listed for every platform but AV1 on

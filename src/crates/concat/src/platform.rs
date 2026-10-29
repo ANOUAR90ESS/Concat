@@ -678,14 +678,14 @@ pub fn install_export_publisher(publisher: ExportPublisher) {
 }
 
 /// What a phone does to keep a long job going while the person is away
-/// from the app: `Some(words)` starts it - or says what it is doing now -
-/// and `None` lets go. On Android a foreground service, shown as a
-/// notification, which keeps the process from being frozen in the
-/// background; where the APK has none, the screen kept on instead.
-/// Installed by the phone's own crate before the window runs; see
-/// [`install_keep_alive`].
+/// from the app: `Some((words, percent))` starts it - or says what it is
+/// doing now, and how far, `-1` for not known - and `None` lets go. On
+/// Android a foreground service, shown as a notification with its
+/// progress, which keeps the process from being frozen in the background;
+/// where the APK has none, the screen kept on instead. Installed by the
+/// phone's own crate before the window runs; see [`install_keep_alive`].
 #[cfg(any(target_os = "android", target_os = "ios"))]
-pub type KeepAlive = Box<dyn Fn(Option<String>) + Send + Sync>;
+pub type KeepAlive = Box<dyn Fn(Option<(String, i32)>) + Send + Sync>;
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
 static KEEP_ALIVE: std::sync::OnceLock<KeepAlive> = std::sync::OnceLock::new();
@@ -696,16 +696,42 @@ pub fn install_keep_alive(keep: KeepAlive) {
     let _ = KEEP_ALIVE.set(keep);
 }
 
+/// The jobs keeping the app going, by who holds them, the latest last:
+/// a Long video run and an export can overlap, and the app is let go
+/// only when both are done.
+static HELD: std::sync::Mutex<Vec<(&'static str, String, i32)>> = std::sync::Mutex::new(Vec::new());
+
 /// Keeps a long job going while the app is in the background - `Some`
 /// with what it is doing - or lets go, with `None`. Nothing on a desktop,
 /// whose processes are not frozen when their window is behind another.
 pub fn keep_alive(doing: Option<String>) {
+    hold("run", doing, -1);
+}
+
+/// [`keep_alive`] for one of several jobs, `owner`, with how far it is in
+/// percent (`-1` for not known), which the notification shows as a bar.
+/// Callable from any thread - an export's worker says how far it is
+/// while the window, behind another app, may not be drawing - and the
+/// phone is told only when what it shows changes.
+pub fn hold(owner: &'static str, doing: Option<String>, percent: i32) {
+    let Ok(mut held) = HELD.lock() else {
+        return;
+    };
+    let before = held.last().cloned();
+    held.retain(|(who, _, _)| *who != owner);
+    if let Some(doing) = doing {
+        held.push((owner, doing, percent.clamp(-1, 100)));
+    }
+    let now = held.last().cloned();
+    if now == before {
+        return;
+    }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     if let Some(keep) = KEEP_ALIVE.get() {
-        keep(doing);
+        keep(now.map(|(_, doing, percent)| (doing, percent)));
     }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let _ = doing;
+    let _ = now;
 }
 
 /// Where a finished export ends up on this device when that is not the

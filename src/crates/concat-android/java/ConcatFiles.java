@@ -297,13 +297,14 @@ public class ConcatFiles extends Fragment {
 
     /**
      * Keeps a run going while the app is in the background - the words
-     * say what it is doing - or, with no words, lets go. Through
+     * say what it is doing, and `progress` how far in percent, or -1 when
+     * that is not known - or, with no words, lets go. Through
      * {@link RunService} where the APK declares it; where it does not, or
      * Android will not start it, the screen is kept on instead, which at
      * least keeps the run going while the app is in front. True when the
      * service took it.
      */
-    public static boolean keepRunning(final Activity activity, String doing) {
+    public static boolean keepRunning(final Activity activity, String doing, int progress) {
         Intent intent = new Intent().setClassName(activity.getPackageName(), RunService.NAME);
         if (doing == null || doing.isEmpty()) {
             try {
@@ -316,6 +317,7 @@ public class ConcatFiles extends Fragment {
         }
         askToNotify(activity);
         intent.putExtra(RunService.DOING, doing);
+        intent.putExtra(RunService.PROGRESS, progress);
         try {
             if (activity.startForegroundService(intent) != null) {
                 return true;

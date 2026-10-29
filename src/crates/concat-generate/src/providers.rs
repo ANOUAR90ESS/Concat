@@ -12,8 +12,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use base64::Engine;
 use serde_json::{Value, json};
 
+use crate::plan::Word;
 use crate::writer::message_of;
 
 /// What a shot file may be.
@@ -55,6 +57,10 @@ pub const DEFAULT_IMAGE_MODEL: &str = "black-forest-labs/flux-schnell";
 /// The video model offered when none is named: image-to-video, fast and at
 /// the cheap end, so a clip moves a still the image model made.
 pub const DEFAULT_VIDEO_MODEL: &str = "wan-video/wan-2.2-i2v-fast";
+
+/// The music model: MusicGen, which takes words and a length and plays
+/// them, without a voice.
+pub const DEFAULT_MUSIC_MODEL: &str = "meta/musicgen";
 
 /// How many times a call to a service is made before it is given up on:
 /// a long video is hundreds of calls, and one busy minute on the far side
@@ -125,27 +131,44 @@ pub fn sniffed_extension(path: &Path) -> Option<&'static str> {
     } else if head.len() == 12 && head.starts_with(b"RIFF") && &head[8..] == b"WEBP" {
         Some("webp")
     } else if head.len() >= 8 && &head[4..8] == b"ftyp" {
-        Some(if head.get(8..10) == Some(b"qt") {
-            "mov"
-        } else {
-            "mp4"
+        Some(match head.get(8..12) {
+            Some(b"M4A ") => "m4a",
+            Some(brand) if brand.starts_with(b"qt") => "mov",
+            _ => "mp4",
         })
     } else if head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         Some("webm")
+    } else if head.starts_with(b"ID3") || head.starts_with(&[0xFF, 0xFB]) {
+        Some("mp3")
+    } else if head.len() == 12 && head.starts_with(b"RIFF") && &head[8..] == b"WAVE" {
+        Some("wav")
+    } else if head.starts_with(b"fLaC") {
+        Some("flac")
+    } else if head.starts_with(b"OggS") {
+        Some("ogg")
     } else {
         None
     }
 }
 
+/// Which of a picture, a recording and a clip an extension names: what
+/// [`true_name`] holds a file's bytes to.
+fn kind_of(extension: &str) -> u8 {
+    match extension {
+        "png" | "jpg" | "jpeg" | "webp" => 0,
+        "mp3" | "wav" | "m4a" | "flac" | "ogg" => 1,
+        _ => 2,
+    }
+}
+
 /// `path` under the extension its bytes call for, renamed there when its
-/// own says the other kind - a picture named as a clip, or a clip as a
-/// picture - and where it now is. A file of the right kind keeps its name.
+/// own says another kind - a picture named as a clip, a recording as a
+/// clip - and where it now is. A file of the right kind keeps its name.
 ///
 /// A service's address need not end in a file type, and one that did not
 /// was saved as `.mp4`: a picture then went on the timeline as a clip one
 /// frame long, shown only in the cross-fade into it and black after.
 pub fn true_name(path: &Path) -> PathBuf {
-    const STILLS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
     let Some(sniffed) = sniffed_extension(path) else {
         return path.to_owned();
     };
@@ -154,7 +177,7 @@ pub fn true_name(path: &Path) -> PathBuf {
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if STILLS.contains(&own.as_str()) == STILLS.contains(&sniffed) {
+    if kind_of(&own) == kind_of(sniffed) {
         return path.to_owned();
     }
     let renamed = path.with_extension(sniffed);
@@ -564,16 +587,7 @@ fn replicate(
     let mut prediction: Value = match resumed {
         Some(prediction) => prediction,
         None => {
-            let prediction: Value = agent
-                .post(&format!(
-                    "https://api.replicate.com/v1/models/{}/predictions",
-                    model.trim()
-                ))
-                .set("authorization", &auth)
-                .send_json(json!({ "input": input }))
-                .map_err(|error| refused("Replicate", error))?
-                .into_json()
-                .map_err(|error| error.to_string())?;
+            let prediction = start_prediction(&agent, &auth, model.trim(), &input)?;
             if let Some(url) = prediction["urls"]["get"].as_str() {
                 let _ = std::fs::write(&pending, url);
             }
@@ -628,6 +642,64 @@ fn replicate(
     Ok(true_name(&out))
 }
 
+/// Asks `model` for one prediction. An official model is run by its name;
+/// any other - MusicGen is one - only by a version, so where the name is
+/// refused the model's latest version is looked up and run.
+fn start_prediction(
+    agent: &ureq::Agent,
+    auth: &str,
+    model: &str,
+    input: &Value,
+) -> Result<Value, String> {
+    let by_name = agent
+        .post(&format!(
+            "https://api.replicate.com/v1/models/{model}/predictions"
+        ))
+        .set("authorization", auth)
+        .send_json(json!({ "input": input }));
+    let response = match by_name {
+        Err(ureq::Error::Status(404, _)) => {
+            let described: Value = agent
+                .get(&format!("https://api.replicate.com/v1/models/{model}"))
+                .set("authorization", auth)
+                .call()
+                .map_err(|error| refused("Replicate", error))?
+                .into_json()
+                .map_err(|error| error.to_string())?;
+            let version = described["latest_version"]["id"]
+                .as_str()
+                .ok_or_else(|| format!("Replicate has no version of {model} to run"))?;
+            agent
+                .post("https://api.replicate.com/v1/predictions")
+                .set("authorization", auth)
+                .send_json(json!({ "version": version, "input": input }))
+                .map_err(|error| refused("Replicate", error))?
+        }
+        other => other.map_err(|error| refused("Replicate", error))?,
+    };
+    response.into_json().map_err(|error| error.to_string())
+}
+
+/// A music bed for a whole video, `seconds` long, made by MusicGen from
+/// `prompt` and saved as `dir`/`stem`.<its type>. The cut loops it under
+/// the video, fading out at the end.
+pub fn replicate_music(
+    token: &str,
+    prompt: &str,
+    seconds: u32,
+    dir: &Path,
+    stem: &str,
+) -> Result<PathBuf, String> {
+    let input = json!({
+        "prompt": prompt,
+        "duration": seconds,
+        "model_version": "stereo-large",
+        "output_format": "mp3",
+        "normalization_strategy": "loudness",
+    });
+    replicate(token, DEFAULT_MUSIC_MODEL, input, dir, stem)
+}
+
 /// Where the address of a shot asked for but not yet saved is kept, so a
 /// run that ends before it comes back follows it instead of paying again.
 pub fn pending(dir: &Path, stem: &str) -> PathBuf {
@@ -660,21 +732,89 @@ fn fill(value: &Value, prompt: &str, seconds: f64, aspect: &str) -> Value {
     }
 }
 
-/// The narration for one scene from ElevenLabs, as an MP3.
-pub fn elevenlabs(key: &str, voice_id: &str, text: &str, out: &Path) -> Result<(), String> {
+/// The narration for one scene from ElevenLabs, as an MP3, and when each
+/// of its words is said. `before` and `after` are the scenes' narration
+/// either side, which ElevenLabs reads the line in the light of - so one
+/// paragraph runs on from the last in the same voice, rather than each
+/// starting afresh - and does not read aloud.
+pub fn elevenlabs(
+    key: &str,
+    voice_id: &str,
+    text: &str,
+    before: &str,
+    after: &str,
+    out: &Path,
+) -> Result<Vec<Word>, String> {
     if key.trim().is_empty() || voice_id.trim().is_empty() {
         return Err("ElevenLabs needs an API key and a voice id".to_owned());
     }
-    let response = agent()
+    let mut body = json!({"text": text, "model_id": "eleven_multilingual_v2"});
+    if !before.trim().is_empty() {
+        body["previous_text"] = json!(before.trim());
+    }
+    if !after.trim().is_empty() {
+        body["next_text"] = json!(after.trim());
+    }
+    let answer: Value = agent()
         .post(&format!(
-            "https://api.elevenlabs.io/v1/text-to-speech/{}",
+            "https://api.elevenlabs.io/v1/text-to-speech/{}/with-timestamps?output_format=mp3_44100_128",
             voice_id.trim()
         ))
         .set("xi-api-key", key.trim())
-        .set("accept", "audio/mpeg")
-        .send_json(json!({"text": text, "model_id": "eleven_multilingual_v2"}))
-        .map_err(|error| refused("ElevenLabs", error))?;
-    save(response, out)
+        .send_json(body)
+        .map_err(|error| refused("ElevenLabs", error))?
+        .into_json()
+        .map_err(|error| format!("ElevenLabs: {error}"))?;
+    let audio = base64::engine::general_purpose::STANDARD
+        .decode(answer["audio_base64"].as_str().unwrap_or_default())
+        .map_err(|error| format!("ElevenLabs: the audio: {error}"))?;
+    if audio.is_empty() {
+        return Err("ElevenLabs sent no audio".to_owned());
+    }
+    let partial = out.with_extension("partial");
+    std::fs::write(&partial, audio).map_err(|error| format!("{}: {error}", partial.display()))?;
+    std::fs::rename(&partial, out).map_err(|error| format!("{}: {error}", out.display()))?;
+    Ok(words_of(&answer["alignment"]))
+}
+
+/// The words of an ElevenLabs alignment - each character with when it
+/// starts and ends - with when each is said: a word runs from its first
+/// character's start to its last's end, and ends at a space.
+pub fn words_of(alignment: &Value) -> Vec<Word> {
+    let list = |name: &str| alignment[name].as_array().cloned().unwrap_or_default();
+    let (characters, starts, ends) = (
+        list("characters"),
+        list("character_start_times_seconds"),
+        list("character_end_times_seconds"),
+    );
+    let mut words = Vec::new();
+    let mut current: Option<Word> = None;
+    for ((character, start), end) in characters.iter().zip(&starts).zip(&ends) {
+        let (Some(character), Some(start), Some(end)) =
+            (character.as_str(), start.as_f64(), end.as_f64())
+        else {
+            continue;
+        };
+        if character.trim().is_empty() {
+            words.extend(current.take());
+            continue;
+        }
+        match current.as_mut() {
+            Some(word) => {
+                word.text.push_str(character);
+                word.end = end;
+            }
+            None => {
+                current = Some(Word {
+                    text: character.to_owned(),
+                    start,
+                    end,
+                })
+            }
+        }
+    }
+    words.extend(current);
+    words
 }
 
 fn fetch(agent: &ureq::Agent, url: &str, out: &Path) -> Result<(), String> {
@@ -816,6 +956,10 @@ mod tests {
         let jpeg = dir.join("c01s01_3.png");
         std::fs::write(&jpeg, [0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10]).unwrap();
         assert_eq!(true_name(&jpeg), jpeg);
+        // A recording saved as a clip, as MusicGen's answer would be.
+        let music = dir.join("music.mp4");
+        std::fs::write(&music, b"ID3\x04\0\0\0\0\0\0").unwrap();
+        assert_eq!(true_name(&music), dir.join("music.mp3"));
         // Nothing known: left be.
         let other = dir.join("c01s01_4.mp4");
         std::fs::write(&other, b"hello").unwrap();
@@ -836,5 +980,30 @@ mod tests {
         assert_eq!(existing(&dir, "c01s01_1", &SHOT_EXTENSIONS), Some(out));
         assert_eq!(existing(&dir, "c01s01_2", &SHOT_EXTENSIONS), None);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn elevenlabs_letters_are_gathered_into_words() {
+        let alignment = json!({
+            "characters": ["ك", "ا", "ن", " ", "ا", "ل", "ع", "ا", "ل", "م", "."],
+            "character_start_times_seconds": [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3],
+            "character_end_times_seconds": [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.35]
+        });
+        let words = words_of(&alignment);
+        assert_eq!(
+            words,
+            [
+                Word {
+                    text: "كان".to_owned(),
+                    start: 0.3,
+                    end: 0.6
+                },
+                Word {
+                    text: "العالم.".to_owned(),
+                    start: 0.7,
+                    end: 1.35
+                }
+            ]
+        );
     }
 }

@@ -392,21 +392,23 @@ mod keep_alive {
     pub fn install(app: &AndroidApp) {
         let app = app.clone();
         concat::install_keep_alive(Box::new(move |doing| {
-            if let Err(error) = keep(&app, doing.as_deref().unwrap_or_default()) {
+            let (doing, percent) = doing.unwrap_or_default();
+            if let Err(error) = keep(&app, &doing, percent) {
                 log::warn!("could not keep the run going in the background: {error}");
             }
         }));
     }
 
-    /// `ConcatFiles.keepRunning`: with words, start or update; empty, stop.
-    fn keep(app: &AndroidApp, doing: &str) -> jni::errors::Result<()> {
+    /// `ConcatFiles.keepRunning`: with words, start or update - with how
+    /// far, in percent, or -1 - and empty, stop.
+    fn keep(app: &AndroidApp, doing: &str, percent: i32) -> jni::errors::Result<()> {
         let held = super::java::with_class(app, |env, activity, class| {
             let doing = env.new_string(doing)?;
             env.call_static_method(
                 class,
                 jni_str!("keepRunning"),
-                jni_sig!("(Landroid/app/Activity;Ljava/lang/String;)Z"),
-                &[activity.into(), (&doing).into()],
+                jni_sig!("(Landroid/app/Activity;Ljava/lang/String;I)Z"),
+                &[activity.into(), (&doing).into(), percent.into()],
             )?
             .z()
         })?;

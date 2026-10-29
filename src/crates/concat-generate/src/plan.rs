@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use concat_project::Command;
-use concat_project::commands::{ClipPatch, NewMedia, TrimEdge};
+use concat_project::commands::{ClipMove, ClipPatch, NewMedia, TrimEdge};
 use concat_project::model::{KeyEase, KeyProperty, TextStyle, Transition, VideoSettings};
 
 use crate::storyboard::Storyboard;
@@ -33,7 +33,8 @@ pub struct Options {
     pub transition: Option<String>,
     /// Its length in seconds.
     pub transition_seconds: f64,
-    /// Silence after each scene's narration, so a cut never clips a word.
+    /// The pause after each scene's narration before the next one's:
+    /// a breath between paragraphs, not a gap.
     pub scene_pad: f64,
     /// The shortest a scene may be.
     pub min_scene: f64,
@@ -63,7 +64,7 @@ impl Default for Options {
         Options {
             transition: Some("cross-fade".to_owned()),
             transition_seconds: 0.5,
-            scene_pad: 0.6,
+            scene_pad: 0.35,
             min_scene: 3.0,
             captions: true,
             caption_words: 7,
@@ -131,8 +132,22 @@ pub struct Placement {
     pub file: Option<String>,
     /// The file's own length; None for a still.
     pub source: Option<f64>,
+    /// Where in the file it starts: a narration's silence before its first
+    /// word is left out.
+    pub from: f64,
     /// The words, for a title or a caption.
     pub text: Option<String>,
+}
+
+/// A word of a narration, and when it is said in its file.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Word {
+    /// As written, with its punctuation.
+    pub text: String,
+    /// Seconds into the file.
+    pub start: f64,
+    /// Seconds into the file.
+    pub end: f64,
 }
 
 /// One scene's files, with their lengths: what generation leaves behind.
@@ -140,6 +155,12 @@ pub struct Placement {
 pub struct SceneFiles {
     /// The narration and its length.
     pub voice: Option<(String, f64)>,
+    /// When each of the narration's words is said, when the voice says:
+    /// ElevenLabs does. Empty otherwise.
+    pub words: Vec<Word>,
+    /// Where in the narration's file there is sound, first to last, in
+    /// seconds: read from the file, for a voice whose words are not timed.
+    pub sounding: Option<(f64, f64)>,
     /// The shots in order, each with its length (None for a still).
     pub shots: Vec<(String, Option<f64>)>,
 }
@@ -169,6 +190,63 @@ fn split_evenly(words: &[&str], most: usize) -> Vec<String> {
     words.chunks(per).map(|chunk| chunk.join(" ")).collect()
 }
 
+/// How long before its first word a narration is started, so the word's
+/// first sound is not lost.
+const LEAD_IN: f64 = 0.05;
+/// How long after its last word a narration runs on: the word's fall.
+const TAIL: f64 = 0.15;
+
+/// Each card's start and length over `over` seconds, shared out by its
+/// length in letters: for a narration whose words are not timed.
+fn shared(cards: &[String], over: f64) -> Vec<(f64, f64)> {
+    let chars: usize = cards.iter().map(|card| card.chars().count()).sum();
+    let mut at = 0.0;
+    cards
+        .iter()
+        .map(|card| {
+            let span = over * card.chars().count() as f64 / chars.max(1) as f64;
+            let this = (at, span);
+            at += span;
+            this
+        })
+        .collect()
+}
+
+/// Each card's start and length from when its words are said: a card
+/// comes up as its first word is said and stays until the next one's
+/// does, the last until the narration ends at `over`. `from` is where in
+/// the file the narration starts. None when the words do not match the
+/// cards one for one - a script edited after its narration was made.
+fn timed(cards: &[String], words: &[Word], from: f64, over: f64) -> Option<Vec<(f64, f64)>> {
+    let counts: Vec<usize> = cards
+        .iter()
+        .map(|card| card.split_whitespace().count())
+        .collect();
+    if counts.iter().sum::<usize>() != words.len() || words.is_empty() {
+        return None;
+    }
+    let mut starts = Vec::with_capacity(cards.len());
+    let mut n = 0;
+    for count in &counts {
+        let at = if n == 0 {
+            0.0
+        } else {
+            (words[n].start - from).clamp(0.0, over)
+        };
+        starts.push(at);
+        n += count;
+    }
+    let mut spans = Vec::with_capacity(cards.len());
+    for (i, at) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).copied().unwrap_or(over);
+        if end <= *at {
+            return None;
+        }
+        spans.push((*at, end - at));
+    }
+    Some(spans)
+}
+
 /// Every placement, in timeline order. `files` maps a scene id to what was
 /// made for it; `music` is a bed and its length.
 pub fn plan(
@@ -184,11 +262,25 @@ pub fn plan(
         if made.shots.is_empty() {
             return Err(format!("scene {} has no shots", scene.id));
         }
-        let spoken = made
+        let file_length = made
             .voice
             .as_ref()
             .map(|(_, seconds)| *seconds)
             .filter(|s| *s > 0.0);
+        // The silence a voice file opens and closes with is left out: the
+        // pause between paragraphs is the pad alone, the same every time.
+        let heard = match (made.words.first(), made.words.last()) {
+            (Some(first), Some(last)) => Some((first.start, last.end)),
+            _ => made.sounding,
+        };
+        let (from, spoken) = match (file_length, heard) {
+            (Some(file), Some((first, last))) if last > first => {
+                let from = (first - LEAD_IN).clamp(0.0, file);
+                let to = (last + TAIL).min(file);
+                (from, Some(to - from).filter(|s| *s > 0.0).or(Some(file)))
+            }
+            (file, _) => (0.0, file),
+        };
         let length = match spoken {
             Some(spoken) => (spoken + options.scene_pad).max(options.min_scene),
             None => scene.seconds.max(options.min_scene),
@@ -220,6 +312,7 @@ pub fn plan(
                 length: slot,
                 file: Some(path.clone()),
                 source: *source,
+                from: 0.0,
                 text: None,
             });
             at += slot;
@@ -231,7 +324,8 @@ pub fn plan(
                 start: t,
                 length: spoken,
                 file: Some(path.clone()),
-                source: Some(spoken),
+                source: file_length,
+                from,
                 text: None,
             });
         }
@@ -243,20 +337,21 @@ pub fn plan(
                 &scene.narration,
                 options.caption_look.words(options.caption_words),
             );
-            let chars: usize = cards.iter().map(|card| card.chars().count()).sum();
             let over = spoken.unwrap_or(length);
-            let mut at = t;
-            for card in cards {
-                let span = over * card.chars().count() as f64 / chars.max(1) as f64;
+            let spans = match spoken.and_then(|_| timed(&cards, &made.words, from, over)) {
+                Some(spans) => spans,
+                None => shared(&cards, over),
+            };
+            for (card, (at, span)) in cards.into_iter().zip(spans) {
                 out.push(Placement {
                     kind: Kind::Caption,
-                    start: at,
+                    start: t + at,
                     length: span,
                     file: None,
                     source: None,
+                    from: 0.0,
                     text: Some(card),
                 });
-                at += span;
             }
         }
         if options.titles
@@ -271,6 +366,7 @@ pub fn plan(
                 length: options.title_seconds.min(length),
                 file: None,
                 source: None,
+                from: 0.0,
                 text: Some(text.trim().to_owned()),
             });
         }
@@ -286,6 +382,7 @@ pub fn plan(
                 length: source.min(t - at),
                 file: Some(path.to_owned()),
                 source: Some(source),
+                from: 0.0,
                 text: None,
             });
             at += source;
@@ -311,6 +408,110 @@ pub trait Editing {
     /// The bin item already holding `path`, if one does.
     fn media_of(&self, path: &str) -> Option<String>;
 }
+
+/// When each chapter starts in the cut: its first scene's first shot.
+/// The plan lays every scene's shots down in order, one placement a shot.
+pub fn chapter_starts(board: &Storyboard, placements: &[Placement]) -> Vec<(String, f64)> {
+    let mut shots = placements.iter().filter(|p| p.kind == Kind::Shot);
+    let mut starts = Vec::new();
+    for chapter in &board.chapters {
+        let mut first = None;
+        for scene in &chapter.scenes {
+            for _ in &scene.shots {
+                if let Some(shot) = shots.next() {
+                    first.get_or_insert(shot.start);
+                }
+            }
+        }
+        if let Some(at) = first {
+            starts.push((chapter.title.clone(), at));
+        }
+    }
+    starts
+}
+
+/// The thumbnail, on a timeline of its own beside the video's, 1280x720 as
+/// YouTube takes one: `picture` filling the frame and `words` large over
+/// it, yellow outlined in black, to move and change like any title; Save
+/// Video Frame As makes it a picture. Returns the timeline's id.
+pub fn thumbnail(
+    editor: &mut dyn Editing,
+    name: &str,
+    picture: &NewMedia,
+    words: &str,
+) -> Result<String, String> {
+    let timeline = editor
+        .apply(Command::AddTimeline)
+        .ok_or("the thumbnail's timeline could not be made")?;
+    editor.apply(Command::RenameTimeline {
+        timeline_id: timeline.clone(),
+        name: name.to_owned(),
+    });
+    let frame = (1280, 720);
+    editor.apply(Command::SetTimelineVideo {
+        timeline_id: timeline.clone(),
+        video: VideoSettings {
+            width: frame.0,
+            height: frame.1,
+            rate_num: 30,
+            rate_den: 1,
+            ..VideoSettings::default()
+        },
+    });
+    let lanes = editor.lanes();
+    let lane = lanes
+        .first()
+        .cloned()
+        .ok_or("the thumbnail's timeline has no lane")?;
+    let media = editor
+        .apply(Command::AddMedia {
+            item: picture.clone(),
+        })
+        .or_else(|| editor.media_of(&picture.path))
+        .ok_or_else(|| format!("{} could not be imported", picture.path))?;
+    let clip = editor
+        .apply(Command::AddClip {
+            media_id: media.clone(),
+            track_id: lane.clone(),
+            start: 0.0,
+            ripple: false,
+        })
+        .ok_or("the thumbnail's picture could not be placed")?;
+    let place = Placement {
+        kind: Kind::Shot,
+        start: 0.0,
+        length: THUMBNAIL_SECONDS,
+        file: Some(picture.path.clone()),
+        source: None,
+        from: 0.0,
+        text: None,
+    };
+    fit(editor, &clip, &media, &lane, &place, cover(picture, frame));
+    if !words.trim().is_empty() {
+        editor.apply(Command::AddTextClip {
+            track_id: lanes.get(3).cloned(),
+            above: false,
+            start: 0.0,
+            style: Some(TextStyle {
+                content: words.trim().to_owned(),
+                font_size: 0.14,
+                font_weight: 900.0,
+                color: "#FFD400".to_owned(),
+                stroke_width: 0.012,
+                stroke_color: "#000000".to_owned(),
+                shadow: true,
+                max_width: 0.6,
+                ..TextStyle::default()
+            }),
+            duration: Some(THUMBNAIL_SECONDS),
+            offset_y: Some(0.18),
+        });
+    }
+    Ok(timeline)
+}
+
+/// How long the thumbnail's timeline runs: long enough to see and work on.
+const THUMBNAIL_SECONDS: f64 = 5.0;
 
 /// Lays the plan down on a new timeline named after the video, framed for
 /// its aspect: every file imported (`media` maps a path to its probe), then
@@ -543,6 +744,24 @@ fn fit(editor: &mut dyn Editing, clip: &str, media: &str, lane: &str, p: &Placem
     let source = p.source.filter(|s| s.is_finite() && *s > 0.1);
     let still = source.is_none();
     let mut natural = source.unwrap_or(5.0);
+    // A narration starting into its file: the head trimmed off, which
+    // moves the clip on by as much, and the clip moved back to its place.
+    if p.from > 1e-3 && !still && p.from < natural {
+        editor.apply(Command::TrimClip {
+            clip_id: clip.to_owned(),
+            edge: TrimEdge::Start,
+            delta: p.from,
+            ripple: false,
+        });
+        editor.apply(Command::MoveClips {
+            moves: vec![ClipMove {
+                clip_id: clip.to_owned(),
+                start: p.start,
+                track_id: lane.to_owned(),
+            }],
+        });
+        natural -= p.from;
+    }
     if p.kind == Kind::Shot && !still && natural < p.length {
         let speed = (natural / p.length).max(SLOWEST);
         editor.apply(Command::SetClipSpeed {
@@ -713,6 +932,7 @@ mod tests {
                 SceneFiles {
                     voice: Some(("/v1.wav".into(), 5.0)),
                     shots: vec![("/a.mp4".into(), Some(4.0)), ("/b.mp4".into(), Some(6.0))],
+                    ..SceneFiles::default()
                 },
             ),
             (
@@ -720,6 +940,7 @@ mod tests {
                 SceneFiles {
                     voice: None,
                     shots: vec![("/c.png".into(), None)],
+                    ..SceneFiles::default()
                 },
             ),
         ])
@@ -740,10 +961,10 @@ mod tests {
         .unwrap();
         let shots = of(&placements, Kind::Shot);
         // Scene one is its narration and the pad, shared 4:6.
-        assert!((shots[0].length - 5.6 * 0.4).abs() < 1e-9);
-        assert!((shots[1].start + shots[1].length - 5.6).abs() < 1e-9);
+        assert!((shots[0].length - 5.35 * 0.4).abs() < 1e-9);
+        assert!((shots[1].start + shots[1].length - 5.35).abs() < 1e-9);
         // Scene two has no narration: its seconds, floored.
-        assert!((shots[2].start - 5.6).abs() < 1e-9);
+        assert!((shots[2].start - 5.35).abs() < 1e-9);
         assert!((shots[2].length - 3.0).abs() < 1e-9);
         let captions = of(&placements, Kind::Caption);
         let words: Vec<_> = captions
@@ -758,7 +979,7 @@ mod tests {
             .map(|m| m.start)
             .collect();
         assert_eq!(music, [0.0, 4.0, 8.0]);
-        assert!((total_length(&placements) - 8.6).abs() < 1e-9);
+        assert!((total_length(&placements) - 8.35).abs() < 1e-9);
     }
 
     #[test]
@@ -950,14 +1171,14 @@ mod tests {
             assert!((clip.start - at).abs() < 1e-6, "{} at {at}", clip.start);
             at = clip.start + clip.duration;
         }
-        assert!((at - 8.6).abs() < 1e-6);
+        assert!((at - 8.35).abs() < 1e-6);
         assert!(pictures[0].transition_in.is_none());
         assert!(pictures[1].transition_in.is_some());
         // The music is ducked and fades out at the very end.
         let music = on(2);
         assert_eq!(music.len(), 3);
         assert!(music.iter().all(|m| (m.volume - 0.12).abs() < 1e-9));
-        assert!((music[2].start + music[2].duration - 8.6).abs() < 1e-6);
+        assert!((music[2].start + music[2].duration - 8.35).abs() < 1e-6);
         // A title on lane four, captions on a lane minted on top.
         assert_eq!(on(3).len(), 1);
         assert_eq!(on(4).len(), 2);
@@ -1075,6 +1296,7 @@ mod tests {
             SceneFiles {
                 voice: None,
                 shots: vec![("/w.png".to_owned(), None)],
+                ..SceneFiles::default()
             },
         );
         files.insert(
@@ -1082,6 +1304,7 @@ mod tests {
             SceneFiles {
                 voice: None,
                 shots: vec![("/w.png".to_owned(), None)],
+                ..SceneFiles::default()
             },
         );
         let options = Options {
@@ -1108,5 +1331,164 @@ mod tests {
             .collect();
         assert!((scale[0] - expected).abs() < 1e-6, "{scale:?}");
         assert!((first.scale - expected).abs() < 1e-6, "{}", first.scale);
+    }
+
+    /// The test board's first narration as ElevenLabs times it: half a
+    /// second of silence before it, and nearly a second after.
+    fn timed_words() -> Vec<Word> {
+        [
+            ("First", 0.5, 0.9),
+            ("sentence", 0.9, 1.5),
+            ("here.", 1.5, 2.0),
+            ("Second", 2.6, 3.1),
+            ("one.", 3.1, 4.1),
+        ]
+        .into_iter()
+        .map(|(text, start, end)| Word {
+            text: text.to_owned(),
+            start,
+            end,
+        })
+        .collect()
+    }
+
+    #[test]
+    fn timed_words_leave_out_the_voices_silence_and_time_the_captions() {
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().words = timed_words();
+        let placements = plan(&board(), &files, &Options::default(), None).unwrap();
+        let voice = of(&placements, Kind::Voice)[0];
+        // From just before the first word to just after the last.
+        assert!((voice.from - 0.45).abs() < 1e-9);
+        assert!((voice.length - (4.25 - 0.45)).abs() < 1e-9);
+        // The scene is the speech and the pause, no more.
+        let shots = of(&placements, Kind::Shot);
+        assert!((shots[2].start - (3.8 + 0.35)).abs() < 1e-9);
+        // A card comes up as its first word is said.
+        let captions = of(&placements, Kind::Caption);
+        assert_eq!(captions[0].start, 0.0);
+        assert!((captions[1].start - (2.6 - 0.45)).abs() < 1e-9);
+        assert!((captions[1].start + captions[1].length - 3.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn words_that_no_longer_match_the_script_fall_back_to_sharing() {
+        let mut files = files();
+        let mut words = timed_words();
+        words.pop();
+        files.get_mut("c01s01").unwrap().words = words;
+        let placements = plan(&board(), &files, &Options::default(), None).unwrap();
+        let captions = of(&placements, Kind::Caption);
+        let voice = of(&placements, Kind::Voice)[0];
+        // Shared by letters over the speech: 20 of 31 letters, then 11.
+        assert!((captions[1].start - voice.length * 20.0 / 31.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_narration_is_laid_down_from_its_first_word() {
+        let board = board();
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().words = timed_words();
+        let placements = plan(&board, &files, &Options::default(), None).unwrap();
+        let media = HashMap::from([
+            (
+                "/v1.wav".to_owned(),
+                probed("/v1.wav", MediaKind::Audio, Some(5.0)),
+            ),
+            (
+                "/a.mp4".to_owned(),
+                probed("/a.mp4", MediaKind::Video, Some(4.0)),
+            ),
+            (
+                "/b.mp4".to_owned(),
+                probed("/b.mp4", MediaKind::Video, Some(6.0)),
+            ),
+            (
+                "/c.png".to_owned(),
+                probed("/c.png", MediaKind::Image, None),
+            ),
+        ]);
+        let mut editor = Bare(Editor::default());
+        let (_, left_out) = cut(
+            &mut editor,
+            &board,
+            &placements,
+            &media,
+            &Options::default(),
+        )
+        .unwrap();
+        assert!(left_out.is_empty());
+        let active = editor.0.project().active();
+        let voice = active
+            .clips
+            .iter()
+            .find(|c| c.kind == ClipKind::Audio)
+            .expect("the narration is on the timeline");
+        assert!(voice.start.abs() < 1e-6, "{}", voice.start);
+        assert!((voice.source_start - 0.45).abs() < 1e-6);
+        assert!((voice.duration - 3.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_untimed_voice_is_trimmed_to_where_it_sounds() {
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().sounding = Some((0.3, 4.6));
+        let placements = plan(&board(), &files, &Options::default(), None).unwrap();
+        let voice = of(&placements, Kind::Voice)[0];
+        assert!((voice.from - 0.25).abs() < 1e-9);
+        assert!((voice.length - (4.75 - 0.25)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn each_chapter_starts_with_its_first_shot() {
+        let mut board = board();
+        let mut second = board.chapters[0].clone();
+        second.title = "Two".to_owned();
+        second.scenes.truncate(1);
+        second.scenes[0].id = "c02s01".to_owned();
+        board.chapters.push(second);
+        let mut files = files();
+        files.insert(
+            "c02s01".to_owned(),
+            SceneFiles {
+                shots: vec![("/d.png".into(), None), ("/e.png".into(), None)],
+                ..SceneFiles::default()
+            },
+        );
+        let placements = plan(&board, &files, &Options::default(), None).unwrap();
+        let starts = chapter_starts(&board, &placements);
+        assert_eq!(starts.len(), 2);
+        assert_eq!(starts[0], ("One".to_owned(), 0.0));
+        assert_eq!(starts[1].0, "Two");
+        assert!((starts[1].1 - 8.35).abs() < 1e-9, "{}", starts[1].1);
+    }
+
+    #[test]
+    fn the_thumbnail_is_a_timeline_of_its_own() {
+        let mut editor = Bare(Editor::default());
+        let before = editor.0.project().timelines.len();
+        let picture = probed("/t.png", MediaKind::Image, None);
+        let timeline = thumbnail(&mut editor, "Desert · thumbnail", &picture, "Lost city").unwrap();
+        let project = editor.0.project();
+        assert_eq!(project.timelines.len(), before + 1);
+        let active = project.active();
+        assert_eq!(active.id, timeline);
+        assert_eq!((active.video.width, active.video.height), (1280, 720));
+        assert_eq!(
+            active
+                .clips
+                .iter()
+                .filter(|c| c.kind == ClipKind::Image)
+                .count(),
+            1
+        );
+        assert_eq!(
+            active
+                .clips
+                .iter()
+                .filter(|c| c.kind == ClipKind::Text)
+                .count(),
+            1
+        );
     }
 }
