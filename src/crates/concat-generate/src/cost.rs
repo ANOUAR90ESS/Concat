@@ -23,6 +23,8 @@ pub struct Prices {
     pub clip: f64,
     /// A thousand characters read by ElevenLabs.
     pub voice_per_1k: f64,
+    /// One music bed from MusicGen: half a minute of the A100's time.
+    pub music: f64,
     /// A million tokens the writer reads.
     pub script_in_per_m: f64,
     /// A million tokens the writer writes.
@@ -38,6 +40,7 @@ impl Default for Prices {
             still: 0.003,
             clip: 0.10,
             voice_per_1k: 0.30,
+            music: 0.08,
             script_in_per_m: 2.0,
             script_out_per_m: 10.0,
         }

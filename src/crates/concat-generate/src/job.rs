@@ -68,6 +68,8 @@ pub enum Step {
         /// What the run has paid so far, in dollars.
         spent: f64,
     },
+    /// The music bed being made.
+    Music,
     /// The files being probed.
     Probing,
 }
@@ -100,6 +102,13 @@ pub struct Status {
 /// The extensions of a still, to show one of a shot.
 const STILL_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 
+/// What a music bed may be saved as.
+const MUSIC_EXTENSIONS: [&str; 5] = ["mp3", "wav", "m4a", "flac", "ogg"];
+
+/// How long a music bed is made: the most MusicGen plays at once. The cut
+/// loops it under a longer video.
+const MUSIC_SECONDS: u32 = 30;
+
 /// What the making leaves for the cut.
 #[derive(Clone, Debug, Default)]
 pub struct Made {
@@ -113,6 +122,8 @@ pub struct Made {
     pub stand_ins: Vec<String>,
     /// About what this run paid the services, in dollars.
     pub spent: f64,
+    /// The music bed made for the video, and its length, when there is one.
+    pub music: Option<(String, f64)>,
 }
 
 /// What a run may spend, and what each thing costs.
@@ -445,6 +456,7 @@ impl Job {
         voice: &Voice,
         shots: &Shots,
         costs: &Costs,
+        music: Option<&str>,
         speak: &mut dyn FnMut(&str) -> Result<PathBuf, String>,
         progress: &mut dyn FnMut(Step),
         stop: &dyn Fn() -> bool,
@@ -624,11 +636,34 @@ impl Job {
             ));
         }
 
+        // The music last, once the pictures are paid for: a run cut short
+        // has spent nothing on a bed for a video it did not finish.
+        if let (Some(prompt), Shots::Replicate { token, .. }) = (music, shots)
+            && self.music().is_none()
+        {
+            if stop() {
+                return Err("cancelled".to_owned());
+            }
+            progress(Step::Music);
+            spend.take(prices.music)?;
+            if let Err(error) = providers::retry(|| {
+                providers::replicate_music(token, prompt, MUSIC_SECONDS, &self.dir, "music")
+            }) {
+                spend.refund(prices.music);
+                stand_ins.push(format!("the music could not be made ({error})"));
+            }
+        }
+
         progress(Step::Probing);
         let mut made = self.gather(board, *voice != Voice::None)?;
         made.stand_ins = stand_ins;
         made.spent = spend.spent;
         Ok(made)
+    }
+
+    /// The music bed made for this video, when there is one.
+    pub fn music(&self) -> Option<PathBuf> {
+        providers::existing(&self.dir, "music", &MUSIC_EXTENSIONS)
     }
 
     /// Probes what the job holds for `board` - each scene's narration, when
@@ -666,6 +701,10 @@ impl Job {
             files.insert(scene.id.clone(), scene_files);
         }
         made.files = files;
+        if let Some(path) = self.music() {
+            let (path, length) = probe(&path)?;
+            made.music = Some((path, length.unwrap_or(0.0)));
+        }
         Ok(made)
     }
 }
@@ -1081,6 +1120,18 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_music_bed_is_found_in_the_jobs_folder() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-music-{}", std::process::id()));
+        let job = Job::new(&root, "music");
+        std::fs::create_dir_all(&job.dir).unwrap();
+        assert_eq!(job.music(), None);
+        std::fs::write(job.dir.join("music.mp3"), b"ID3").unwrap();
+        assert_eq!(job.music(), Some(job.dir.join("music.mp3")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn a_stood_in_shot_is_made_again_next_time() {

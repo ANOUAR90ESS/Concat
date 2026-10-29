@@ -56,6 +56,10 @@ pub const DEFAULT_IMAGE_MODEL: &str = "black-forest-labs/flux-schnell";
 /// the cheap end, so a clip moves a still the image model made.
 pub const DEFAULT_VIDEO_MODEL: &str = "wan-video/wan-2.2-i2v-fast";
 
+/// The music model: MusicGen, which takes words and a length and plays
+/// them, without a voice.
+pub const DEFAULT_MUSIC_MODEL: &str = "meta/musicgen";
+
 /// How many times a call to a service is made before it is given up on:
 /// a long video is hundreds of calls, and one busy minute on the far side
 /// must not end an unattended run.
@@ -125,27 +129,44 @@ pub fn sniffed_extension(path: &Path) -> Option<&'static str> {
     } else if head.len() == 12 && head.starts_with(b"RIFF") && &head[8..] == b"WEBP" {
         Some("webp")
     } else if head.len() >= 8 && &head[4..8] == b"ftyp" {
-        Some(if head.get(8..10) == Some(b"qt") {
-            "mov"
-        } else {
-            "mp4"
+        Some(match head.get(8..12) {
+            Some(b"M4A ") => "m4a",
+            Some(brand) if brand.starts_with(b"qt") => "mov",
+            _ => "mp4",
         })
     } else if head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         Some("webm")
+    } else if head.starts_with(b"ID3") || head.starts_with(&[0xFF, 0xFB]) {
+        Some("mp3")
+    } else if head.len() == 12 && head.starts_with(b"RIFF") && &head[8..] == b"WAVE" {
+        Some("wav")
+    } else if head.starts_with(b"fLaC") {
+        Some("flac")
+    } else if head.starts_with(b"OggS") {
+        Some("ogg")
     } else {
         None
     }
 }
 
+/// Which of a picture, a recording and a clip an extension names: what
+/// [`true_name`] holds a file's bytes to.
+fn kind_of(extension: &str) -> u8 {
+    match extension {
+        "png" | "jpg" | "jpeg" | "webp" => 0,
+        "mp3" | "wav" | "m4a" | "flac" | "ogg" => 1,
+        _ => 2,
+    }
+}
+
 /// `path` under the extension its bytes call for, renamed there when its
-/// own says the other kind - a picture named as a clip, or a clip as a
-/// picture - and where it now is. A file of the right kind keeps its name.
+/// own says another kind - a picture named as a clip, a recording as a
+/// clip - and where it now is. A file of the right kind keeps its name.
 ///
 /// A service's address need not end in a file type, and one that did not
 /// was saved as `.mp4`: a picture then went on the timeline as a clip one
 /// frame long, shown only in the cross-fade into it and black after.
 pub fn true_name(path: &Path) -> PathBuf {
-    const STILLS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
     let Some(sniffed) = sniffed_extension(path) else {
         return path.to_owned();
     };
@@ -154,7 +175,7 @@ pub fn true_name(path: &Path) -> PathBuf {
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if STILLS.contains(&own.as_str()) == STILLS.contains(&sniffed) {
+    if kind_of(&own) == kind_of(sniffed) {
         return path.to_owned();
     }
     let renamed = path.with_extension(sniffed);
@@ -564,16 +585,7 @@ fn replicate(
     let mut prediction: Value = match resumed {
         Some(prediction) => prediction,
         None => {
-            let prediction: Value = agent
-                .post(&format!(
-                    "https://api.replicate.com/v1/models/{}/predictions",
-                    model.trim()
-                ))
-                .set("authorization", &auth)
-                .send_json(json!({ "input": input }))
-                .map_err(|error| refused("Replicate", error))?
-                .into_json()
-                .map_err(|error| error.to_string())?;
+            let prediction = start_prediction(&agent, &auth, model.trim(), &input)?;
             if let Some(url) = prediction["urls"]["get"].as_str() {
                 let _ = std::fs::write(&pending, url);
             }
@@ -626,6 +638,64 @@ fn replicate(
     })?;
     let _ = std::fs::remove_file(&pending);
     Ok(true_name(&out))
+}
+
+/// Asks `model` for one prediction. An official model is run by its name;
+/// any other - MusicGen is one - only by a version, so where the name is
+/// refused the model's latest version is looked up and run.
+fn start_prediction(
+    agent: &ureq::Agent,
+    auth: &str,
+    model: &str,
+    input: &Value,
+) -> Result<Value, String> {
+    let by_name = agent
+        .post(&format!(
+            "https://api.replicate.com/v1/models/{model}/predictions"
+        ))
+        .set("authorization", auth)
+        .send_json(json!({ "input": input }));
+    let response = match by_name {
+        Err(ureq::Error::Status(404, _)) => {
+            let described: Value = agent
+                .get(&format!("https://api.replicate.com/v1/models/{model}"))
+                .set("authorization", auth)
+                .call()
+                .map_err(|error| refused("Replicate", error))?
+                .into_json()
+                .map_err(|error| error.to_string())?;
+            let version = described["latest_version"]["id"]
+                .as_str()
+                .ok_or_else(|| format!("Replicate has no version of {model} to run"))?;
+            agent
+                .post("https://api.replicate.com/v1/predictions")
+                .set("authorization", auth)
+                .send_json(json!({ "version": version, "input": input }))
+                .map_err(|error| refused("Replicate", error))?
+        }
+        other => other.map_err(|error| refused("Replicate", error))?,
+    };
+    response.into_json().map_err(|error| error.to_string())
+}
+
+/// A music bed for a whole video, `seconds` long, made by MusicGen from
+/// `prompt` and saved as `dir`/`stem`.<its type>. The cut loops it under
+/// the video, fading out at the end.
+pub fn replicate_music(
+    token: &str,
+    prompt: &str,
+    seconds: u32,
+    dir: &Path,
+    stem: &str,
+) -> Result<PathBuf, String> {
+    let input = json!({
+        "prompt": prompt,
+        "duration": seconds,
+        "model_version": "stereo-large",
+        "output_format": "mp3",
+        "normalization_strategy": "loudness",
+    });
+    replicate(token, DEFAULT_MUSIC_MODEL, input, dir, stem)
 }
 
 /// Where the address of a shot asked for but not yet saved is kept, so a
@@ -816,6 +886,10 @@ mod tests {
         let jpeg = dir.join("c01s01_3.png");
         std::fs::write(&jpeg, [0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10]).unwrap();
         assert_eq!(true_name(&jpeg), jpeg);
+        // A recording saved as a clip, as MusicGen's answer would be.
+        let music = dir.join("music.mp4");
+        std::fs::write(&music, b"ID3\x04\0\0\0\0\0\0").unwrap();
+        assert_eq!(true_name(&music), dir.join("music.mp3"));
         // Nothing known: left be.
         let other = dir.join("c01s01_4.mp4");
         std::fs::write(&other, b"hello").unwrap();

@@ -366,6 +366,57 @@ pub fn pick_short(
     })
 }
 
+/// A music bed's description for MusicGen, in English, the words it plays
+/// best from: the writer's, from the video's title, moods and narration.
+pub fn music_prompt(board: &Storyboard, key: &str, model: &str) -> Result<String, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to write the script".to_owned());
+    }
+    let got = crate::providers::retry(|| call(key, model, &music_tool(), &music_ask(board)))?;
+    let prompt = text(&got["prompt"]);
+    if prompt.is_empty() {
+        return Err("the writer described no music".to_owned());
+    }
+    Ok(prompt)
+}
+
+/// The music bed's description where the writer cannot be asked: a calm
+/// score that sits under any narration.
+pub fn plain_music_prompt() -> String {
+    "Instrumental cinematic background score for a documentary, calm and steady, \
+     soft piano and strings, no vocals, no drums, smooth and loopable"
+        .to_owned()
+}
+
+/// What [`music_prompt`] asks.
+fn music_ask(board: &Storyboard) -> String {
+    let moods: Vec<&str> = board
+        .chapters
+        .iter()
+        .map(|chapter| chapter.mood.trim())
+        .filter(|mood| !mood.is_empty())
+        .collect();
+    let opening: String = board
+        .scenes()
+        .take(3)
+        .map(|scene| scene.narration.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "The video \"{}\". Its chapters' moods: {}. It opens: {opening}\n\
+         Describe, in English and in at most 30 words, the instrumental music to play \
+         under the whole of it, quietly, beneath the narration: the genre, the instruments, \
+         the tempo and the feeling. No vocals, no lyrics, nothing that fights a voice; \
+         it is looped, so it should have no clear ending.",
+        board.title,
+        if moods.is_empty() {
+            "none given".to_owned()
+        } else {
+            moods.join("; ")
+        },
+    )
+}
+
 /// What [`pick_short`] asks.
 fn short_prompt(board: &Storyboard, brief: &Brief) -> String {
     let scenes: String = board
@@ -942,6 +993,20 @@ fn scene_tool() -> Value {
     })
 }
 
+fn music_tool() -> Value {
+    json!({
+        "name": "music",
+        "description": "The music bed's description.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "At most 30 words, in English."}
+            },
+            "required": ["prompt"]
+        }
+    })
+}
+
 fn short_tool() -> Value {
     json!({
         "name": "short",
@@ -1001,6 +1066,22 @@ fn revise_tool() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_music_is_asked_for_in_english_from_the_moods() {
+        let mut board: Storyboard = serde_json::from_str(
+            r#"{"title":"جريمة وعقاب","chapters":[
+                {"title":"Uno","mood":"cold dawn blues","scenes":[{"narration":"Una noche.","seconds":6,"shots":[{"prompt":"x"}]}]},
+                {"title":"Dos","mood":"warm amber dusk","scenes":[{"narration":"Otra.","seconds":6,"shots":[{"prompt":"y"}]}]}]}"#,
+        )
+        .unwrap();
+        board.tidy().unwrap();
+        let ask = music_ask(&board);
+        assert!(ask.contains("cold dawn blues; warm amber dusk"), "{ask}");
+        assert!(ask.contains("Una noche."));
+        assert!(ask.contains("in English"));
+        assert!(plain_music_prompt().contains("no vocals"));
+    }
     use crate::storyboard::Shot;
 
     fn plan() -> ChapterPlan {

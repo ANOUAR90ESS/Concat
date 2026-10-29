@@ -137,7 +137,8 @@ pub struct GeneratePane {
     pub minutes: usize,
     pub captions: bool,
     pub titles: bool,
-    /// Row of [`GeneratePane::music_rows`]; 0 is none.
+    /// Row of [`GeneratePane::music_rows`]; 0 is none, 1 music made for
+    /// the video ([`AI_MUSIC`]).
     pub music: usize,
     pub running: bool,
     pub progress: f32,
@@ -599,6 +600,10 @@ impl GeneratePane {
                     self.preview = Some(image);
                 }
                 (0.4 + 0.55 * *n as f32 / *of as f32, self.stage.clone())
+            }
+            Step::Music => {
+                self.detail.clear();
+                (0.95, t("generate.makingMusic"))
             }
             Step::Probing => {
                 self.phase = 3;
@@ -1177,6 +1182,13 @@ impl GeneratePane {
             prices: prices(studio),
             limit: spend_limit(studio),
         };
+        // Music made for the video, where it is asked for and the shots
+        // come from Replicate, which makes it; described by the writer
+        // once, before the first bed is paid for.
+        let ai_music = self.music == AI_MUSIC
+            && matches!(shots, Shots::Replicate { .. })
+            && job.music().is_none();
+        let writer_key = prefs.anthropic_key.clone();
         let speaker = studio.prefs.tts_voice.unwrap_or(DEFAULT_SPEAKER);
         let speech = Arc::clone(&studio.host.speech);
         let dirs = studio.host.dirs.clone();
@@ -1216,11 +1228,20 @@ impl GeneratePane {
                         studio.handle(Msg::Generate(GenerateMsg::Step(step)));
                     });
                 };
+                let music = ai_music.then(|| {
+                    writer::music_prompt(&board, &writer_key, writer::DEFAULT_MODEL).unwrap_or_else(
+                        |error| {
+                            log::warn!("generate: the music's description: {error}");
+                            writer::plain_music_prompt()
+                        },
+                    )
+                });
                 let made = job.make(
                     &board,
                     &voice,
                     &shots,
                     &costs,
+                    music.as_deref(),
                     &mut speak,
                     &mut progress,
                     &|| stop.load(Ordering::Acquire),
@@ -1268,11 +1289,14 @@ impl GeneratePane {
     }
 
     fn cut(&mut self, studio: &mut Studio, board: &Storyboard, made: &Made, short: bool) {
-        let music = self.music.checked_sub(1).and_then(|row| {
-            music_items(studio)
-                .get(row)
-                .map(|(path, length)| (path.clone(), *length))
-        });
+        let music = match self.music {
+            AI_MUSIC => made.music.clone(),
+            row => row.checked_sub(AI_MUSIC + 1).and_then(|row| {
+                music_items(studio)
+                    .get(row)
+                    .map(|(path, length)| (path.clone(), *length))
+            }),
+        };
         let mut media = made.media.clone();
         if let Some((path, _)) = &music
             && let Ok(summary) = concat_host::media::probe(path)
@@ -1371,9 +1395,11 @@ impl GeneratePane {
         })
     }
 
-    /// The music list's rows: none, then every recording in the bin.
+    /// The music list's rows: none, music made for the video, then every
+    /// recording in the bin.
     pub fn music_rows(&self, studio: &Studio) -> Vec<SharedString> {
-        std::iter::once(t("generate.noMusic"))
+        [t("generate.noMusic"), t("generate.aiMusic")]
+            .into_iter()
             .chain(music_items(studio).into_iter().map(|(path, _)| {
                 Path::new(&path)
                     .file_name()
@@ -1722,6 +1748,9 @@ fn amount(text: &str) -> Option<f64> {
         .ok()
         .filter(|value| value.is_finite() && *value >= 0.0)
 }
+
+/// The music row that is music made for the video by MusicGen.
+const AI_MUSIC: usize = 1;
 
 /// What each thing costs: the prices typed in the sheet, the defaults'
 /// where none is.
