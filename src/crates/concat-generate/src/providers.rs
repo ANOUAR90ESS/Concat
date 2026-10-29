@@ -12,8 +12,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use base64::Engine;
 use serde_json::{Value, json};
 
+use crate::plan::Word;
 use crate::writer::message_of;
 
 /// What a shot file may be.
@@ -730,21 +732,89 @@ fn fill(value: &Value, prompt: &str, seconds: f64, aspect: &str) -> Value {
     }
 }
 
-/// The narration for one scene from ElevenLabs, as an MP3.
-pub fn elevenlabs(key: &str, voice_id: &str, text: &str, out: &Path) -> Result<(), String> {
+/// The narration for one scene from ElevenLabs, as an MP3, and when each
+/// of its words is said. `before` and `after` are the scenes' narration
+/// either side, which ElevenLabs reads the line in the light of - so one
+/// paragraph runs on from the last in the same voice, rather than each
+/// starting afresh - and does not read aloud.
+pub fn elevenlabs(
+    key: &str,
+    voice_id: &str,
+    text: &str,
+    before: &str,
+    after: &str,
+    out: &Path,
+) -> Result<Vec<Word>, String> {
     if key.trim().is_empty() || voice_id.trim().is_empty() {
         return Err("ElevenLabs needs an API key and a voice id".to_owned());
     }
-    let response = agent()
+    let mut body = json!({"text": text, "model_id": "eleven_multilingual_v2"});
+    if !before.trim().is_empty() {
+        body["previous_text"] = json!(before.trim());
+    }
+    if !after.trim().is_empty() {
+        body["next_text"] = json!(after.trim());
+    }
+    let answer: Value = agent()
         .post(&format!(
-            "https://api.elevenlabs.io/v1/text-to-speech/{}",
+            "https://api.elevenlabs.io/v1/text-to-speech/{}/with-timestamps?output_format=mp3_44100_128",
             voice_id.trim()
         ))
         .set("xi-api-key", key.trim())
-        .set("accept", "audio/mpeg")
-        .send_json(json!({"text": text, "model_id": "eleven_multilingual_v2"}))
-        .map_err(|error| refused("ElevenLabs", error))?;
-    save(response, out)
+        .send_json(body)
+        .map_err(|error| refused("ElevenLabs", error))?
+        .into_json()
+        .map_err(|error| format!("ElevenLabs: {error}"))?;
+    let audio = base64::engine::general_purpose::STANDARD
+        .decode(answer["audio_base64"].as_str().unwrap_or_default())
+        .map_err(|error| format!("ElevenLabs: the audio: {error}"))?;
+    if audio.is_empty() {
+        return Err("ElevenLabs sent no audio".to_owned());
+    }
+    let partial = out.with_extension("partial");
+    std::fs::write(&partial, audio).map_err(|error| format!("{}: {error}", partial.display()))?;
+    std::fs::rename(&partial, out).map_err(|error| format!("{}: {error}", out.display()))?;
+    Ok(words_of(&answer["alignment"]))
+}
+
+/// The words of an ElevenLabs alignment - each character with when it
+/// starts and ends - with when each is said: a word runs from its first
+/// character's start to its last's end, and ends at a space.
+pub fn words_of(alignment: &Value) -> Vec<Word> {
+    let list = |name: &str| alignment[name].as_array().cloned().unwrap_or_default();
+    let (characters, starts, ends) = (
+        list("characters"),
+        list("character_start_times_seconds"),
+        list("character_end_times_seconds"),
+    );
+    let mut words = Vec::new();
+    let mut current: Option<Word> = None;
+    for ((character, start), end) in characters.iter().zip(&starts).zip(&ends) {
+        let (Some(character), Some(start), Some(end)) =
+            (character.as_str(), start.as_f64(), end.as_f64())
+        else {
+            continue;
+        };
+        if character.trim().is_empty() {
+            words.extend(current.take());
+            continue;
+        }
+        match current.as_mut() {
+            Some(word) => {
+                word.text.push_str(character);
+                word.end = end;
+            }
+            None => {
+                current = Some(Word {
+                    text: character.to_owned(),
+                    start,
+                    end,
+                })
+            }
+        }
+    }
+    words.extend(current);
+    words
 }
 
 fn fetch(agent: &ureq::Agent, url: &str, out: &Path) -> Result<(), String> {
@@ -910,5 +980,30 @@ mod tests {
         assert_eq!(existing(&dir, "c01s01_1", &SHOT_EXTENSIONS), Some(out));
         assert_eq!(existing(&dir, "c01s01_2", &SHOT_EXTENSIONS), None);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn elevenlabs_letters_are_gathered_into_words() {
+        let alignment = json!({
+            "characters": ["ك", "ا", "ن", " ", "ا", "ل", "ع", "ا", "ل", "م", "."],
+            "character_start_times_seconds": [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3],
+            "character_end_times_seconds": [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.35]
+        });
+        let words = words_of(&alignment);
+        assert_eq!(
+            words,
+            [
+                Word {
+                    text: "كان".to_owned(),
+                    start: 0.3,
+                    end: 0.6
+                },
+                Word {
+                    text: "العالم.".to_owned(),
+                    start: 0.7,
+                    end: 1.35
+                }
+            ]
+        );
     }
 }

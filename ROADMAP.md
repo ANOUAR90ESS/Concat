@@ -80,10 +80,18 @@ runs no CI, so nothing is built until then.
   before" in the script editor, where Suggest and Make again give it
   another, and a run that made any says so when it ends. Nothing is
   made again on its own: that is paid for.
-- ⏳ **Stage 4: captions timed to the voice word by word**: today a
-  card's time is shared out by its length in letters; reading the
-  narration back with the local transcriber would place each word where
-  it is said.
+- ✅ **Stage 4: the voice and its captions** (on the branch). The
+  owner's 29 Oct video stopped for about a second between paragraphs:
+  each ElevenLabs file's own silence at both ends plus the 0.6 s pad.
+  ElevenLabs is now asked with timestamps (the same price), which tells
+  when every letter is said; the cut starts each narration just before
+  its first word and ends it just after its last, the pause between
+  paragraphs is 0.35 s, and each caption card comes up as its first
+  word is said (`voice/<scene>.words.json`). A voice with no timings -
+  the built-in ones, or ElevenLabs lines made before this - is trimmed
+  to where its waveform sounds. Each line is also sent with the lines
+  either side (`previous_text` / `next_text`), so one paragraph runs on
+  from the last in the same voice rather than starting afresh.
 - ⏳ **Stage 5: publishing**: a thumbnail, and a title, description and
   tags for YouTube, written by the writer.
 - ⏳ **Stage 6: interface strings**: many Long video lines are still

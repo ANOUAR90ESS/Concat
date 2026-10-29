@@ -24,7 +24,7 @@ use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
 
 use crate::cost::{Prices, Spend};
-use crate::plan::SceneFiles;
+use crate::plan::{SceneFiles, Word};
 use crate::providers::{self, ModelInputs, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
 use crate::storyboard::{Chapter, Shot, ShotKind, Storyboard, shot_stem};
 
@@ -310,6 +310,26 @@ impl Job {
         self.dir.join("voice")
     }
 
+    /// When each word of scene `id`'s narration is said, beside it.
+    pub fn words_file(&self, id: &str) -> PathBuf {
+        self.voice_dir().join(format!("{id}.words.json"))
+    }
+
+    /// Writes when each word of scene `id`'s narration is said.
+    fn keep_words(&self, id: &str, words: &[Word]) -> Result<(), String> {
+        let out = self.words_file(id);
+        let text = serde_json::to_string(words).map_err(|error| error.to_string())?;
+        std::fs::write(&out, text).map_err(|error| format!("{}: {error}", out.display()))
+    }
+
+    /// When each word of scene `id`'s narration is said, if that is known.
+    pub fn words(&self, id: &str) -> Vec<Word> {
+        std::fs::read_to_string(self.words_file(id))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
     /// Where the shots go.
     pub fn shots_dir(&self) -> PathBuf {
         self.dir.join("shots")
@@ -357,6 +377,7 @@ impl Job {
     /// then.
     pub fn forget(&self, voices: &[String], shots: &[String]) {
         for name in voices {
+            let _ = std::fs::remove_file(self.words_file(name));
             while let Some(path) = providers::existing(&self.voice_dir(), name, &VOICE_EXTENSIONS) {
                 if std::fs::remove_file(&path).is_err() {
                     break;
@@ -496,20 +517,29 @@ impl Job {
                         let out = voice_dir.join(format!("{}.{extension}", scene.id));
                         std::fs::copy(&made, &out)
                             .map_err(|error| format!("{}: {error}", out.display()))?;
+                        // Untimed: the cut shares its captions out.
+                        let _ = std::fs::remove_file(self.words_file(&scene.id));
                     }
                     Voice::ElevenLabs { key, voice_id } => {
                         let text = scene.narration.trim();
                         let cost = text.chars().count() as f64 / 1000.0 * prices.voice_per_1k;
                         spend.take(cost)?;
-                        providers::retry(|| {
+                        let around = |n: Option<usize>| {
+                            n.and_then(|n| spoken.get(n))
+                                .map_or("", |scene| scene.narration.trim())
+                        };
+                        let words = providers::retry(|| {
                             providers::elevenlabs(
                                 key,
                                 voice_id,
                                 text,
+                                around(i.checked_sub(1)),
+                                around(Some(i + 1)),
                                 &voice_dir.join(format!("{}.mp3", scene.id)),
                             )
                         })
-                        .inspect_err(|_| spend.refund(cost))?
+                        .inspect_err(|_| spend.refund(cost))?;
+                        self.keep_words(&scene.id, &words)?;
                     }
                 }
             }
@@ -687,6 +717,10 @@ impl Job {
                 && let Some(path) = providers::existing(&voice_dir, &scene.id, &VOICE_EXTENSIONS)
             {
                 let (path, length) = probe(&path)?;
+                scene_files.words = self.words(&scene.id);
+                if scene_files.words.is_empty() {
+                    scene_files.sounding = sounding(&path);
+                }
                 scene_files.voice = Some((path, length.unwrap_or(0.0)));
             }
             for index in 0..scene.shots.len() {
@@ -708,6 +742,23 @@ impl Job {
         Ok(made)
     }
 }
+
+/// Where in a narration's file there is sound, first to last, in seconds:
+/// read from its waveform, a millisecond at a time. None when it cannot be
+/// read, or is silent.
+fn sounding(path: &str) -> Option<(f64, f64)> {
+    let peaks = concat_host::media::peaks(path, None, None).ok()?;
+    let loud = |(min, max): (&f32, &f32)| max.max(-min) > SOUNDING;
+    let buckets: Vec<bool> = peaks.min.iter().zip(&peaks.max).map(loud).collect();
+    let first = buckets.iter().position(|&b| b)?;
+    let last = buckets.iter().rposition(|&b| b)?;
+    let per = f64::from(peaks.buckets_per_second.max(1.0));
+    Some((first as f64 / per, (last + 1) as f64 / per))
+}
+
+/// The level, of full scale, under which a narration is silent: -42 dB,
+/// under a breath, over a quiet file's hiss.
+const SOUNDING: f32 = 0.008;
 
 /// One shot to make: what [`Job::replicate_shot`] is handed.
 struct Order<'a> {
@@ -1336,5 +1387,38 @@ mod tests {
         assert!(job.stale().is_empty());
         assert_eq!(job.status(&board, false).shots_made, 1);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_narrations_silence_is_read_from_its_waveform() {
+        // Half a second of silence, a second of tone, 0.8 s of silence:
+        // 16-bit mono at 8 kHz, written by hand.
+        let rate = 8000u32;
+        let mut samples = vec![0i16; 4000];
+        samples.extend((0..8000).map(|n| {
+            (8000.0 * (n as f64 * 440.0 * std::f64::consts::TAU / f64::from(rate)).sin()) as i16
+        }));
+        samples.extend(vec![0i16; 6400]);
+        let data: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut wav = Vec::new();
+        wav.extend(b"RIFF");
+        wav.extend((36 + data.len() as u32).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend(16u32.to_le_bytes());
+        wav.extend(1u16.to_le_bytes());
+        wav.extend(1u16.to_le_bytes());
+        wav.extend(rate.to_le_bytes());
+        wav.extend((rate * 2).to_le_bytes());
+        wav.extend(2u16.to_le_bytes());
+        wav.extend(16u16.to_le_bytes());
+        wav.extend(b"data");
+        wav.extend((data.len() as u32).to_le_bytes());
+        wav.extend(data);
+        let path = std::env::temp_dir().join(format!("concat-sounding-{}.wav", std::process::id()));
+        std::fs::write(&path, wav).unwrap();
+        let (first, last) = sounding(&path.to_string_lossy()).expect("it sounds");
+        assert!((first - 0.5).abs() < 0.01, "{first}");
+        assert!((last - 1.5).abs() < 0.01, "{last}");
+        let _ = std::fs::remove_file(path);
     }
 }

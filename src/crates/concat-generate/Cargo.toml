@@ -17,6 +17,8 @@ serde_json.workspace = true
 # The writer, the voice and the shot generators are web services. Blocking
 # on purpose, as concat-host's downloads are: each runs on a worker thread.
 ureq = { version = "2", features = ["json"] }
+# ElevenLabs answers with timings as JSON, the audio in it as base64.
+base64 = "0.22"
 # Draft shots are colour cards, written as PNGs: no service, no cost.
 png = "0.17"
 # What an unattended run had to work around - a retry, a stand-in shot -
