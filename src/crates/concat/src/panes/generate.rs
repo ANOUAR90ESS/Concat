@@ -134,7 +134,7 @@ pub enum GenerateMsg {
     Publish,
     /// What goes up with it, kept; the thumbnail's picture, probed, or why
     /// there is none; or why nothing was written.
-    Published(Box<Result<(Publishing, Result<NewMedia, String>), String>>),
+    Published(Box<Result<Published, String>>),
 }
 
 /// The Long video sheet's state.
@@ -1826,6 +1826,10 @@ fn music_items(studio: &Studio) -> Vec<(String, f64)> {
         .map(|item| (item.path.clone(), item.duration.unwrap_or(0.0)))
         .collect()
 }
+
+/// What goes up with the video, written and kept, and the thumbnail's
+/// picture probed - or why there is none.
+pub type Published = (Publishing, Result<NewMedia, String>);
 
 /// A shot's small picture as a worker hands it over: its stem, width,
 /// height and RGBA pixels, and its likeness when it has one.
