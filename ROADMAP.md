@@ -71,9 +71,15 @@ runs no CI, so nothing is built until then.
   Replicate now falls back to its latest version, and a file's real kind
   (mp3, wav, m4a ...) is read from its bytes. Checked in the phone shell
   with a stand-in file; the paid MusicGen call waits on the owner's test.
-- ⏳ **Stage 3: no repeated pictures.** Two shots of one scene came out
-  near the same picture (scenes 3-4, 9-10): ask the writer for different
-  framings, and offer Make again on a picture too like its neighbour.
+- ✅ **Stage 3: no repeated pictures** (on the branch). Two shots of one
+  scene came out near the same picture (scenes 3-4, 9-10). The writer is
+  told that within a scene each shot shows something the others do not.
+  Every picture made is read for its likeness (a 64-bit difference hash
+  and its overall colour; colour cards and other washes are passed
+  over); one too like the shot before it is marked "Too like the shot
+  before" in the script editor, where Suggest and Make again give it
+  another, and a run that made any says so when it ends. Nothing is
+  made again on its own: that is paid for.
 - ⏳ **Stage 4: captions timed to the voice word by word**: today a
   card's time is shared out by its length in letters; reading the
   narration back with the local transcriber would place each word where

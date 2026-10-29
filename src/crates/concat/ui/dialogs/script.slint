@@ -38,6 +38,8 @@ export struct ScriptRow {
     video: bool,
     /// A shot whose picture reads as one already used.
     repeat: bool,
+    /// A shot whose picture came out too like the shot's before it.
+    lookalike: bool,
     /// A scene being written again right now.
     busy: bool,
     /// A small picture of what was made for the shot, when it was.
@@ -284,6 +286,19 @@ export component ScriptDialog inherits Modal {
                         }
                         Text {
                             text: I18n.t("script.repeat");
+                            color: Theme.meter-mid;
+                            font-size: Theme.fs-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if row.lookalike: HorizontalLayout {
+                        spacing: 4px;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon { glyph: Glyph.copy; size: 12px; tint: Theme.meter-mid; }
+                        }
+                        Text {
+                            text: I18n.t("script.lookalike");
                             color: Theme.meter-mid;
                             font-size: Theme.fs-sm;
                             vertical-alignment: center;

@@ -49,7 +49,9 @@ shots, each one of two kinds:
 Describe what is there; do not tell the model what to avoid.
 
 Vary the pictures. Change the shot size from one shot to the next (aerial, wide, medium,
-close-up, macro detail), and the subject and the place from one scene to the next. A picture
+close-up, macro detail), and the subject and the place from one scene to the next. Within one
+scene each shot shows something the others do not: another subject, or the same subject from
+another side, distance and height - never the same composition in other words. A picture
 already used, or one that would read as the same picture, is never used again.";
 
 /// What the video is to be.
