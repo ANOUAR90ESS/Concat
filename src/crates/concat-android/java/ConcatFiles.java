@@ -133,6 +133,7 @@ public class ConcatFiles extends Fragment {
             }
         }
         file.delete();
+        lastPublished = uri;
         // The store may have renamed it: a second "name.mp4" is "name (1).mp4".
         return new String[] {folder + "/" + displayName(activity, uri), null};
     }
@@ -289,6 +290,50 @@ public class ConcatFiles extends Fragment {
                 if (os != null) os.close();
             } catch (IOException ignored) {
             }
+        }
+    }
+
+    /** The last video put in the media store, to play or share. */
+    private static Uri lastPublished;
+
+    /**
+     * Opens the last video put in the media store in the phone's own player.
+     * False when there is none, or nothing on the phone plays it.
+     */
+    public static boolean playVideo(Activity activity) {
+        if (lastPublished == null) {
+            return false;
+        }
+        Intent intent = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(lastPublished, "video/mp4")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            activity.startActivity(intent);
+            return true;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "could not play the video", e);
+            return false;
+        }
+    }
+
+    /**
+     * Offers the last video put in the media store to the apps that take
+     * one - YouTube, a messenger, the cloud - through the system's sheet.
+     */
+    public static boolean shareVideo(Activity activity) {
+        if (lastPublished == null) {
+            return false;
+        }
+        Intent send = new Intent(Intent.ACTION_SEND)
+                .setType("video/mp4")
+                .putExtra(Intent.EXTRA_STREAM, lastPublished)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            activity.startActivity(Intent.createChooser(send, null));
+            return true;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "could not share the video", e);
+            return false;
         }
     }
 

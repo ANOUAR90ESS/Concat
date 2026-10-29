@@ -48,6 +48,10 @@ pub enum ExportMsg {
     FolderChosen(String),
     /// Show the finished file in the file manager.
     Reveal,
+    /// Play the finished file: in the phone's player, or the desk's.
+    Play,
+    /// Offer the finished file to the phone's apps.
+    Share,
     Start,
     /// Start over a file already there: the confirmation sheet's answer.
     Overwrite,
@@ -136,6 +140,11 @@ impl ExportPane {
         match msg {
             ExportMsg::Open => {
                 self.open = true;
+                // Opened again from the pill while the file is written:
+                // as it was.
+                if self.phase == ExportPhase::Running {
+                    return;
+                }
                 self.phase = ExportPhase::Idle;
                 self.message.clear();
                 // The timeline's own size: the one rung that can be picked;
@@ -188,6 +197,16 @@ impl ExportPane {
                     && let Err(error) = platform::reveal(&self.written)
                 {
                     studio.notify(&i18n::tf("export.couldNotShowFile", &[&error]), true);
+                }
+            }
+            ExportMsg::Play => {
+                if let Err(error) = platform::play_export(&self.written) {
+                    studio.notify(&i18n::tf("export.couldNotPlay", &[&error]), true);
+                }
+            }
+            ExportMsg::Share => {
+                if let Err(error) = platform::share_export() {
+                    studio.notify(&i18n::tf("export.couldNotPlay", &[&error]), true);
                 }
             }
             ExportMsg::Start => self.start(studio),

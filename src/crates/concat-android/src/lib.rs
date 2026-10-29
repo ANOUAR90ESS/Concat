@@ -317,11 +317,40 @@ mod publisher {
                 return;
             }
         };
+        let (to_play, to_share) = (app.clone(), app.clone());
+        concat::install_video_actions(concat::VideoActions {
+            play: Box::new(move || hand(&to_play, true)),
+            share: Box::new(move || hand(&to_share, false)),
+        });
         let app = app.clone();
         concat::install_export_publisher(concat::ExportPublisher {
             folder,
             publish: Box::new(move |path| publish(&app, path)),
         });
+    }
+
+    /// `ConcatFiles.playVideo`, or `shareVideo`: the last video put in the
+    /// media store handed to another app.
+    fn hand(app: &AndroidApp, play: bool) -> Result<(), String> {
+        let handed = super::java::with_class(app, |env, activity, class| {
+            env.call_static_method(
+                class,
+                if play {
+                    jni_str!("playVideo")
+                } else {
+                    jni_str!("shareVideo")
+                },
+                jni_sig!("(Landroid/app/Activity;)Z"),
+                &[activity.into()],
+            )?
+            .z()
+        })
+        .map_err(|error| format!("could not reach the phone: {error}"))?;
+        if handed {
+            Ok(())
+        } else {
+            Err("nothing on this phone took the video".to_owned())
+        }
     }
 
     /// `ConcatFiles.publishedFolder`: "Movies/Concat", or nothing.

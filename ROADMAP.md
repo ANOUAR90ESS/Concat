@@ -143,13 +143,30 @@ the phone's chip ignored the CBR of stage 1 - and took about 7 minutes.
   run - the limit, a refused key - starts no more. Waits that took one
   after the other now overlap: about three to four times faster on
   Replicate.
-- ⏳ **D: Play and Share** on the done sheet.
-- ⏳ **F: the making sheet redesigned** - a ring, the chapters as they
-  are written, no empty picture box.
-- ⏳ **C: export faster** - time each stage in the log, then the
-  certain wins.
-- ⏳ **E: keep using the app** while a video is made or exported - the
-  sheet minimised to a pill.
+- ✅ **D: Play and Share.** The done sheet has Play - the phone's own
+  player on the video it just put in Movies (ACTION_VIEW), the default
+  player on a desk - and, on a phone, Share, the system's sheet to send
+  it to YouTube, a messenger or the cloud (ACTION_SEND).
+- ✅ **F: the making sheet redesigned.** No empty picture box: while
+  the script and the voice are made, the export's progress ring; once
+  shots come, the last one made, large. The writer says which chapter
+  it is writing by its title, shown under the stage; the steps sit in a
+  card.
+- ✅ **C: export faster (first part).** An export logs where its time
+  goes every half minute and at the end - reading the sources, drawing,
+  writing to the encoder, per frame. And a certain win: a still shown
+  for seconds was scaled (Lanczos) and converted again for every one of
+  its frames; it is now scaled once and handed out again. The rest waits
+  on the owner's log from the phone.
+- ✅ **E: keep using the app.** The making sheet and the export sheet
+  have Hide while they run: a pill floats over the window - the editor,
+  the list of projects - with the job and how far it is, and a press
+  opens the sheet again. A Long video run belongs to its job's folder,
+  not to the open project (`runs.rs`): it goes on when the person opens
+  another project, holding the phone awake itself; the sheet opened again
+  on that job shows it going on and will not start a second run, which
+  would pay twice; when it ends elsewhere a toast says to open its
+  project and press Create video, which cuts it without paying again.
 
 ## Done since alpha.14
 

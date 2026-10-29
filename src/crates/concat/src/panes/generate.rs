@@ -103,7 +103,7 @@ pub enum GenerateMsg {
     Rewritten(usize, usize, Box<Result<Scene, String>>),
     Cancel,
     /// A worker saying where it is: `0..=1`, and in words.
-    Progress(f32, String),
+    Progress(f32, String, String),
     /// The making saying where it is.
     Step(Step),
     /// Make one shot of the script again: chapter, scene and shot.
@@ -132,6 +132,13 @@ pub enum GenerateMsg {
     Made(Box<Result<(Storyboard, Made), String>>),
     /// Write what goes up with the video on YouTube, and its thumbnail.
     Publish,
+    /// A run somewhere moved on: drawn again, for the pill.
+    Tick,
+    /// The run on a job's folder is over: its folder, its title, and
+    /// whether it made everything.
+    Over(PathBuf, String, bool),
+    /// The floating pill was pressed.
+    Pill,
     /// What goes up with it, kept; the thumbnail's picture, probed, or why
     /// there is none; or why nothing was written.
     Published(Box<Result<Published, String>>),
@@ -363,6 +370,15 @@ impl GeneratePane {
             GenerateMsg::WriteScript => self.write(studio, false),
             GenerateMsg::Create => {
                 self.keep(studio);
+                // Still being made from when the person was last here: a
+                // second run would pay for every shot again.
+                if self
+                    .job(studio)
+                    .is_some_and(|job| crate::runs::of(&job.dir).is_some())
+                {
+                    self.message = t("generate.stillMaking");
+                    return;
+                }
                 match self.board.clone() {
                     Some(board) => self.make(studio, board),
                     None => self.write(studio, true),
@@ -402,6 +418,33 @@ impl GeneratePane {
             }
             GenerateMsg::Short => self.short(studio),
             GenerateMsg::Publish => self.publish(studio),
+            GenerateMsg::Tick => {}
+            GenerateMsg::Pill => {
+                let here = self.job(studio).map(|job| job.dir);
+                match crate::runs::latest() {
+                    // The run is this project's: its sheet, as it was.
+                    Some(run) if here.as_ref() == Some(&run.dir) || self.running => {
+                        studio.handle(Msg::Generate(GenerateMsg::Open));
+                    }
+                    Some(run) => studio.notify(&tf("generate.runElsewhere", &[&run.title]), false),
+                    None => {}
+                }
+            }
+            GenerateMsg::Over(dir, title, done) => {
+                // This sheet's own run hears of it as Made, and cuts it.
+                if !self.running {
+                    let here = self.job(studio).map(|job| job.dir);
+                    if here.as_ref() == Some(&dir) {
+                        self.look(studio);
+                        if done {
+                            self.message.clear();
+                        }
+                    }
+                    if done {
+                        studio.notify(&tf("generate.madeAway", &[&title]), false);
+                    }
+                }
+            }
             GenerateMsg::Published(result) => {
                 self.publishing_busy = false;
                 match *result {
@@ -539,13 +582,17 @@ impl GeneratePane {
             }
             GenerateMsg::Cancel => {
                 self.stop.store(true, Ordering::Release);
+                if let Some(job) = self.job(studio) {
+                    crate::runs::stop(&job.dir);
+                }
                 studio.host.speech.cancel();
                 self.stage = t("generate.stopping");
             }
-            GenerateMsg::Progress(progress, stage) => {
+            GenerateMsg::Progress(progress, stage, detail) => {
                 if self.running {
                     self.progress = progress;
                     self.stage = stage;
+                    self.detail = detail;
                 }
             }
             GenerateMsg::Step(step) => {
@@ -697,7 +744,11 @@ impl GeneratePane {
     /// what it made is kept, and the sheet forgets the idea - opened in the
     /// next project it finds that project's own last job.
     pub fn closed(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        // A run goes on in its job's folder, holding the phone awake on
+        // its own (see `runs`); a shot made again stops.
+        if !self.running {
+            self.stop.store(true, Ordering::Release);
+        }
         if self.kept_alive {
             crate::platform::keep_alive(None);
         }
@@ -1058,15 +1109,18 @@ impl GeneratePane {
             move || {
                 let board =
                     writer::write(&brief, &prefs.anthropic_key, writer::DEFAULT_MODEL, |at| {
-                        let (fraction, stage) = match at {
-                            Writing::Outline => (0.02, t("generate.writingOutline")),
-                            Writing::Chapter { n, of } => (
+                        let (fraction, stage, detail) = match at {
+                            Writing::Outline => (0.02, t("generate.writingOutline"), String::new()),
+                            Writing::Chapter { n, of, title } => (
                                 n as f32 / (of + 1) as f32,
                                 tf("generate.writingChapter", &[&n, &of]),
+                                title,
                             ),
                         };
                         on_ui_in_project(epoch, move |studio, _, _| {
-                            studio.handle(Msg::Generate(GenerateMsg::Progress(fraction, stage)));
+                            studio.handle(Msg::Generate(GenerateMsg::Progress(
+                                fraction, stage, detail,
+                            )));
                         });
                     })?;
                 let old = Storyboard::read(&job.storyboard()).ok();
@@ -1309,8 +1363,19 @@ impl GeneratePane {
             .and_then(|path| slint::Image::load_from_path(&path).ok());
         let stop = Arc::clone(&self.stop);
         let epoch = crate::host::project_epoch();
+        // Known by its folder, not by the open project: it goes on when
+        // the person opens another, and shows when they come back.
+        let title = if board.title.trim().is_empty() {
+            self.topic.trim().to_owned()
+        } else {
+            board.title.trim().to_owned()
+        };
+        crate::runs::begin(&job.dir, &title, Arc::clone(&self.stop));
+        let dir = job.dir.clone();
         spawn_in_project(
             move || {
+                let held = crate::runs::Held(dir.clone());
+                crate::platform::hold(MAKING, Some(t("generate.keptAlive")), -1);
                 let mut speak = |text: &str| -> Result<PathBuf, String> {
                     let request = concat_speech::tts::SpeakRequest {
                         model_id: model.clone().unwrap_or_default(),
@@ -1327,9 +1392,16 @@ impl GeneratePane {
                         .map(|spoken| PathBuf::from(spoken.path))
                 };
                 let mut progress = |step: Step| {
+                    if let Some((fraction, stage)) = rough(&step) {
+                        crate::runs::update(&dir, fraction, &stage);
+                        crate::platform::hold(MAKING, Some(stage), (fraction * 100.0) as i32);
+                    }
                     on_ui_in_project(epoch, move |studio, _, _| {
                         studio.handle(Msg::Generate(GenerateMsg::Step(step)));
                     });
+                    // Drawn again wherever the window is: the pill reads
+                    // how far the run is.
+                    on_ui(|studio, _, _| studio.handle(Msg::Generate(GenerateMsg::Tick)));
                 };
                 let music = ai_music.then(|| {
                     writer::music_prompt(&board, &writer_key, writer::DEFAULT_MODEL).unwrap_or_else(
@@ -1348,8 +1420,16 @@ impl GeneratePane {
                     &mut speak,
                     &mut progress,
                     &|| stop.load(Ordering::Acquire),
-                )?;
-                Ok((board, made))
+                );
+                drop(held);
+                crate::platform::hold(MAKING, None, -1);
+                // Said wherever the window is now: a run left behind in a
+                // project the person went away from is over.
+                let done = made.is_ok();
+                on_ui(move |studio, _, _| {
+                    studio.handle(Msg::Generate(GenerateMsg::Over(dir, title, done)));
+                });
+                Ok((board, made?))
             },
             |studio, _, _, result| {
                 studio.handle(Msg::Generate(GenerateMsg::Made(Box::new(result))))
@@ -1561,6 +1641,13 @@ impl GeneratePane {
     /// The sheet as Slint shows it.
     pub fn data(&self, studio: &Studio) -> GenerateSheetData {
         let prefs = &studio.prefs.generate;
+        // A run on this job started before the person last left the
+        // project: shown going on, read from where every run says how far
+        // it is, and not started again.
+        let away = (!self.running)
+            .then(|| self.job(studio))
+            .flatten()
+            .and_then(|job| crate::runs::of(&job.dir));
         let summary = self.board.as_ref().map(|board| {
             // A tenth of a minute while that is a difference worth seeing:
             // a short draft would otherwise read as "about 0 min".
@@ -1622,10 +1709,12 @@ impl GeneratePane {
             has_script: self.board.is_some(),
             script_summary: summary.unwrap_or_default().into(),
             status: self.status.as_str().into(),
-            can_short: self.all_made && !self.running,
-            running: self.running,
-            progress: self.progress,
-            stage: self.stage.as_str().into(),
+            can_short: self.all_made && !self.running && away.is_none(),
+            running: self.running || away.is_some(),
+            progress: away.as_ref().map_or(self.progress, |run| run.progress),
+            stage: away
+                .as_ref()
+                .map_or(self.stage.as_str().into(), |run| run.stage.as_str().into()),
             phase: self.phase,
             voiced: self.voiced,
             detail: self.detail.as_str().into(),
@@ -2000,6 +2089,31 @@ fn amount(text: &str) -> Option<f64> {
         .parse::<f64>()
         .ok()
         .filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+/// Who holds the phone's keep-alive while a run makes a video, wherever
+/// the window has gone since.
+const MAKING: &str = "making";
+
+/// How far a run is, roughly, from what it says: for the pill and the
+/// notification, which see it from wherever the window has gone.
+fn rough(step: &Step) -> Option<(f32, String)> {
+    match step {
+        Step::Voice { n, of, .. } => Some((
+            0.05 + 0.2 * (*n as f32 / (*of).max(1) as f32),
+            tf("generate.readingScene", &[n, of]),
+        )),
+        Step::Shot { n, of, .. } => Some((
+            0.25 + 0.7 * ((*n).saturating_sub(1) as f32 / (*of).max(1) as f32),
+            tf("generate.makingShot", &[n, of]),
+        )),
+        Step::Made { n, of, .. } => Some((
+            0.25 + 0.7 * (*n as f32 / (*of).max(1) as f32),
+            tf("generate.makingShot", &[n, of]),
+        )),
+        Step::Music => Some((0.95, t("generate.makingMusic"))),
+        Step::Probing => Some((0.97, t("generate.readingFiles"))),
+    }
 }
 
 /// The music row that is music made for the video by MusicGen.

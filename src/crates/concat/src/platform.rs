@@ -677,6 +677,56 @@ pub fn install_export_publisher(publisher: ExportPublisher) {
     let _ = EXPORT_PUBLISHER.set(publisher);
 }
 
+/// What a phone does with the export it last put where it shows videos:
+/// plays it in its own player, or offers it to the apps that take one.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub struct VideoActions {
+    pub play: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
+    pub share: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+static VIDEO_ACTIONS: std::sync::OnceLock<VideoActions> = std::sync::OnceLock::new();
+
+/// Installs what [`play_export`] and [`share_export`] call. Once.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn install_video_actions(actions: VideoActions) {
+    let _ = VIDEO_ACTIONS.set(actions);
+}
+
+/// Plays a finished export: on a phone the one it last put with its
+/// videos, in its own player; on a desk `path`, in the default one.
+pub fn play_export(path: &str) -> Result<(), String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = path;
+        match VIDEO_ACTIONS.get() {
+            Some(actions) => (actions.play)(),
+            None => Err("this phone cannot play it from here".to_owned()),
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        opener::open(path).map_err(|error| error.to_string())
+    }
+}
+
+/// Offers a phone's last export to the apps that take a video. Nothing to
+/// offer to on a desk, which shows the file in its folder instead.
+pub fn share_export() -> Result<(), String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        match VIDEO_ACTIONS.get() {
+            Some(actions) => (actions.share)(),
+            None => Err("this phone cannot share it from here".to_owned()),
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        Err("sharing is a phone's".to_owned())
+    }
+}
+
 /// What a phone does to keep a long job going while the person is away
 /// from the app: `Some((words, percent))` starts it - or says what it is
 /// doing now, and how far, `-1` for not known - and `None` lets go. On

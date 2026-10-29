@@ -594,6 +594,11 @@ pub struct Decoder {
     /// The source frame the pacer is showing, and the one after it.
     current: Option<Source>,
     pending: Option<Source>,
+    /// A repeating decoder's picture as it was last handed out, by the
+    /// source frame's instant: a still is shown for seconds, and running
+    /// its scale and conversion again for every one of its frames was
+    /// most of what an export of stills spent reading them.
+    shown: Option<(Option<Rational>, Frame)>,
     source_done: bool,
     produced: u64,
     position: Option<Rational>,
@@ -704,6 +709,7 @@ impl Decoder {
             tick: 0,
             origin: Rational::ZERO,
             current: None,
+            shown: None,
             pending: None,
             source_done: false,
             produced: 0,
@@ -819,6 +825,7 @@ impl Decoder {
         self.origin = to;
         self.tick = 0;
         self.current = None;
+        self.shown = None;
         self.pending = None;
         self.source_done = false;
         self.position = None;
@@ -1031,8 +1038,16 @@ impl Decoder {
                 && let Some(last) = self.current.as_ref()
             {
                 self.position = last.pts;
+                let pts = last.pts;
+                if let Some((held, frame)) = &self.shown
+                    && *held == pts
+                {
+                    return Ok(Some(frame.clone()));
+                }
                 let frame = share(&last.frame);
-                return Ok(Some(self.convert(&frame)?));
+                let frame = self.convert(&frame)?;
+                self.shown = Some((pts, frame.clone()));
+                return Ok(Some(frame));
             }
             return Ok(None);
         };
@@ -1091,8 +1106,22 @@ impl Decoder {
         }
         self.position = Some(target);
         self.tick += 1;
+        if !self.options.looping {
+            let frame = share(&current.frame);
+            return Ok(Some(self.convert(&frame)?));
+        }
+        // A still: the picture made once, handed out again for every
+        // frame it shows.
+        let pts = current.pts;
+        if let Some((held, frame)) = &self.shown
+            && *held == pts
+        {
+            return Ok(Some(frame.clone()));
+        }
         let frame = share(&current.frame);
-        Ok(Some(self.convert(&frame)?))
+        let frame = self.convert(&frame)?;
+        self.shown = Some((pts, frame.clone()));
+        Ok(Some(frame))
     }
 }
 
@@ -1202,6 +1231,29 @@ mod tests {
             video_filter(0, &options, 640, 360, None),
             "scale=640:360:flags=bilinear,hue=s=0,scale=640:360:flags=bilinear,format=rgba",
         );
+    }
+
+    /// A still shown for seconds is scaled once: every frame after the
+    /// first is the same picture, handed out again.
+    #[test]
+    fn a_still_is_scaled_once_and_shown_again() {
+        let (width, height) = (64u32, 36u32);
+        let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+        ppm.extend((0..width * height).flat_map(|n| [(n % 251) as u8, (n % 7 * 30) as u8, 90]));
+        let path = std::env::temp_dir().join(format!("concat-still-{}.ppm", std::process::id()));
+        std::fs::write(&path, ppm).unwrap();
+        let options = DecodeOptions::default()
+            .scaled_to(128, 72)
+            .at_rate(FrameRate::new(Rational::from_int(30)))
+            .repeating();
+        let mut decoder = Decoder::open(&path, &options).unwrap();
+        let first = decoder.next_frame().unwrap().expect("a picture");
+        assert!(decoder.shown.is_some(), "kept after the first frame");
+        for _ in 0..20 {
+            let again = decoder.next_frame().unwrap().expect("shown again");
+            assert_eq!(again.pixels(), first.pixels());
+        }
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

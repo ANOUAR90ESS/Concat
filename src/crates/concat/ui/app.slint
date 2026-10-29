@@ -17,6 +17,7 @@ import "../../concat-text/fonts/HankenGrotesk-Bold.ttf";
 import "../../concat-text/fonts/HankenGrotesk-Italic.ttf";
 
 import { Theme } from "theme/theme.slint";
+import { Glyph, Icon } from "icons.slint";
 import { Bezier, Curves, Fmt, Focus, Payload } from "util.slint";
 import { EffectData } from "demo/effects-panel.slint";
 import { MediaFilter, MediaItemData, MediaKind, SourcePreview, TextPresetData } from "workspace/media-pane.slint";
@@ -237,6 +238,14 @@ export component App inherits Window {
     callback export-start();
     callback export-cancel();
     callback export-reveal();
+    /// A job with its sheet put away: 0 none, 1 a Long video being made,
+    /// 2 a file being exported; its name and how far it is.
+    in property <int> pill-kind;
+    in property <string> pill-label;
+    in property <float> pill-progress;
+    callback pill-pressed(kind: int);
+    callback export-play();
+    callback export-share();
     callback export-again();
 
     callback settings-closed();
@@ -760,6 +769,71 @@ export component App inherits Window {
         dismiss-error => { root.start-dismiss-error(); }
     }
 
+    // The job whose sheet was put away, floating over the window: how
+    // far it is, and a press opens it again.
+    if root.pill-kind != 0: Rectangle {
+        property <length> wide: Math.min(root.width - 32px, 360px);
+        x: (root.width - self.wide) / 2;
+        y: root.height - root.safe-area-insets.bottom - self.height - (root.phone ? 92px : 24px);
+        width: self.wide;
+        height: 48px;
+        border-radius: 24px;
+        background: Theme.raised;
+        border-width: 1px;
+        border-color: Theme.line-strong;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #00000080;
+        clip: true;
+
+        // How far, as the pill's own fill.
+        Rectangle {
+            x: 0;
+            width: parent.width * Math.clamp(root.pill-progress, 0, 1);
+            height: parent.height;
+            background: Theme.accent-soft;
+            opacity: 0.6;
+            animate width { duration: 300ms; }
+        }
+
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 10px;
+
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    glyph: root.pill-kind == 2 ? Glyph.export : Glyph.sparkle;
+                    size: 16px;
+                    tint: Theme.accent;
+                }
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.pill-label;
+                color: Theme.fg;
+                font-size: Theme.fs;
+                font-weight: Theme.weight-title;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            Text {
+                text: "\{Math.round(root.pill-progress * 100)}%";
+                color: Theme.fg;
+                font-family: Theme.font-technical;
+                font-size: Theme.fs;
+                vertical-alignment: center;
+            }
+        }
+
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.pill-pressed(root.pill-kind); }
+        }
+    }
+
     ExportDialog {
         inset-top: root.safe-area-insets.top;
         inset-bottom: root.safe-area-insets.bottom;
@@ -788,6 +862,8 @@ export component App inherits Window {
         begin => { root.export-start(); }
         cancel => { root.export-cancel(); }
         reveal => { root.export-reveal(); }
+        play => { root.export-play(); }
+        share => { root.export-share(); }
         again => { root.export-again(); }
     }
 
