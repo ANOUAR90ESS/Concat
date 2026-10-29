@@ -61,9 +61,16 @@ runs no CI, so nothing is built until then.
   is enlarged with Lanczos rather than bilinear when it is decoded - once,
   so it costs nothing - which keeps the edges of a 1344x768 picture
   brought up to 1080p (about a sixth more edge detail, measured).
-- 🚧 **Stage 2: sound.** That video had no audio stream at all: make sure
-  narration (the built-in voices, ElevenLabs) works on the phone, and add
-  background music chosen to the mood.
+- ✅ **Stage 2: sound** (on the branch). That video had no audio stream:
+  the owner narrates with ElevenLabs only (no new free voices). The Music
+  list gained "Made for this video": with real shots on Replicate, the
+  writer describes a bed from the moods, title and first lines, and
+  MusicGen (`meta/musicgen`, about $0.08) makes 30 s of it as
+  `music.mp3` in the job's folder, made once and kept; the cut loops it
+  under the whole video, ducked. A model that is not an official one on
+  Replicate now falls back to its latest version, and a file's real kind
+  (mp3, wav, m4a ...) is read from its bytes. Checked in the phone shell
+  with a stand-in file; the paid MusicGen call waits on the owner's test.
 - ⏳ **Stage 3: no repeated pictures.** Two shots of one scene came out
   near the same picture (scenes 3-4, 9-10): ask the writer for different
   framings, and offer Make again on a picture too like its neighbour.
