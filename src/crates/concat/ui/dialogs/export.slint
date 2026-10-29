@@ -481,7 +481,7 @@ component ExportHero inherits VerticalLayout {
         alignment: center;
 
         Rectangle {
-            width: Math.min(root.width - 40px, 520px);
+            width: root.phone ? 320px : 480px;
             height: self.width * 9 / 16;
             border-radius: 16px;
             clip: true;
@@ -551,7 +551,7 @@ component ExportHero inherits VerticalLayout {
         alignment: center;
 
         Rectangle {
-            width: Math.min(root.width - 40px, 420px);
+            width: root.phone ? 320px : 420px;
             height: hint.preferred-height + 20px;
             border-radius: 12px;
             background: Theme.raised;
