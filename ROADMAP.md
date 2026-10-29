@@ -49,23 +49,42 @@ Status: ✅ done · 🚧 in progress · ⏳ planned · ❌ decided against
 
 ## In progress
 
-- 🚧 **Pictures saved as clips** (this pull request): Replicate's image
-  addresses carry no file type, and a shot was saved as `.mp4` when its
-  address had none: a picture then went on the timeline as a clip one
-  frame long - shown in the cross-fade into it, black after, captions
-  over black in every export. A download is now named for what its bytes
-  hold, and a shot already misnamed is renamed when the video is cut
-  again (Create video), so nothing is paid for again.
+The owner's plan after alpha.15 (28 Oct): the stages below are built one
+after another on the branch, each tested locally and committed there, and
+go up as **one** pull request and one release at the end - a branch push
+runs no CI, so nothing is built until then.
+
+- 🚧 **Stage 1: export quality.** The owner's alpha.15 export of a 60 s
+  1080p video came out at 0.83 Mbit/s - soft, smeared detail. Raise what a
+  Long video exports at, and make its pictures sharper: Replicate's
+  stills are 1344x768, enlarged to 1920x1080 and then by the Ken Burns
+  move.
+- ⏳ **Stage 2: sound.** That video had no audio stream at all: make sure
+  narration (the built-in voices, ElevenLabs) works on the phone, and add
+  background music chosen to the mood.
+- ⏳ **Stage 3: no repeated pictures.** Two shots of one scene came out
+  near the same picture (scenes 3-4, 9-10): ask the writer for different
+  framings, and offer Make again on a picture too like its neighbour.
+- ⏳ **Stage 4: captions timed to the voice word by word**: today a
+  card's time is shared out by its length in letters; reading the
+  narration back with the local transcriber would place each word where
+  it is said.
+- ⏳ **Stage 5: publishing**: a thumbnail, and a title, description and
+  tags for YouTube, written by the writer.
+- ⏳ **Stage 6: interface strings**: many Long video lines are still
+  English in ar.json, es.json and the other locales.
+
+## Done since alpha.14
+
+- ✅ Pictures saved as clips (#23): Replicate's image addresses carry no
+  file type and a shot was saved as `.mp4`; a download is named for what
+  its bytes hold, and a misnamed shot is renamed when the video is cut
+  again.
 
 ## Planned
 
-- ⏳ **Captions timed to the voice word by word**: today a card's time is
-  shared out by its length in letters; reading the narration back with
-  the local transcriber would place each word where it is said.
 - ⏳ **Real test with paid keys**: a full run with Replicate (images and
   clips) and ElevenLabs on the phone, by the owner; fix what it shows.
-- ⏳ **Spanish and other interface strings**: many Long video lines are
-  still English in es.json and the other locales.
 
 ## Decided against
 
