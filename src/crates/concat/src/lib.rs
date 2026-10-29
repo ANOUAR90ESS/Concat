@@ -1570,7 +1570,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_export_browse(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Browse));
     }));
-    app.on_pill_pressed(on_window!(|state, kind| {
+    app.on_pill_pressed(on_window!(|state, kind: i32| {
         if kind == 2 {
             state.handle(Msg::Export(ExportMsg::Open));
         } else {
