@@ -107,8 +107,21 @@ runs no CI, so nothing is built until then.
   (0 lines left in English); Spanish and French have every line
   translated but words that are the same in both (Audio, Normal,
   Idea...). The owner chose to stop there for now.
+- ✅ **Export on a phone** (on the branch). While a file is written the
+  export sheet shows the picture, a progress ring, the stage and the time
+  left instead of the settings, and a green tick once it is. A phone
+  holds the run service while it exports - before, leaving the app froze
+  the export - with the progress as a bar in the notification, told from
+  the export's worker.
 - ⏳ **Later: the other 21 locales.** The Long video sheet and the script
   editor are still English in them: 110 lines each.
+- ⏳ **Ideas the owner raised (29 Oct), not started:** accounts and
+  saved work in the cloud (Supabase-style: sign-in, scripts and settings
+  synced, keys on a server; the videos stay on the phone or are an
+  option); faster making (shots and voice lines made several at a time)
+  and a measured look at where a phone's export spends its time; topic
+  and content suggestions that learn from the owner's own videos and,
+  once signed in to YouTube, from how they did.
 
 ## Done since alpha.14
 
