@@ -193,6 +193,8 @@
   "export.exportEstimate": "导出 · ~",
   "export.exportFailed": "导出失败：{0}",
   "export.exportFinished": "导出完成",
+  "export.inBackground": "Exporting {0}",
+  "export.keepsGoing": "You can leave the app: the export keeps going, and the notification shows how far it is.",
   "export.exportTo": "导出到",
   "export.exported": "已导出 · {0}",
   "export.finalisingFile": "正在完成文件",

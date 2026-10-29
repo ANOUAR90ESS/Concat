@@ -386,6 +386,224 @@ component OutputSection inherits DialogSection {
     }
 }
 
+// A ring that fills clockwise from the top as the file is written, the
+// share in the middle; green and full once it is.
+component ProgressRing inherits Rectangle {
+    in property <float> value;
+    in property <bool> done;
+    /// Where the arc ends, short of a whole turn, which would draw nothing.
+    property <float> share: Math.clamp(root.done ? 1 : root.value, 0, 0.9999);
+    property <angle> turn: root.share * 360deg;
+
+    width: 168px;
+    height: 168px;
+
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M50 7 A43 43 0 1 1 49.99 7";
+        stroke: Theme.well;
+        stroke-width: 9px;
+    }
+
+    if root.share > 0.002: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M50 7 A43 43 0 \{root.share > 0.5 ? 1 : 0} 1 \{50 + 43 * Math.sin(root.turn)} \{50 - 43 * Math.cos(root.turn)}";
+        stroke: root.done ? Theme.green : Theme.accent;
+        stroke-width: 9px;
+        stroke-line-cap: round;
+    }
+
+    if !root.done: Text {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        text: "\{Math.round(root.value * 100)}%";
+        color: Theme.fg;
+        font-family: Theme.font-technical;
+        font-size: 34px;
+        font-weight: 700;
+    }
+
+    if root.done: Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        glyph: Glyph.check;
+        size: 44px;
+        tint: Theme.green;
+    }
+}
+
+// A fact about the file in a pill: the frame, the length, what is in it.
+component Chip inherits Rectangle {
+    in property <string> text;
+
+    height: 26px;
+    width: label.preferred-width + 20px;
+    border-radius: self.height / 2;
+    background: Theme.raised;
+    border-width: 1px;
+    border-color: Theme.line;
+
+    label := Text {
+        x: 10px;
+        y: (parent.height - self.height) / 2;
+        text: root.text;
+        color: Theme.fg-muted;
+        font-family: Theme.font-technical;
+        font-size: Theme.fs-xs;
+    }
+}
+
+// The sheet while the file is written and once it is: the picture, the
+// ring, what it is doing and how long is left - nothing to change, so no
+// settings - and, on a phone, that it goes on with the app left.
+component ExportHero inherits VerticalLayout {
+    in property <ExportData> data;
+    in property <image> frame;
+    in property <bool> phone;
+
+    callback cancel();
+    callback reveal();
+    callback again();
+
+    property <bool> done: root.data.phase == ExportPhase.done;
+
+    alignment: center;
+    spacing: 18px;
+    padding: 20px;
+
+    HorizontalLayout {
+        alignment: center;
+
+        Rectangle {
+            width: Math.min(root.width - 40px, 520px);
+            height: self.width * 9 / 16;
+            border-radius: 16px;
+            clip: true;
+            background: Theme.well;
+
+            Image {
+                width: 100%;
+                height: 100%;
+                source: root.frame;
+                image-fit: cover;
+            }
+
+            // A veil, so the picture is the scene and not the subject.
+            Rectangle {
+                background: @linear-gradient(180deg, #00000000 40%, #000000a0 100%);
+            }
+
+            Text {
+                x: 14px;
+                y: parent.height - self.height - 12px;
+                width: parent.width - 28px;
+                text: root.data.name;
+                color: #ffffff;
+                font-size: Theme.fs-lg;
+                font-weight: Theme.weight-title;
+                overflow: elide;
+            }
+        }
+    }
+
+    HorizontalLayout {
+        alignment: center;
+        ProgressRing { value: root.data.progress; done: root.done; }
+    }
+
+    VerticalLayout {
+        spacing: 4px;
+
+        Text {
+            horizontal-alignment: center;
+            text: root.done
+                ? I18n.t1("export.exported", "\{root.data.done-size}")
+                : root.data.stage;
+            color: root.done ? Theme.green : Theme.fg;
+            font-size: Theme.fs-lg;
+            font-weight: Theme.weight-title;
+            wrap: word-wrap;
+        }
+
+        if !root.done: Text {
+            horizontal-alignment: center;
+            text: root.data.eta;
+            color: Theme.fg-muted;
+            font-family: Theme.font-technical;
+            font-size: Theme.fs;
+        }
+    }
+
+    HorizontalLayout {
+        alignment: center;
+        spacing: 6px;
+        Chip { text: root.data.format; }
+        Chip { text: root.data.duration; }
+    }
+
+    if root.phone && !root.done: HorizontalLayout {
+        alignment: center;
+
+        Rectangle {
+            width: Math.min(root.width - 40px, 420px);
+            height: hint.preferred-height + 20px;
+            border-radius: 12px;
+            background: Theme.raised;
+
+            HorizontalLayout {
+                padding: 10px;
+                spacing: 8px;
+
+                VerticalLayout {
+                    alignment: start;
+                    Icon { glyph: Glyph.info; size: 14px; tint: Theme.accent; }
+                }
+
+                hint := Text {
+                    horizontal-stretch: 1;
+                    text: I18n.t("export.keepsGoing");
+                    color: Theme.fg-muted;
+                    font-size: Theme.fs-sm;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+
+    if !root.done: HorizontalLayout {
+        alignment: center;
+        Button {
+            label: I18n.t("export.cancelExport");
+            glyph: Glyph.close;
+            ghost: true;
+            clicked => { root.cancel(); }
+        }
+    }
+
+    if root.done: HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+
+        if !root.phone: Button {
+            label: I18n.t("export.showInFolder");
+            glyph: Glyph.import;
+            primary: true;
+            clicked => { root.reveal(); }
+        }
+        Button {
+            label: I18n.t("export.exportAgain");
+            ghost: true;
+            clicked => { root.again(); }
+        }
+    }
+}
+
 // What is under the groups: the failure, the progress, the result, and
 // the button that starts it all.
 component ExportFooter inherits VerticalLayout {
@@ -432,80 +650,6 @@ component ExportFooter inherits VerticalLayout {
                 alignment: start;
                 CopyChip { text: root.data.message; }
             }
-        }
-    }
-
-    if root.running: HorizontalLayout {
-        spacing: 8px;
-
-        Text {
-            text: root.data.stage;
-            color: Theme.fg;
-            font-size: Theme.fs;
-            vertical-alignment: center;
-        }
-
-        Text {
-            horizontal-stretch: 1;
-            text: "\{Math.round(root.data.progress * 100)}%";
-            color: Theme.fg-muted;
-            font-family: Theme.font-technical;
-            font-size: Theme.fs;
-            vertical-alignment: center;
-        }
-
-        Text {
-            text: root.data.eta;
-            color: Theme.fg-muted;
-            font-family: Theme.font-technical;
-            font-size: Theme.fs;
-            vertical-alignment: center;
-        }
-    }
-
-    if root.running: Progress { value: root.data.progress; live: true; }
-
-    if root.running: HorizontalLayout {
-        alignment: start;
-        Button {
-            label: I18n.t("export.cancelExport");
-            glyph: Glyph.close;
-            ghost: true;
-            clicked => { root.cancel(); }
-        }
-    }
-
-    if root.data.phase == ExportPhase.done: HorizontalLayout {
-        spacing: 8px;
-        alignment: start;
-
-        VerticalLayout {
-            alignment: center;
-            Icon { glyph: Glyph.check; size: 15px; tint: Theme.green; }
-        }
-
-        Text {
-            text: I18n.t1("export.exported", "\{root.data.done-size}");
-            color: Theme.green;
-            font-size: Theme.fs;
-            font-weight: Theme.weight-title;
-            vertical-alignment: center;
-        }
-    }
-
-    if root.data.phase == ExportPhase.done: HorizontalLayout {
-        spacing: 6px;
-        alignment: start;
-
-        if !root.phone: Button {
-            label: I18n.t("export.showInFolder");
-            glyph: Glyph.import;
-            clicked => { root.reveal(); }
-        }
-        Button {
-            label: I18n.t("export.exportAgain");
-            ghost: true;
-            clicked => { root.again(); }
         }
     }
 
@@ -573,6 +717,7 @@ export component ExportDialog inherits Rectangle {
     callback again();
 
     property <bool> running: root.data.phase == ExportPhase.running;
+    property <bool> busy-or-done: root.running || root.data.phase == ExportPhase.done;
     /// How many columns the width holds. Three groups a column wide need
     /// about 330px each; under two of those the sheet is a phone's single
     /// column and scrolls.
@@ -688,15 +833,26 @@ export component ExportDialog inherits Rectangle {
                     padding-top: 8px;
                     padding-bottom: 16px;
 
-                    if root.running || root.columns == 1: VerticalLayout {
+                    // Writing, or written: the picture and the ring, and no
+                    // settings, which there is nothing to do with now.
+                    if root.busy-or-done: ExportHero {
+                        data: root.data;
+                        frame: root.preview-frame;
+                        phone: root.phone;
+                        cancel => { root.cancel(); }
+                        reveal => { root.reveal(); }
+                        again => { root.again(); }
+                    }
+
+                    if !root.busy-or-done && root.columns == 1: VerticalLayout {
                         SummarySection { first: true; data: root.data; }
-                        if !root.running: DestinationSection {
+                        DestinationSection {
                             data: root.data;
                             phone: root.phone;
                             name-edited(name) => { root.name-edited(name); }
                             browse => { root.browse(); }
                         }
-                        if !root.running: OutputSection {
+                        OutputSection {
                             data: root.data;
                             bitrate-changed(mbps) => { root.bitrate-changed(mbps); }
                             rate-changed(index) => { root.rate-changed(index); }
@@ -708,7 +864,7 @@ export component ExportDialog inherits Rectangle {
 
                     // Two columns: the picture, what it is and where it
                     // goes on the left; how it is written on the right.
-                    if !root.running && root.columns == 2: HorizontalLayout {
+                    if !root.busy-or-done && root.columns == 2: HorizontalLayout {
                         spacing: 12px;
 
                         VerticalLayout {
@@ -748,7 +904,7 @@ export component ExportDialog inherits Rectangle {
 
                     // Three columns: the picture and what it is; how it is
                     // written; where it goes.
-                    if !root.running && root.columns == 3: HorizontalLayout {
+                    if !root.busy-or-done && root.columns == 3: HorizontalLayout {
                         spacing: 12px;
 
                         VerticalLayout {
@@ -795,13 +951,13 @@ export component ExportDialog inherits Rectangle {
             }
 
             // ── the footer ───────────────────────────────────────────────
-            Rectangle {
+            if !root.busy-or-done: Rectangle {
                 height: 1px;
                 background: Theme.line;
             }
 
             // The groups pad themselves; the footer is padded to match.
-            Measure {
+            if !root.busy-or-done: Measure {
                 padding: 14px;
 
                 ExportFooter {

@@ -193,6 +193,8 @@
   "export.exportEstimate": "ایکسپورٹ · ~",
   "export.exportFailed": "ایکسپورٹ ناکام: {0}",
   "export.exportFinished": "ایکسپورٹ مکمل",
+  "export.inBackground": "Exporting {0}",
+  "export.keepsGoing": "You can leave the app: the export keeps going, and the notification shows how far it is.",
   "export.exportTo": "یہاں ایکسپورٹ کریں",
   "export.exported": "ایکسپورٹ ہو گیا · {0}",
   "export.finalisingFile": "فائل مکمل کی جا رہی ہے",

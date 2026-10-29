@@ -36,6 +36,8 @@ public class RunService extends Service {
     public static final String NAME = "app.concat.editor.RunService";
     /** The intent's words for the notification. */
     public static final String DOING = "doing";
+    /** How far, in percent, for the notification's bar; -1 for none. */
+    public static final String PROGRESS = "progress";
 
     private static final String CHANNEL = "run";
     private static final int NOTIFICATION = 1;
@@ -47,7 +49,8 @@ public class RunService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String doing = intent == null ? null : intent.getStringExtra(DOING);
-        Notification notification = notification(doing == null ? "" : doing);
+        int progress = intent == null ? -1 : intent.getIntExtra(PROGRESS, -1);
+        Notification notification = notification(doing == null ? "" : doing, progress);
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIFICATION, notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
@@ -86,8 +89,12 @@ public class RunService extends Service {
         return null;
     }
 
-    /** The notification the service runs under; a tap opens the app. */
-    private Notification notification(String doing) {
+    /**
+     * The notification the service runs under, with a bar for how far when
+     * that is known; a tap opens the app. Said again as the job goes on,
+     * quietly: only the first one is announced.
+     */
+    private Notification notification(String doing, int progress) {
         NotificationManager manager =
                 (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
@@ -99,7 +106,11 @@ public class RunService extends Service {
                 .setContentTitle(getApplicationInfo().loadLabel(getPackageManager()))
                 .setContentText(doing)
                 .setSmallIcon(getApplicationInfo().icon)
+                .setOnlyAlertOnce(true)
                 .setOngoing(true);
+        if (progress >= 0) {
+            builder.setProgress(100, progress, false);
+        }
         Intent open = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (open != null) {
             builder.setContentIntent(PendingIntent.getActivity(this, 0, open,

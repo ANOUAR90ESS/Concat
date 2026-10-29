@@ -193,6 +193,8 @@
   "export.exportEstimate": "Exportar · ~",
   "export.exportFailed": "La exportación falló: {0}",
   "export.exportFinished": "Exportación terminada",
+  "export.inBackground": "Exportando {0}",
+  "export.keepsGoing": "Puedes salir de la app: la exportación sigue y la notificación muestra cuánto falta.",
   "export.exportTo": "Exportar a",
   "export.exported": "Exportado · {0}",
   "export.finalisingFile": "Finalizando el archivo",

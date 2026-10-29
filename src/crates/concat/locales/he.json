@@ -193,6 +193,8 @@
   "export.exportEstimate": "ייצוא · ~",
   "export.exportFailed": "הייצוא נכשל: {0}",
   "export.exportFinished": "הייצוא הסתיים",
+  "export.inBackground": "Exporting {0}",
+  "export.keepsGoing": "You can leave the app: the export keeps going, and the notification shows how far it is.",
   "export.exportTo": "ייצוא אל",
   "export.exported": "הייצוא הושלם · {0}",
   "export.finalisingFile": "מסיים את הקובץ",

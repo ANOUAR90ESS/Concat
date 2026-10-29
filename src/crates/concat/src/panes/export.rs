@@ -66,6 +66,9 @@ pub enum ExportMsg {
     Published(Result<String, String>),
 }
 
+/// Who holds the phone's keep-alive while a file is written.
+const KEEP: &str = "export";
+
 /// The export sheet's state.
 pub struct ExportPane {
     pub open: bool,
@@ -182,6 +185,7 @@ impl ExportPane {
             ExportMsg::Start => self.start(studio),
             ExportMsg::Overwrite => self.begin(studio, true),
             ExportMsg::Cancel => {
+                platform::hold(KEEP, None, -1);
                 studio.host.exporter.cancel();
                 self.phase = ExportPhase::Idle;
                 self.progress = 0.0;
@@ -480,6 +484,12 @@ impl ExportPane {
         // None there or without a GPU, and the render then opens what it
         // can.
         let compositor = studio.host.monitor.off_thread();
+        // A phone keeps the app going while the file is written, with the
+        // app left for another, and shows how far in a notification. Told
+        // from the worker, which goes on while the window, behind another
+        // app, may not be drawing.
+        let doing = i18n::tf("export.inBackground", &[&self.name]);
+        platform::hold(KEEP, Some(doing.clone()), 0);
         spawn(
             move || {
                 let job = job;
@@ -489,6 +499,8 @@ impl ExportPane {
                     } else {
                         0.0
                     };
+                    let percent = (fraction.clamp(0.0, 1.0) * 100.0) as i32;
+                    platform::hold(KEEP, Some(doing.clone()), percent);
                     let stage = match progress.stage {
                         "rendering" => t("export.renderingVideo"),
                         "mixing audio" => t("export.mixingAudio"),
@@ -500,7 +512,10 @@ impl ExportPane {
                     });
                 })
             },
-            |studio, _, _, result| studio.handle(Msg::Export(ExportMsg::Finished(result))),
+            |studio, _, _, result| {
+                platform::hold(KEEP, None, -1);
+                studio.handle(Msg::Export(ExportMsg::Finished(result)))
+            },
         );
     }
 
