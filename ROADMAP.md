@@ -200,6 +200,19 @@ quantiser ceiling. And a one-minute video was slow to export.
   and the export sheet writes HEVC on such a phone until another codec
   is picked. Share the log also carries the run before this one, where
   an export is when the app was opened again to send it.
+- 🚧 **2c: what alpha.19 showed.** The chip took the constant quality
+  (`quality 79, bitrate_mode=cq codec_name=c2.qti.hevc.encoder.cq`): a
+  clear step up, still short of YouTube and TikTok. Asked for 95 now.
+- 🚧 **3a: export speed, the writer on its own thread.** A 3:17 export
+  took 9:44 on the Adreno 613, 10 frames a second: reading 17 ms,
+  drawing 43 ms and writing 33 ms a frame, one after the other. The
+  encoder now runs on a thread of its own a few frames behind the
+  drawing, so a frame costs about what reading and drawing do: about
+  1.5 times faster. Reading the next frame while this one is drawn is
+  next.
+- ⏳ **Voice and captions out of step in the first minute; the sound
+  dipping or gone for a second now and then** (owner, 3-minute video):
+  waits on when and where, and a short recording.
 - ⏳ **3: export speed.** Waits on the owner's log: its "export done"
   line says how the time splits between reading, drawing and writing.
 - ⏳ **If the chip still keeps nothing:** a software H.264 encoder

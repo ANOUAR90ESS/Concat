@@ -1510,19 +1510,16 @@ fn render_picture(
     let signal = output_of(request.color_space);
     let hdr = request.hdr && signal != Signal::Sdr;
     compositor.deliver_hdr(hdr);
-    let mut encoder = if hdr {
-        Encoder::create_hdr(
-            destination,
-            request.width,
-            request.height,
-            rate,
-            &options,
-            signal,
-        )
-    } else {
-        Encoder::create(destination, request.width, request.height, rate, &options)
-    }
-    .map_err(|error| error.to_string())?;
+    let (width, height) = (request.width, request.height);
+    let path = destination.to_path_buf();
+    let mut encoder = Writer::open(move || {
+        if hdr {
+            Encoder::create_hdr(&path, width, height, rate, &options, signal)
+        } else {
+            Encoder::create(&path, width, height, rate, &options)
+        }
+        .map_err(|error| error.to_string())
+    })?;
 
     // How many devices have died under this export so far; see `recovered`.
     let mut losses = 0;
@@ -1702,9 +1699,7 @@ fn render_picture(
         }
         spent.drawing += drawing.elapsed();
         let writing = std::time::Instant::now();
-        encoder
-            .write_frame(&composed)
-            .map_err(|error| error.to_string())?;
+        encoder.write(composed)?;
         spent.writing += writing.elapsed();
         spent.frames += 1;
         spent.say_now_and_then();
@@ -1720,8 +1715,115 @@ fn render_picture(
         }
     }
 
+    let encoding = encoder.finish()?;
     spent.say("done");
-    encoder.finish().map_err(|error| error.to_string())
+    log::info!(
+        "export: the encoder's own, on its thread: {:.1} ms a frame",
+        encoding.as_secs_f64() * 1000.0 / spent.frames.max(1) as f64
+    );
+    Ok(())
+}
+
+/// The encoder on a thread of its own, a few frames behind the drawing:
+/// converting a frame and handing it to the encoder took a phone a third
+/// of each frame's time, one after the other with reading and drawing,
+/// and now overlaps them. The frames wait in a short queue, so drawing
+/// never runs far ahead of what is written.
+struct Writer {
+    frames: Option<std::sync::mpsc::SyncSender<Frame>>,
+    thread: Option<std::thread::JoinHandle<Result<std::time::Duration, String>>>,
+}
+
+/// How many drawn frames may wait for the encoder.
+const WRITER_QUEUE: usize = 3;
+
+impl Writer {
+    /// Opens the encoder `open` makes on the writer's thread, and says
+    /// whether it opened before any frame is drawn.
+    fn open(
+        open: impl FnOnce() -> Result<Encoder, String> + Send + 'static,
+    ) -> Result<Self, String> {
+        let (frames, queue) = std::sync::mpsc::sync_channel::<Frame>(WRITER_QUEUE);
+        let (opened, opening) = std::sync::mpsc::channel::<Result<(), String>>();
+        let thread = std::thread::Builder::new()
+            .name("concat-export-writer".into())
+            .spawn(move || {
+                let mut encoder = match open() {
+                    Ok(encoder) => {
+                        let _ = opened.send(Ok(()));
+                        encoder
+                    }
+                    Err(error) => {
+                        let _ = opened.send(Err(error.clone()));
+                        return Err(error);
+                    }
+                };
+                let mut spent = std::time::Duration::ZERO;
+                for frame in queue {
+                    let began = std::time::Instant::now();
+                    encoder
+                        .write_frame(&frame)
+                        .map_err(|error| error.to_string())?;
+                    spent += began.elapsed();
+                }
+                encoder.finish().map_err(|error| error.to_string())?;
+                Ok(spent)
+            })
+            .map_err(|error| format!("could not start the export's writer: {error}"))?;
+        let mut writer = Writer {
+            frames: Some(frames),
+            thread: Some(thread),
+        };
+        match opening.recv() {
+            Ok(Ok(())) => Ok(writer),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(writer.ended()),
+        }
+    }
+
+    /// Hands a drawn frame to the encoder, waiting while the queue is full.
+    fn write(&mut self, frame: Frame) -> Result<(), String> {
+        let sent = self
+            .frames
+            .as_ref()
+            .map(|frames| frames.send(frame).is_ok());
+        if sent == Some(true) {
+            Ok(())
+        } else {
+            Err(self.ended())
+        }
+    }
+
+    /// Writes what is queued and closes the file: the encoder's own time.
+    fn finish(mut self) -> Result<std::time::Duration, String> {
+        self.frames = None;
+        match self.thread.take().map(std::thread::JoinHandle::join) {
+            Some(Ok(result)) => result,
+            Some(Err(_)) => Err("the export's writer stopped unexpectedly".into()),
+            None => Err("the export's writer was already closed".into()),
+        }
+    }
+
+    /// Why the writer's thread ended early.
+    fn ended(&mut self) -> String {
+        self.frames = None;
+        match self.thread.take().map(std::thread::JoinHandle::join) {
+            Some(Ok(Err(error))) => error,
+            _ => "the export's writer stopped unexpectedly".into(),
+        }
+    }
+}
+
+impl Drop for Writer {
+    /// An export cancelled or failed mid-way: the queue is closed and the
+    /// thread let finish what it holds, so the file is closed before the
+    /// caller deletes it.
+    fn drop(&mut self) {
+        self.frames = None;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 /// Where an export's time goes, frame by frame: reading the sources,

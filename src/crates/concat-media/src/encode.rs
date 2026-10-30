@@ -747,11 +747,13 @@ fn crf_for_kbps(
     crf.round().clamp(14.0, 40.0) as u8
 }
 
-/// The constant quality a phone is asked for, for a CRF: its best at 16
-/// and under, its worst at 40, in a line between - 79 of 0-100 at CRF
-/// 21, what the export sheet's 1080p bitrate comes to.
+/// The constant quality a phone is asked for, for a CRF: its best at 20
+/// and under, its worst at 40, in a line between - 95 of 0-100 at CRF
+/// 21, what the export sheet's 1080p bitrate comes to. 79 there was a
+/// clear step up on the owner's Snapdragon, and still short of what
+/// YouTube and TikTok want.
 fn phone_quality(crf: u8, (worst, best): (i32, i32)) -> i32 {
-    let share = (40.0 - f64::from(crf.clamp(16, 40))) / 24.0;
+    let share = (40.0 - f64::from(crf.clamp(20, 40))) / 20.0;
     worst + (f64::from(best - worst) * share).round() as i32
 }
 
@@ -2494,10 +2496,10 @@ mod tests {
     }
 
     /// A CRF comes to a phone's constant quality in a line from its best
-    /// at 16 to its worst at 40.
+    /// at 20 to its worst at 40.
     #[test]
     fn a_crf_comes_to_a_phone_quality() {
-        assert_eq!(phone_quality(21, (0, 100)), 79);
+        assert_eq!(phone_quality(21, (0, 100)), 95);
         assert_eq!(phone_quality(16, (0, 100)), 100);
         assert_eq!(phone_quality(10, (0, 100)), 100);
         assert_eq!(phone_quality(51, (1, 10)), 1);
