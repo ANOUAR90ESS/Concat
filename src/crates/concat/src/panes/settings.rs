@@ -236,7 +236,9 @@ impl SettingsPane {
                 // that take text - a messenger, mail - as a report, the
                 // system block and the end of this run's file.
                 if cfg!(any(target_os = "android", target_os = "ios")) {
-                    let shared = log_report().and_then(|report| platform::share_log(&report));
+                    let folder = concat_host::logs::folder(&studio.host.dirs);
+                    let shared =
+                        log_report(&folder).and_then(|report| platform::share_log(&report));
                     if let Err(error) = shared {
                         studio.notify(&i18n::tf("settings.couldNotShowLog", &[&error]), true);
                     }
@@ -1048,15 +1050,46 @@ mod listen_tests {
     }
 }
 
-/// The most of a log a report carries: about 90 KB, the end of the file,
-/// which is what a messenger takes in one message and where the export
-/// a person just ran is.
-const LOG_REPORT_BYTES: usize = 90_000;
+/// The most of one log a report carries: about 45 KB, the end of the
+/// file, so this run's and the one before it fit in what a messenger
+/// takes in one message.
+const LOG_REPORT_BYTES: usize = 45_000;
 
-/// This run's log as a report a phone shares: the system block, then the
-/// end of the file from the start of a line.
-fn log_report() -> Result<String, String> {
-    let path = concat_host::logs::current().ok_or("this run writes no log")?;
+/// This run's log as a report a phone shares: the system block, the end
+/// of the run before this one - a phone that exported, then was closed
+/// and opened again to send the log, has the export there - and the end
+/// of this run's.
+fn log_report(folder: &std::path::Path) -> Result<String, String> {
+    let current = concat_host::logs::current().ok_or("this run writes no log")?;
+    let facts = crate::sysinfo::system_facts()
+        .into_iter()
+        .map(|(label, value)| format!("{label}: {value}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut report = facts;
+    if let Some(previous) = previous_log(folder, current) {
+        report.push_str("\n\n--- the run before ---\n");
+        report.push_str(&log_tail(&previous)?);
+    }
+    report.push_str("\n\n--- this run ---\n");
+    report.push_str(&log_tail(current)?);
+    Ok(report)
+}
+
+/// The log written last before `current`, if the folder keeps one.
+fn previous_log(folder: &std::path::Path, current: &std::path::Path) -> Option<std::path::PathBuf> {
+    std::fs::read_dir(folder)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path != current && path.extension().is_some_and(|ext| ext == "log"))
+        .filter_map(|path| Some((std::fs::metadata(&path).ok()?.modified().ok()?, path)))
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+}
+
+/// The end of the log at `path`, from the start of a line.
+fn log_tail(path: &std::path::Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let mut tail = &bytes[bytes.len().saturating_sub(LOG_REPORT_BYTES)..];
     if tail.len() < bytes.len()
@@ -1064,10 +1097,5 @@ fn log_report() -> Result<String, String> {
     {
         tail = &tail[line + 1..];
     }
-    let facts = crate::sysinfo::system_facts()
-        .into_iter()
-        .map(|(label, value)| format!("{label}: {value}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    Ok(format!("{facts}\n\n{}", String::from_utf8_lossy(tail)))
+    Ok(String::from_utf8_lossy(tail).into_owned())
 }
