@@ -340,6 +340,7 @@ public class ConcatFiles extends Fragment {
         }
     }
 
+<<<<<<< HEAD
     /**
      * Hands text - the app's log - to the apps that take it: a messenger,
      * mail, a note. Headed by the phone's name and its video encoders, the
@@ -425,6 +426,8 @@ public class ConcatFiles extends Fragment {
         return false;
     }
 
+=======
+>>>>>>> origin/ccr-e4840680-erqz1g
     /** Asked for the notification permission once a process, not every run. */
     private static boolean askedToNotify;
 

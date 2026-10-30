@@ -168,6 +168,7 @@ the phone's chip ignored the CBR of stage 1 - and took about 7 minutes.
   would pay twice; when it ends elsewhere a toast says to open its
   project and press Create video, which cuts it without paying again.
 
+<<<<<<< HEAD
 ## After alpha.17 (owner's test, 30 Oct)
 
 alpha.17 works, but a 72 s 1080x1920 export still came out at 0.82
@@ -193,6 +194,8 @@ quantiser ceiling. And a one-minute video was slow to export.
 - ⏳ **If the chip still keeps nothing:** a software H.264 encoder
   (OpenH264) in the phone's FFmpeg as a "best quality, slower" choice.
 
+=======
+>>>>>>> origin/ccr-e4840680-erqz1g
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

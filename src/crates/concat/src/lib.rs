@@ -47,9 +47,14 @@ mod platform;
 /// `platform::publish_export`.
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub use platform::{
+<<<<<<< HEAD
     ExportPublisher, FilePicker, KeepAlive, LogSharer, VideoActions, install_export_publisher,
     install_file_picker, install_keep_alive, install_log_sharer, install_phone_encoders,
     install_video_actions,
+=======
+    ExportPublisher, FilePicker, KeepAlive, VideoActions, install_export_publisher,
+    install_file_picker, install_keep_alive, install_video_actions,
+>>>>>>> origin/ccr-e4840680-erqz1g
 };
 mod panes;
 mod prefs;

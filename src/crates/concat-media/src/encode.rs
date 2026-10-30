@@ -625,6 +625,7 @@ fn phone_qp_ceiling(encoder_name: &str, crf: u8, average: bool) -> Option<(u8, u
     Some((base + 4, base + 6, base + 8))
 }
 
+<<<<<<< HEAD
 /// The finest a phone's H.264 or HEVC encoder may quantise, for the
 /// quality setting: well under the CRF. A chip's own floor can sit near
 /// where the owner's chip wrote everything - a floor it will not go under
@@ -720,6 +721,8 @@ type Tags = (
     ffmpeg::color::Space,
 );
 
+=======
+>>>>>>> origin/ccr-e4840680-erqz1g
 /// One encoder's context, set up and opened for the file: the frame's
 /// size, rate and tags, and the settings `encoder_name` is steered by.
 /// Returns the encoder and the pixel format it takes its pictures in.
@@ -965,6 +968,7 @@ fn open_video_as(
         // A phone's chip. The NDK's MediaCodec, not the Java one: no
         // JavaVM is handed to FFmpeg, and the NDK needs none.
         _ if family == Family::MediaCodec => {
+<<<<<<< HEAD
             if let Some(quality) = constant_quality {
                 // SAFETY: `video` owns a live AVCodecContext not yet
                 // opened; FFmpeg hands this to the chip as its quality.
@@ -987,6 +991,17 @@ fn open_video_as(
                 }
                 settings
             }
+=======
+            let mut settings = ffmpeg::dict! {
+                "bitrate_mode" => phone_mode(average),
+            };
+            if let Some((i, p, b)) = phone_qp_ceiling(encoder_name, options.crf, average) {
+                settings.set("qp_i_max", i.to_string());
+                settings.set("qp_p_max", p.to_string());
+                settings.set("qp_b_max", b.to_string());
+            }
+            settings
+>>>>>>> origin/ccr-e4840680-erqz1g
         }
         // Windows' Media Foundation, whatever the machine has behind it.
         _ if family == Family::MediaFoundation => ffmpeg::dict! {
@@ -1096,12 +1111,19 @@ fn open_video_as(
         // chip that keeps none of it writes a file far under the target.
         let asked: Vec<String> = settings.iter().map(|(k, v)| format!("{k}={v}")).collect();
         log::info!(
+<<<<<<< HEAD
             "{encoder_name}: {}x{} at {} kbit/s, quality {}, {}",
+=======
+            "{encoder_name}: {}x{} at {} kbit/s, {}",
+>>>>>>> origin/ccr-e4840680-erqz1g
             width,
             height,
             // SAFETY: `video` owns a live AVCodecContext; read only.
             unsafe { (*video.as_ptr()).bit_rate } / 1000,
+<<<<<<< HEAD
             constant_quality.map_or("by bitrate".to_owned(), |quality| quality.to_string()),
+=======
+>>>>>>> origin/ccr-e4840680-erqz1g
             asked.join(" ")
         );
     }
@@ -2354,6 +2376,7 @@ mod tests {
         assert_eq!(phone_qp_ceiling("h264_mediacodec", 20, true), None);
     }
 
+<<<<<<< HEAD
     /// The floor under a phone's quantiser is set low, out of the way of
     /// a chip whose own sits where it wrote everything.
     #[test]
@@ -2409,6 +2432,8 @@ mod tests {
         assert_eq!(phone_quality(51, (1, 10)), 1);
     }
 
+=======
+>>>>>>> origin/ccr-e4840680-erqz1g
     /// Every codec has an encoder listed for every platform but AV1 on
     /// iOS, and a phone lists its hardware alone, whatever `hardware` says:
     /// its FFmpeg has nothing else.
