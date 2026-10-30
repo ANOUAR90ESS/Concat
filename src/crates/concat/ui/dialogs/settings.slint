@@ -1335,9 +1335,11 @@ export component SettingsDialog inherits Modal {
                         // this machine is, the log says what the app did on
                         // it. A run writes one file, and the last ten runs
                         // are in the folder this opens.
+                        // A phone has no file manager: it shares the log
+                        // with a messenger or mail instead.
                         IconButton {
-                            glyph: Glyph.folder;
-                            label: I18n.t("settings.showTheLog");
+                            glyph: root.phone ? Glyph.export : Glyph.folder;
+                            label: root.phone ? I18n.t("settings.shareTheLog") : I18n.t("settings.showTheLog");
                             icon-size: 13px;
                             clicked => { root.show-log(); }
                         }

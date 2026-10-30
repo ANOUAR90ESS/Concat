@@ -304,6 +304,17 @@ mod publisher {
     /// Hands the window's crate the way to the media store, where this
     /// phone has one to write through.
     pub fn install(app: &AndroidApp) {
+        match (
+            string(app, jni_str!("device")),
+            string(app, jni_str!("encoders")),
+        ) {
+            (Ok(device), Ok(encoders)) => concat::install_phone_encoders(&device, &encoders),
+            (Err(error), _) | (_, Err(error)) => {
+                log::warn!("could not ask for the phone's encoders: {error}");
+            }
+        }
+        let to_share = app.clone();
+        concat::install_log_sharer(Box::new(move |text| share_text(&to_share, text)));
         let folder = match published_folder(app) {
             Ok(Some(folder)) => folder,
             Ok(None) => {
@@ -350,6 +361,44 @@ mod publisher {
             Ok(())
         } else {
             Err("nothing on this phone took the video".to_owned())
+        }
+    }
+
+    /// A static `ConcatFiles` method that takes nothing and gives a string.
+    fn string(
+        app: &AndroidApp,
+        method: &'static jni::strings::JNIStr,
+    ) -> jni::errors::Result<String> {
+        super::java::with_class(app, |env, _activity, class| {
+            let answer = env
+                .call_static_method(class, method, jni_sig!("()Ljava/lang/String;"), &[])?
+                .l()?;
+            if answer.is_null() {
+                return Ok(String::new());
+            }
+            let answer = env.cast_local::<JString>(answer)?;
+            Ok(answer.mutf8_chars(env)?.to_string())
+        })
+    }
+
+    /// `ConcatFiles.shareText`: the log handed to the apps that take text.
+    fn share_text(app: &AndroidApp, text: &str) -> Result<(), String> {
+        let handed = super::java::with_class(app, |env, activity, class| {
+            let subject = env.new_string("LongCut log")?;
+            let text = env.new_string(text)?;
+            env.call_static_method(
+                class,
+                jni_str!("shareText"),
+                jni_sig!("(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z"),
+                &[activity.into(), (&subject).into(), (&text).into()],
+            )?
+            .z()
+        })
+        .map_err(|error| format!("could not reach the phone: {error}"))?;
+        if handed {
+            Ok(())
+        } else {
+            Err("nothing on this phone took the log".to_owned())
         }
     }
 

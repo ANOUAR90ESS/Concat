@@ -727,6 +727,46 @@ pub fn share_export() -> Result<(), String> {
     }
 }
 
+/// How a phone hands the log to the apps that take text: a messenger,
+/// mail. Headed with the phone's name and encoders by the phone's side.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub type LogSharer = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+static LOG_SHARER: std::sync::OnceLock<LogSharer> = std::sync::OnceLock::new();
+
+/// Installs what [`share_log`] calls. Once.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn install_log_sharer(sharer: LogSharer) {
+    let _ = LOG_SHARER.set(sharer);
+}
+
+/// Offers `text` - the log - to the apps that take it. A desk shows the
+/// file in its folder instead.
+pub fn share_log(text: &str) -> Result<(), String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        match LOG_SHARER.get() {
+            Some(share) => share(text),
+            None => Err("this phone cannot share it from here".to_owned()),
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = text;
+        Err("sharing is a phone's".to_owned())
+    }
+}
+
+/// What the phone says of its video encoders, one a line (see
+/// `concat_media::encode::read_phone_encoders`): kept in the log, and
+/// what tells an export whether the chip takes a constant quality.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn install_phone_encoders(device: &str, report: &str) {
+    log::info!("{device}; video encoders:\n{report}");
+    concat_media::encode::install_phone_encoders(concat_media::encode::read_phone_encoders(report));
+}
+
 /// What a phone does to keep a long job going while the person is away
 /// from the app: `Some((words, percent))` starts it - or says what it is
 /// doing now, and how far, `-1` for not known - and `None` lets go. On

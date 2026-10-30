@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "Skrypty i aplikacje",
   "settings.servesConcatApiWhile": "Udostępnia API LongCut, gdy okno jest otwarte, aby skrypt lub inny program mógł tworzyć, edytować i eksportować własne projekty. Wszystko, co się połączy, może odczytywać i zapisywać pliki tak jak Ty.",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "Pokaż dziennik",
   "settings.showTheToken": "Pokaż token",
   "settings.sky": "Błękit",

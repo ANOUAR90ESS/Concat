@@ -11,12 +11,15 @@ import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Log;
+import android.util.Range;
 import android.view.WindowManager;
 
 import java.io.File;
@@ -335,6 +338,91 @@ public class ConcatFiles extends Fragment {
             Log.w(TAG, "could not share the video", e);
             return false;
         }
+    }
+
+    /**
+     * Hands text - the app's log - to the apps that take it: a messenger,
+     * mail, a note. Headed by the phone's name and its video encoders, the
+     * two things a report from a phone is read for first. True when
+     * something was offered it.
+     */
+    public static boolean shareText(Activity activity, String subject, String text) {
+        String head = device() + "\n" + encoders() + "\n";
+        Intent send = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, subject)
+                .putExtra(Intent.EXTRA_TEXT, head + "\n" + text);
+        try {
+            activity.startActivity(Intent.createChooser(send, null));
+            return true;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "could not share the log", e);
+            return false;
+        }
+    }
+
+    /** The phone's maker, model and Android version, on one line. */
+    public static String device() {
+        return Build.MANUFACTURER + " " + Build.MODEL + ", Android " + Build.VERSION.RELEASE
+                + " (API " + Build.VERSION.SDK_INT + ")";
+    }
+
+    /**
+     * This phone's H.264 and HEVC encoders, one a line, in the order
+     * Android picks them - the first of a kind is the one an export gets:
+     * "video/avc c2.qti.avc.encoder hw cq=0-100 vbr cbr". The window's
+     * crate reads whether the first takes a constant quality, and in what
+     * range, out of these lines.
+     */
+    public static String encoders() {
+        StringBuilder lines = new StringBuilder();
+        String[] kinds = {"video/avc", "video/hevc"};
+        try {
+            MediaCodecInfo[] infos = new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos();
+            for (String kind : kinds) {
+                for (MediaCodecInfo info : infos) {
+                    if (!info.isEncoder() || !supports(info, kind)) {
+                        continue;
+                    }
+                    lines.append(kind).append(' ').append(info.getName());
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        lines.append(info.isHardwareAccelerated() ? " hw" : " sw");
+                    }
+                    MediaCodecInfo.EncoderCapabilities encoder =
+                            info.getCapabilitiesForType(kind).getEncoderCapabilities();
+                    if (encoder.isBitrateModeSupported(
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CQ)) {
+                        lines.append(" cq");
+                        if (Build.VERSION.SDK_INT >= 28) {
+                            Range<Integer> quality = encoder.getQualityRange();
+                            lines.append('=').append(quality.getLower()).append('-')
+                                    .append(quality.getUpper());
+                        }
+                    }
+                    if (encoder.isBitrateModeSupported(
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)) {
+                        lines.append(" vbr");
+                    }
+                    if (encoder.isBitrateModeSupported(
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)) {
+                        lines.append(" cbr");
+                    }
+                    lines.append('\n');
+                }
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "could not list the encoders", e);
+        }
+        return lines.toString().trim();
+    }
+
+    private static boolean supports(MediaCodecInfo info, String kind) {
+        for (String type : info.getSupportedTypes()) {
+            if (type.equalsIgnoreCase(kind)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Asked for the notification permission once a process, not every run. */

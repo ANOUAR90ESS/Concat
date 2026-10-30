@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "סקריפטים ואפליקציות",
   "settings.servesConcatApiWhile": "מגיש את ה-API של LongCut כל עוד החלון פתוח, כך שסקריפט או תוכנה אחרת יכולים ליצור, לערוך ולייצא פרויקטים משלהם. כל מה שמתחבר יכול לקרוא ולכתוב קבצים כמוך.",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "הצגת היומן",
   "settings.showTheToken": "הצגת האסימון",
   "settings.sky": "שמיים",

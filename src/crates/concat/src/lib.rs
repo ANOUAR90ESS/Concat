@@ -47,8 +47,9 @@ mod platform;
 /// `platform::publish_export`.
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub use platform::{
-    ExportPublisher, FilePicker, KeepAlive, VideoActions, install_export_publisher,
-    install_file_picker, install_keep_alive, install_video_actions,
+    ExportPublisher, FilePicker, KeepAlive, LogSharer, VideoActions, install_export_publisher,
+    install_file_picker, install_keep_alive, install_log_sharer, install_phone_encoders,
+    install_video_actions,
 };
 mod panes;
 mod prefs;

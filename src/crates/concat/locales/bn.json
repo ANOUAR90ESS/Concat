@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "স্ক্রিপ্ট ও অ্যাপ",
   "settings.servesConcatApiWhile": "উইন্ডো খোলা থাকা অবস্থায় LongCut API পরিবেশন করে, যাতে কোনো স্ক্রিপ্ট বা অন্য প্রোগ্রাম নিজের প্রকল্প তৈরি, সম্পাদনা ও এক্সপোর্ট করতে পারে। যা কিছু সংযোগ করে তা আপনার মতো ফাইল পড়তে ও লিখতে পারে।",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "লগ দেখুন",
   "settings.showTheToken": "টোকেন দেখুন",
   "settings.sky": "স্কাই",

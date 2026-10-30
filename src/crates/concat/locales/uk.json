@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "Скрипти й застосунки",
   "settings.servesConcatApiWhile": "Надає LongCut API, поки вікно відкрите, щоб сценарій чи інша програма могли створювати, редагувати й експортувати власні проєкти. Усе, що підключається, може читати й записувати файли так само, як ви.",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "Показати журнал",
   "settings.showTheToken": "Показати токен",
   "settings.sky": "Небо",

@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "Script và ứng dụng",
   "settings.servesConcatApiWhile": "Cung cấp API LongCut khi cửa sổ đang mở để tập lệnh hoặc chương trình khác có thể tạo, chỉnh sửa và xuất dự án riêng. Bất kỳ kết nối nào cũng có thể đọc và ghi tệp như bạn.",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "Hiện nhật ký",
   "settings.showTheToken": "Hiện mã thông báo",
   "settings.sky": "Xanh da trời",

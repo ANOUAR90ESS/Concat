@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "指令碼與應用程式",
   "settings.servesConcatApiWhile": "視窗開啟期間提供 LongCut API，讓指令碼或其他程式可以自行建立、編輯和匯出專案。任何連線進來的程式都能像你一樣讀寫檔案。",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "顯示記錄",
   "settings.showTheToken": "顯示權杖",
   "settings.sky": "天空",

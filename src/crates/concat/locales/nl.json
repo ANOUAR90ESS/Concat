@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "Scripts en apps",
   "settings.servesConcatApiWhile": "Biedt de LongCut-API aan zolang het venster open is, zodat een script of ander programma eigen projecten kan maken, bewerken en exporteren. Alles wat verbinding maakt, kan bestanden lezen en schrijven zoals jij.",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "Logboek tonen",
   "settings.showTheToken": "Token tonen",
   "settings.sky": "Hemelsblauw",
