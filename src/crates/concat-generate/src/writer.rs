@@ -94,7 +94,7 @@ impl Brief {
 }
 
 /// Where the writing is: the outline, then chapter `n` of `of`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Writing {
     /// The outline is being written.
     Outline,
@@ -104,6 +104,8 @@ pub enum Writing {
         n: usize,
         /// Of how many.
         of: usize,
+        /// Its title, as the outline has it.
+        title: String,
     },
 }
 
@@ -177,7 +179,11 @@ pub fn write(
     let mut ending = "This is the first chapter: open with the hook.".to_owned();
     let of = board.chapters.len();
     for (i, (plan, points)) in shape.chapters.iter().zip(&points).enumerate() {
-        progress(Writing::Chapter { n: i + 1, of });
+        progress(Writing::Chapter {
+            n: i + 1,
+            of,
+            title: board.chapters[i].title.trim().to_owned(),
+        });
         let prompt = chapter_prompt(&board, brief, i, plan, points, &ending);
         let mut got = ask(&scenes_tool(), prompt.clone())?;
         let mut scenes = scenes_of(&got)?;

@@ -607,6 +607,23 @@ fn phone_kbps(implied: u32) -> u32 {
     (implied / 5 * 3).max(500)
 }
 
+/// The coarsest a phone's H.264 or HEVC encoder may quantise each kind
+/// of frame - I, P, B - for the quality setting: a few steps over the
+/// CRF, on the same 0-51 scale. The bitrate a phone is given is a wish
+/// some chips do not keep: one held to 5.5 Mbit/s wrote 0.8 over a Long
+/// video's slow zooms, and every still went soft. A ceiling on the
+/// quantiser is a floor under the picture whatever the chip does with
+/// the bitrate (Android 12 on, where the chip reads it). None for AV1,
+/// whose scale is another, and for an average asked for by name, which
+/// is the bitrate the person chose.
+fn phone_qp_ceiling(encoder_name: &str, crf: u8, average: bool) -> Option<(u8, u8, u8)> {
+    if average || !(encoder_name.starts_with("h264") || encoder_name.starts_with("hevc")) {
+        return None;
+    }
+    let base = crf.clamp(14, 40);
+    Some((base + 4, base + 6, base + 8))
+}
+
 /// One encoder's context, set up and opened for the file: the frame's
 /// size, rate and tags, and the settings `encoder_name` is steered by.
 /// Returns the encoder and the pixel format it takes its pictures in.
@@ -800,9 +817,17 @@ fn open_video(
         },
         // A phone's chip. The NDK's MediaCodec, not the Java one: no
         // JavaVM is handed to FFmpeg, and the NDK needs none.
-        _ if family == Family::MediaCodec => ffmpeg::dict! {
-            "bitrate_mode" => phone_mode(average),
-        },
+        _ if family == Family::MediaCodec => {
+            let mut settings = ffmpeg::dict! {
+                "bitrate_mode" => phone_mode(average),
+            };
+            if let Some((i, p, b)) = phone_qp_ceiling(encoder_name, options.crf, average) {
+                settings.set("qp_i_max", i.to_string());
+                settings.set("qp_p_max", p.to_string());
+                settings.set("qp_b_max", b.to_string());
+            }
+            settings
+        }
         // Windows' Media Foundation, whatever the machine has behind it.
         _ if family == Family::MediaFoundation => ffmpeg::dict! {
             "rate_control" => if cbr { "cbr" } else { "u_vbr" },
@@ -905,6 +930,19 @@ fn open_video(
             }
             _ => {}
         }
+    }
+    if family == Family::MediaCodec {
+        // What a phone was asked for, for the log a person can send: a
+        // chip that keeps none of it writes a file far under the target.
+        let asked: Vec<String> = settings.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        log::info!(
+            "{encoder_name}: {}x{} at {} kbit/s, {}",
+            width,
+            height,
+            // SAFETY: `video` owns a live AVCodecContext; read only.
+            unsafe { (*video.as_ptr()).bit_rate } / 1000,
+            asked.join(" ")
+        );
     }
     let encoder = video
         .open_with(settings)
@@ -2139,6 +2177,20 @@ mod tests {
         assert_eq!(implied, 9190);
         assert_eq!(phone_kbps(implied), 5514);
         assert_eq!(phone_kbps(100), 500);
+    }
+
+    #[test]
+    fn a_phone_is_held_under_a_quantiser_ceiling() {
+        assert_eq!(
+            phone_qp_ceiling("h264_mediacodec", 20, false),
+            Some((24, 26, 28))
+        );
+        assert_eq!(
+            phone_qp_ceiling("hevc_mediacodec", 20, false),
+            Some((24, 26, 28))
+        );
+        assert_eq!(phone_qp_ceiling("av1_mediacodec", 20, false), None);
+        assert_eq!(phone_qp_ceiling("h264_mediacodec", 20, true), None);
     }
 
     /// Every codec has an encoder listed for every platform but AV1 on

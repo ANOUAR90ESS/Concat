@@ -9529,6 +9529,23 @@ impl Studio {
         app.set_speech(self.speech.data(self));
         sync(&models.generate_music, self.generate.music_rows(self));
         app.set_generate(self.generate.data(self));
+        // A file being written, or a video being made, with its sheet put
+        // away: a pill over the window says how far, and opens it again.
+        let pill = if self.export.phase == crate::ui::ExportPhase::Running && !self.export.open {
+            Some((2, self.export.name.clone(), self.export.progress))
+        } else if !self.generate.open
+            && let Some(run) = crate::runs::latest()
+        {
+            Some((1, run.title, run.progress))
+        } else {
+            None
+        };
+        app.set_pill_kind(pill.as_ref().map_or(0, |(kind, _, _)| *kind));
+        app.set_pill_label(
+            pill.as_ref()
+                .map_or_else(Default::default, |(_, label, _)| label.as_str().into()),
+        );
+        app.set_pill_progress(pill.as_ref().map_or(0.0, |(_, _, progress)| *progress));
         sync(&models.script_rows, self.generate.script_rows(self));
         app.set_script(self.generate.script_data(self));
         self.publish_source(app);

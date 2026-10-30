@@ -248,14 +248,17 @@ fn rgb(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
 }
 
 /// Whether a service's answer says the request itself is wrong: a 4xx
-/// other than 408 (timeout) and 429 (too many requests).
+/// other than 408 (timeout) and 429 (too many requests) - or no key at
+/// all.
 pub fn refused_for_good(error: &str) -> bool {
-    error
-        .split("answered ")
-        .nth(1)
-        .and_then(|rest| rest.get(..3))
-        .and_then(|code| code.parse::<u16>().ok())
-        .is_some_and(|code| (400..500).contains(&code) && code != 408 && code != 429)
+    // No key at all is the same every time.
+    error.contains("needs an API")
+        || error
+            .split("answered ")
+            .nth(1)
+            .and_then(|rest| rest.get(..3))
+            .and_then(|code| code.parse::<u16>().ok())
+            .is_some_and(|code| (400..500).contains(&code) && code != 408 && code != 429)
 }
 
 /// What a Replicate model takes, read from the model's own description,

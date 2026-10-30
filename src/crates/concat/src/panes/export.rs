@@ -48,6 +48,10 @@ pub enum ExportMsg {
     FolderChosen(String),
     /// Show the finished file in the file manager.
     Reveal,
+    /// Play the finished file: in the phone's player, or the desk's.
+    Play,
+    /// Offer the finished file to the phone's apps.
+    Share,
     Start,
     /// Start over a file already there: the confirmation sheet's answer.
     Overwrite,
@@ -65,6 +69,10 @@ pub enum ExportMsg {
     /// the phone's storage - or could not, and the file is where it was.
     Published(Result<String, String>),
 }
+
+/// Under this share of the estimate, a phone's file is said to have come
+/// out far under the bitrate it was given.
+const LOW_SHARE: f32 = 0.4;
 
 /// Who holds the phone's keep-alive while a file is written.
 const KEEP: &str = "export";
@@ -94,6 +102,9 @@ pub struct ExportPane {
     pub written: String,
     /// When the render started, for a real ETA.
     started_at: Option<std::time::Instant>,
+    /// What the finished file weighs, read from the disk: the figure the
+    /// done sheet shows, rather than the estimate the bitrate made.
+    written_bytes: Option<u64>,
 }
 
 impl Default for ExportPane {
@@ -115,6 +126,7 @@ impl Default for ExportPane {
             message: String::new(),
             written: String::new(),
             started_at: None,
+            written_bytes: None,
         }
     }
 }
@@ -128,6 +140,11 @@ impl ExportPane {
         match msg {
             ExportMsg::Open => {
                 self.open = true;
+                // Opened again from the pill while the file is written:
+                // as it was.
+                if self.phase == ExportPhase::Running {
+                    return;
+                }
                 self.phase = ExportPhase::Idle;
                 self.message.clear();
                 // The timeline's own size: the one rung that can be picked;
@@ -182,6 +199,16 @@ impl ExportPane {
                     studio.notify(&i18n::tf("export.couldNotShowFile", &[&error]), true);
                 }
             }
+            ExportMsg::Play => {
+                if let Err(error) = platform::play_export(&self.written) {
+                    studio.notify(&i18n::tf("export.couldNotPlay", &[&error]), true);
+                }
+            }
+            ExportMsg::Share => {
+                if let Err(error) = platform::share_export() {
+                    studio.notify(&i18n::tf("export.couldNotPlay", &[&error]), true);
+                }
+            }
             ExportMsg::Start => self.start(studio),
             ExportMsg::Overwrite => self.begin(studio, true),
             ExportMsg::Cancel => {
@@ -200,6 +227,21 @@ impl ExportPane {
                 self.phase = ExportPhase::Done;
                 self.progress = 1.0;
                 self.written = written.clone();
+                self.written_bytes = std::fs::metadata(&written).ok().map(|m| m.len());
+                // A chip that kept nothing of the bitrate it was given
+                // writes a file a fraction of the estimate: said, so a
+                // soft picture is not taken for the app's doing alone.
+                let estimate = self.size_bytes(studio);
+                if let Some(real) = self.written_bytes
+                    && platform::phone()
+                    && estimate > 0.0
+                    && (real as f32) < estimate * LOW_SHARE
+                {
+                    log::warn!(
+                        "export: {real} bytes written where about {estimate:.0} were asked for"
+                    );
+                    studio.notify(&t("export.lowBitrate"), true);
+                }
                 // A phone moves the file to where its gallery shows it, and
                 // the sheet says "finished" once it is there.
                 let handed = platform::publish_export(written.into(), |result| {
@@ -474,6 +516,7 @@ impl ExportPane {
         self.message.clear();
         self.written.clear();
         self.started_at = Some(std::time::Instant::now());
+        self.written_bytes = None;
 
         // The export draws on the window's device - a sibling of the
         // monitor's compositor - not on a second device opened through the
@@ -640,7 +683,12 @@ impl ExportPane {
                 slint::SharedString::new()
             },
             message: self.message.as_str().into(),
-            done_size: bytes(self.size_bytes(studio)).into(),
+            done_size: bytes(
+                self.written_bytes
+                    .map(|real| real as f32)
+                    .unwrap_or_else(|| self.size_bytes(studio)),
+            )
+            .into(),
             empty: clips == 0,
         }
     }

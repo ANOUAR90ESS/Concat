@@ -47,12 +47,13 @@ mod platform;
 /// `platform::publish_export`.
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub use platform::{
-    ExportPublisher, FilePicker, KeepAlive, install_export_publisher, install_file_picker,
-    install_keep_alive,
+    ExportPublisher, FilePicker, KeepAlive, VideoActions, install_export_publisher,
+    install_file_picker, install_keep_alive, install_video_actions,
 };
 mod panes;
 mod prefs;
 mod presets;
+mod runs;
 mod source;
 mod studio;
 mod sysinfo;
@@ -1569,8 +1570,21 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_export_browse(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Browse));
     }));
+    app.on_pill_pressed(on_window!(|state, kind: i32| {
+        if kind == 2 {
+            state.handle(Msg::Export(ExportMsg::Open));
+        } else {
+            state.handle(Msg::Generate(GenerateMsg::Pill));
+        }
+    }));
     app.on_export_reveal(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Reveal));
+    }));
+    app.on_export_play(on_window!(|state| {
+        state.handle(Msg::Export(ExportMsg::Play));
+    }));
+    app.on_export_share(on_window!(|state| {
+        state.handle(Msg::Export(ExportMsg::Share));
     }));
     app.on_export_cancel(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Cancel));

@@ -8,6 +8,7 @@ import { Button, CopyChip, DialogRow, DialogSection, Field, Modal, Progress } fr
 import { SegmentedControl } from "../primitives/segmented-control.slint";
 import { Select } from "../primitives/select.slint";
 import { Switch } from "../inspector/controls.slint";
+import { ProgressRing } from "export.slint";
 
 // Long video: what the menu's Long video opens.
 //
@@ -678,40 +679,21 @@ export component GenerateDialog inherits Modal {
                 content-height: run.preferred-height;
 
                 run := VerticalLayout {
-                    padding: 16px;
-                    spacing: 14px;
+                    padding: 20px;
+                    spacing: 16px;
 
-                    Rectangle {
+                    // The shots under way: the last one made, large.
+                    if root.data.has-preview: Rectangle {
                         height: Math.min(self.width * 9 / 16, 240px);
-                        border-radius: Theme.r * 2;
+                        border-radius: 16px;
                         background: Theme.well;
-                        border-width: 1px;
-                        border-color: Theme.line;
                         clip: true;
 
-                        if root.data.has-preview: Image {
+                        Image {
                             width: parent.width;
                             height: parent.height;
                             source: root.data.preview;
                             image-fit: contain;
-                        }
-
-                        // Nothing to show yet: the mark breathes.
-                        if !root.data.has-preview: Rectangle {
-                            property <float> breath: (1 + Math.sin(animation-tick() / 1600ms * 360deg)) / 2;
-                            width: 64px;
-                            height: 64px;
-                            border-radius: 32px;
-                            background: Theme.accent-soft;
-                            opacity: 0.45 + 0.55 * self.breath;
-
-                            Icon {
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                                glyph: Glyph.sparkle;
-                                size: 26px + 6px * parent.breath;
-                                tint: Theme.accent;
-                            }
                         }
 
                         // A sheen sweeping across: the stage is at work.
@@ -742,49 +724,70 @@ export component GenerateDialog inherits Modal {
                         }
                     }
 
-                    HorizontalLayout {
-                        spacing: 8px;
+                    // Nothing to show yet - the script, the voice: the
+                    // ring, how far the whole run is.
+                    if !root.data.has-preview: HorizontalLayout {
+                        alignment: center;
+                        ProgressRing { value: root.data.progress; }
+                    }
 
-                        Text {
-                            horizontal-stretch: 1;
-                            text: root.data.stage;
-                            color: Theme.fg;
-                            font-size: Theme.fs-lg;
-                            font-weight: Theme.weight-title;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+
+                            Text {
+                                horizontal-stretch: 1;
+                                horizontal-alignment: root.data.has-preview ? left : center;
+                                text: root.data.stage;
+                                color: Theme.fg;
+                                font-size: Theme.fs-lg;
+                                font-weight: Theme.weight-title;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+
+                            if root.data.has-preview: Text {
+                                text: "\{Math.floor(root.data.progress * 100)}%";
+                                color: Theme.accent;
+                                font-family: Theme.font-technical;
+                                font-size: Theme.fs-lg;
+                                vertical-alignment: center;
+                            }
                         }
 
-                        Text {
-                            text: "\{Math.floor(root.data.progress * 100)}%";
-                            color: Theme.accent;
-                            font-family: Theme.font-technical;
-                            font-size: Theme.fs-lg;
-                            vertical-alignment: center;
+                        // What is being written or made, in the script's
+                        // words: a chapter's title, a line, a picture.
+                        if root.data.detail != "": Rectangle {
+                            height: Math.min(words.preferred-height, 54px);
+                            clip: true;
+
+                            words := Text {
+                                width: parent.width;
+                                y: 0px;
+                                horizontal-alignment: root.data.has-preview ? left : center;
+                                text: "“" + root.data.detail + "”";
+                                color: Theme.fg-muted;
+                                font-size: Theme.fs-sm;
+                                font-italic: true;
+                                wrap: word-wrap;
+                            }
                         }
                     }
 
-                    Progress {
+                    if root.data.has-preview: Progress {
                         value: root.data.progress;
                         live: true;
                     }
 
-                    if root.data.detail != "": Rectangle {
-                        height: Math.min(words.preferred-height, 54px);
-                        clip: true;
+                    Rectangle {
+                        border-radius: 14px;
+                        background: Theme.raised;
+                        height: steps.preferred-height;
 
-                        words := Text {
-                            width: parent.width;
-                            y: 0px;
-                            text: "“" + root.data.detail + "”";
-                            color: Theme.fg-muted;
-                            font-size: Theme.fs-sm;
-                            font-italic: true;
-                            wrap: word-wrap;
-                        }
-                    }
-
-                    VerticalLayout {
+                    steps := VerticalLayout {
+                        padding: 12px;
                         spacing: 2px;
 
                         RunStep {
@@ -808,6 +811,7 @@ export component GenerateDialog inherits Modal {
                             label: I18n.t("generate.stepCut");
                             state: root.data.phase == 3 ? 1 : 0;
                         }
+                    }
                     }
 
                     if root.data.spent != "": Text {
@@ -874,8 +878,17 @@ export component GenerateDialog inherits Modal {
                 }
             }
 
+            // Put away, the run goes on - in another project too - and a
+            // pill over the window says how far.
             if root.data.running: HorizontalLayout {
-                alignment: start;
+                spacing: 8px;
+                Button {
+                    horizontal-stretch: 1;
+                    block: true;
+                    label: I18n.t("common.hide");
+                    glyph: Glyph.chevron-down;
+                    clicked => { root.closed(); }
+                }
                 Button {
                     label: I18n.t("common.cancel");
                     glyph: Glyph.close;

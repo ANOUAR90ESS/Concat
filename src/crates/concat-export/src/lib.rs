@@ -1540,9 +1540,11 @@ fn render_picture(
     // through a pool that keeps the reader rolling where it can.
     let sought = concat_media::ReaderPool::with_defaults();
 
+    let mut spent = Spent::default();
     for index in 0..total_frames {
         reporter.cancelled()?;
 
+        let reading = std::time::Instant::now();
         let time = rate.time_of_frame(index);
         let plan = plan_frame(&timeline, time);
 
@@ -1656,6 +1658,8 @@ fn render_picture(
             }
         }
 
+        spent.reading += reading.elapsed();
+        let drawing = std::time::Instant::now();
         let frame_plan = FramePlan {
             time,
             width: request.width,
@@ -1696,9 +1700,14 @@ fn render_picture(
                 &transitions,
             );
         }
+        spent.drawing += drawing.elapsed();
+        let writing = std::time::Instant::now();
         encoder
             .write_frame(&composed)
             .map_err(|error| error.to_string())?;
+        spent.writing += writing.elapsed();
+        spent.frames += 1;
+        spent.say_now_and_then();
 
         // Retire decoders whose clip has finished, so a long timeline does not
         // hold an ffmpeg process open for every clip it has ever passed.
@@ -1711,7 +1720,61 @@ fn render_picture(
         }
     }
 
+    spent.say("done");
     encoder.finish().map_err(|error| error.to_string())
+}
+
+/// Where an export's time goes, frame by frame: reading the sources,
+/// drawing the frame, writing it to the encoder. Said in the log now and
+/// then and at the end, so a slow export can be told apart - a phone's
+/// decoder, its GPU and the copy back, or its encoder.
+#[derive(Debug)]
+struct Spent {
+    frames: u64,
+    reading: std::time::Duration,
+    drawing: std::time::Duration,
+    writing: std::time::Duration,
+    began: std::time::Instant,
+    said: std::time::Instant,
+}
+
+impl Default for Spent {
+    fn default() -> Self {
+        let now = std::time::Instant::now();
+        Spent {
+            frames: 0,
+            reading: std::time::Duration::ZERO,
+            drawing: std::time::Duration::ZERO,
+            writing: std::time::Duration::ZERO,
+            began: now,
+            said: now,
+        }
+    }
+}
+
+impl Spent {
+    /// Says where the time went, every half minute.
+    fn say_now_and_then(&mut self) {
+        if self.said.elapsed() >= std::time::Duration::from_secs(30) {
+            self.say("so far");
+            self.said = std::time::Instant::now();
+        }
+    }
+
+    fn say(&self, when: &str) {
+        let per =
+            |spent: std::time::Duration| spent.as_secs_f64() * 1000.0 / self.frames.max(1) as f64;
+        let total = self.began.elapsed().as_secs_f64();
+        log::info!(
+            "export {when}: {} frames in {total:.1}s ({:.1} a second); a frame: reading \
+             {:.1} ms, drawing {:.1} ms, writing {:.1} ms",
+            self.frames,
+            self.frames as f64 / total.max(1e-3),
+            per(self.reading),
+            per(self.drawing),
+            per(self.writing),
+        );
+    }
 }
 
 /// How many frames apart an export says how far it has got, at most.

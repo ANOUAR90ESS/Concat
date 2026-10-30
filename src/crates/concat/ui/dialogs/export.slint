@@ -388,7 +388,7 @@ component OutputSection inherits DialogSection {
 
 // A ring that fills clockwise from the top as the file is written, the
 // share in the middle; green and full once it is.
-component ProgressRing inherits Rectangle {
+export component ProgressRing inherits Rectangle {
     in property <float> value;
     in property <bool> done;
     /// Where the arc ends, short of a whole turn, which would draw nothing.
@@ -470,6 +470,9 @@ component ExportHero inherits VerticalLayout {
     callback cancel();
     callback reveal();
     callback again();
+    callback play();
+    callback share();
+    callback hide();
 
     property <bool> done: root.data.phase == ExportPhase.done;
 
@@ -578,6 +581,12 @@ component ExportHero inherits VerticalLayout {
 
     if !root.done: HorizontalLayout {
         alignment: center;
+        spacing: 8px;
+        Button {
+            label: I18n.t("common.hide");
+            glyph: Glyph.chevron-down;
+            clicked => { root.hide(); }
+        }
         Button {
             label: I18n.t("export.cancelExport");
             glyph: Glyph.close;
@@ -590,12 +599,26 @@ component ExportHero inherits VerticalLayout {
         alignment: center;
         spacing: 8px;
 
+        Button {
+            label: I18n.t("export.play");
+            glyph: Glyph.play;
+            primary: true;
+            clicked => { root.play(); }
+        }
+        if root.phone: Button {
+            label: I18n.t("export.share");
+            glyph: Glyph.export;
+            clicked => { root.share(); }
+        }
         if !root.phone: Button {
             label: I18n.t("export.showInFolder");
             glyph: Glyph.import;
-            primary: true;
             clicked => { root.reveal(); }
         }
+    }
+
+    if root.done: HorizontalLayout {
+        alignment: center;
         Button {
             label: I18n.t("export.exportAgain");
             ghost: true;
@@ -715,6 +738,8 @@ export component ExportDialog inherits Rectangle {
     callback cancel();
     callback reveal();
     callback again();
+    callback play();
+    callback share();
 
     property <bool> running: root.data.phase == ExportPhase.running;
     property <bool> busy-or-done: root.running || root.data.phase == ExportPhase.done;
@@ -842,6 +867,9 @@ export component ExportDialog inherits Rectangle {
                         cancel => { root.cancel(); }
                         reveal => { root.reveal(); }
                         again => { root.again(); }
+                        play => { root.play(); }
+                        share => { root.share(); }
+                        hide => { root.closed(); }
                     }
 
                     if !root.busy-or-done && root.columns == 1: VerticalLayout {

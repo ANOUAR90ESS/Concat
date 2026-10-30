@@ -123,6 +123,51 @@ runs no CI, so nothing is built until then.
   and content suggestions that learn from the owner's own videos and,
   once signed in to YouTube, from how they did.
 
+## After alpha.16 (owner's test, 29 Oct)
+
+Built on the branch overnight and sent up as one PR, as before. The
+owner's 1:16 export came out at 0.79 Mbit/s where 5.5 were asked for -
+the phone's chip ignored the CBR of stage 1 - and took about 7 minutes.
+
+- ✅ **A: export quality on a phone.** The H.264/HEVC encoder is also
+  given a quantiser ceiling (I/P/B at CRF+4/+6/+8: 24/26/28), a floor
+  under the picture whatever the chip does with the bitrate (read from
+  Android 12 on). The log says what the encoder was asked for; the done
+  sheet shows the file's real size; and a phone file under 40% of the
+  estimate is said to have come out soft. Needs the owner's phone to
+  confirm.
+- ✅ **B: making faster.** The shots asked of Replicate are made four
+  at a time (each takes its price from a purse the run shares, so the
+  spend limit still holds), ElevenLabs lines two at a time; what each
+  came to is seen to in the order they finish. A failure that ends the
+  run - the limit, a refused key - starts no more. Waits that took one
+  after the other now overlap: about three to four times faster on
+  Replicate.
+- ✅ **D: Play and Share.** The done sheet has Play - the phone's own
+  player on the video it just put in Movies (ACTION_VIEW), the default
+  player on a desk - and, on a phone, Share, the system's sheet to send
+  it to YouTube, a messenger or the cloud (ACTION_SEND).
+- ✅ **F: the making sheet redesigned.** No empty picture box: while
+  the script and the voice are made, the export's progress ring; once
+  shots come, the last one made, large. The writer says which chapter
+  it is writing by its title, shown under the stage; the steps sit in a
+  card.
+- ✅ **C: export faster (first part).** An export logs where its time
+  goes every half minute and at the end - reading the sources, drawing,
+  writing to the encoder, per frame. And a certain win: a still shown
+  for seconds was scaled (Lanczos) and converted again for every one of
+  its frames; it is now scaled once and handed out again. The rest waits
+  on the owner's log from the phone.
+- ✅ **E: keep using the app.** The making sheet and the export sheet
+  have Hide while they run: a pill floats over the window - the editor,
+  the list of projects - with the job and how far it is, and a press
+  opens the sheet again. A Long video run belongs to its job's folder,
+  not to the open project (`runs.rs`): it goes on when the person opens
+  another project, holding the phone awake itself; the sheet opened again
+  on that job shows it going on and will not start a second run, which
+  would pay twice; when it ends elsewhere a toast says to open its
+  project and press Create video, which cuts it without paying again.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no
