@@ -1374,6 +1374,21 @@ export component SettingsDialog inherits Modal {
                         value: fact.value;
                     }
                 }
+
+                // On a phone the icon above is easy to miss, and the log is
+                // what a report from a phone is read for: a button, named.
+                if root.phone: HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    padding-bottom: 14px;
+
+                    Button {
+                        label: I18n.t("settings.shareTheLog");
+                        glyph: Glyph.export;
+                        primary: true;
+                        clicked => { root.show-log(); }
+                    }
+                }
             }
         }
         }
