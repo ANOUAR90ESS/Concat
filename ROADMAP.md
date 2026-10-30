@@ -188,6 +188,18 @@ quantiser ceiling. And a one-minute video was slow to export.
   and its quantiser floor is set low (CRF-8), out of the way of a chip
   whose own floor may sit where it wrote everything. Needs the owner's
   phone, and its log, to confirm.
+- 🚧 **2b: what alpha.18 showed** (owner's HONOR ALT-NX1, a Snapdragon
+  680 with an Adreno 613, Android 15). The export sheet always asked the
+  encoder for an *average* bitrate, which a phone kept as VBR - none of
+  stage 1's CBR, alpha.17's ceiling or alpha.18's constant quality ever
+  reached the chip; 77 s came out at 0.89 Mbit/s. A phone now takes the
+  sheet's bitrate as the quality it comes to (8 Mbit/s at 1080p30 is
+  about CRF 21). Its chip has no constant quality in H.264 and keeps it
+  for HEVC in a component of its own, `c2.qti.hevc.encoder.cq`, after
+  the one Android picks: that one is asked for by name, at 79 of 0-100,
+  and the export sheet writes HEVC on such a phone until another codec
+  is picked. Share the log also carries the run before this one, where
+  an export is when the app was opened again to send it.
 - ⏳ **3: export speed.** Waits on the owner's log: its "export done"
   line says how the time splits between reading, drawing and writing.
 - ⏳ **If the chip still keeps nothing:** a software H.264 encoder

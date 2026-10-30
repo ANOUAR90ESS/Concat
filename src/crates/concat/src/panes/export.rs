@@ -89,6 +89,8 @@ pub struct ExportPane {
     pub custom: bool,
     /// Index into `VideoCodec::ALL`.
     pub codec: usize,
+    /// The codec was picked in the sheet, not left as it opened.
+    codec_chosen: bool,
     pub ten_bit: bool,
     /// An HDR timeline written tone-mapped to SDR rather than as it is.
     pub sdr: bool,
@@ -117,6 +119,7 @@ impl Default for ExportPane {
             rate: 0,
             custom: false,
             codec: 0,
+            codec_chosen: false,
             ten_bit: false,
             sdr: false,
             bitrate: 8000,
@@ -151,6 +154,19 @@ impl ExportPane {
                 // and its own rate, first on the rate list.
                 self.resolution = Self::own_rung(studio);
                 self.rate = 0;
+                // A phone whose chip keeps a quality only in HEVC writes
+                // HEVC until told otherwise: in H.264 it kept a tenth of
+                // any bitrate asked of it, and every still went soft.
+                if platform::phone()
+                    && !self.codec_chosen
+                    && concat_media::encode::phone_prefers_hevc()
+                    && concat_media::VideoCodec::Hevc.encodable()
+                    && let Some(hevc) = concat_media::VideoCodec::ALL
+                        .iter()
+                        .position(|codec| *codec == concat_media::VideoCodec::Hevc)
+                {
+                    self.codec = hevc;
+                }
             }
             ExportMsg::Close => self.open = false,
             ExportMsg::NameEdited(name) => self.name = name,
@@ -163,6 +179,7 @@ impl ExportPane {
                 let index = (index.max(0) as usize).min(concat_media::VideoCodec::ALL.len() - 1);
                 if concat_media::VideoCodec::ALL[index].encodable() {
                     self.codec = index;
+                    self.codec_chosen = true;
                 }
             }
             ExportMsg::TenBitChanged(on) => self.ten_bit = on,
