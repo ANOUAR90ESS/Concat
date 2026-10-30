@@ -364,7 +364,6 @@ mod publisher {
         }
     }
 
-<<<<<<< HEAD
     /// A static `ConcatFiles` method that takes nothing and gives a string.
     fn string(
         app: &AndroidApp,
@@ -403,8 +402,6 @@ mod publisher {
         }
     }
 
-=======
->>>>>>> origin/ccr-e4840680-erqz1g
     /// `ConcatFiles.publishedFolder`: "Movies/Concat", or nothing.
     fn published_folder(app: &AndroidApp) -> jni::errors::Result<Option<String>> {
         super::java::with_class(app, |env, _activity, class| {
