@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "Betikler ve uygulamalar",
   "settings.servesConcatApiWhile": "Pencere açıkken LongCut API'sini sunar; böylece bir betik ya da başka bir program kendi projelerini oluşturabilir, düzenleyebilir ve dışa aktarabilir. Bağlanan her şey sizin gibi dosya okuyup yazabilir.",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "Günlüğü göster",
   "settings.showTheToken": "Belirteci göster",
   "settings.sky": "Sky",

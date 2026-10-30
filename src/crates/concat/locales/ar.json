@@ -533,6 +533,7 @@
   "settings.scaleSystem": "النظام",
   "settings.scriptsAndApps": "السكربتات والتطبيقات",
   "settings.servesConcatApiWhile": "يقدّم واجهة LongCut البرمجية ما دامت النافذة مفتوحة، فيستطيع برنامج نصي أو برنامج آخر إنشاء مشاريعه الخاصة وتحريرها وتصديرها. أي شيء يتصل يستطيع قراءة الملفات وكتابتها كما تستطيع أنت.",
+  "settings.shareTheLog": "مشاركة السجل",
   "settings.showTheLog": "إظهار السجل",
   "settings.showTheToken": "إظهار الرمز المميّز",
   "settings.sky": "سماوي",

@@ -232,6 +232,16 @@ impl SettingsPane {
                 }
             }
             SettingsMsg::ShowLog => {
+                // A phone has no file manager: its log goes to the apps
+                // that take text - a messenger, mail - as a report, the
+                // system block and the end of this run's file.
+                if cfg!(any(target_os = "android", target_os = "ios")) {
+                    let shared = log_report().and_then(|report| platform::share_log(&report));
+                    if let Err(error) = shared {
+                        studio.notify(&i18n::tf("settings.couldNotShowLog", &[&error]), true);
+                    }
+                    return;
+                }
                 // The file this run is writing, when there is one, so the
                 // manager opens with it selected; the folder when there is
                 // not, which is still where the previous runs are.
@@ -1036,4 +1046,28 @@ mod listen_tests {
         );
         assert_eq!(join_listen("", 9000), "127.0.0.1:9000");
     }
+}
+
+/// The most of a log a report carries: about 90 KB, the end of the file,
+/// which is what a messenger takes in one message and where the export
+/// a person just ran is.
+const LOG_REPORT_BYTES: usize = 90_000;
+
+/// This run's log as a report a phone shares: the system block, then the
+/// end of the file from the start of a line.
+fn log_report() -> Result<String, String> {
+    let path = concat_host::logs::current().ok_or("this run writes no log")?;
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let mut tail = &bytes[bytes.len().saturating_sub(LOG_REPORT_BYTES)..];
+    if tail.len() < bytes.len()
+        && let Some(line) = tail.iter().position(|&byte| byte == b'\n')
+    {
+        tail = &tail[line + 1..];
+    }
+    let facts = crate::sysinfo::system_facts()
+        .into_iter()
+        .map(|(label, value)| format!("{label}: {value}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!("{facts}\n\n{}", String::from_utf8_lossy(tail)))
 }

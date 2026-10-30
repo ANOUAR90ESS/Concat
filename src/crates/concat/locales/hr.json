@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "Skripte i aplikacije",
   "settings.servesConcatApiWhile": "Poslužuje LongCut API dok je prozor otvoren, pa skripta ili drugi program može stvarati, uređivati i izvoziti vlastite projekte. Sve što se poveže može čitati i pisati datoteke kao i vi.",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "Prikaži zapisnik",
   "settings.showTheToken": "Prikaži token",
   "settings.sky": "Nebo",

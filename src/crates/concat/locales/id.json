@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "Skrip dan aplikasi",
   "settings.servesConcatApiWhile": "Menyediakan API LongCut selama jendela terbuka, sehingga skrip atau program lain dapat membuat, mengedit, dan mengekspor proyeknya sendiri. Apa pun yang terhubung dapat membaca dan menulis file seperti Anda.",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "Tampilkan log",
   "settings.showTheToken": "Tampilkan token",
   "settings.sky": "Biru langit",

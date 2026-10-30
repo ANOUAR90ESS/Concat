@@ -533,6 +533,7 @@
   "settings.scaleSystem": "System",
   "settings.scriptsAndApps": "脚本和应用",
   "settings.servesConcatApiWhile": "窗口打开期间提供 LongCut API，让脚本或其他程序可以自行创建、编辑和导出项目。任何连接进来的程序都能像你一样读写文件。",
+  "settings.shareTheLog": "Share the log",
   "settings.showTheLog": "显示日志",
   "settings.showTheToken": "显示令牌",
   "settings.sky": "天空",

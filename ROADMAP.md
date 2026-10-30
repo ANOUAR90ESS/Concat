@@ -168,6 +168,31 @@ the phone's chip ignored the CBR of stage 1 - and took about 7 minutes.
   would pay twice; when it ends elsewhere a toast says to open its
   project and press Create video, which cuts it without paying again.
 
+## After alpha.17 (owner's test, 30 Oct)
+
+alpha.17 works, but a 72 s 1080x1920 export still came out at 0.82
+Mbit/s, as alpha.16 did: the owner's chip kept neither the CBR nor the
+quantiser ceiling. And a one-minute video was slow to export.
+
+- 🚧 **1: the log from a phone.** Settings ▸ Show the log needed a file
+  manager a phone does not have; on a phone it is Share the log, which
+  hands the system block and the end of this run's log - about 90 KB,
+  headed with the phone's model, Android version and its H.264/HEVC
+  encoders - to a messenger or mail. The encoders are also written to
+  the log at start.
+- 🚧 **2: export quality, again.** Where the phone's first encoder of a
+  kind says it takes a constant quality (CQ), the quality setting asks it
+  for one - 77 of 0-100 at CRF 20 - instead of a bitrate, and falls back
+  to the bitrate where the chip will not open so. Otherwise the chip is
+  asked for all the CRF implies (9.2 Mbit/s at 1080p30, not three fifths)
+  and its quantiser floor is set low (CRF-8), out of the way of a chip
+  whose own floor may sit where it wrote everything. Needs the owner's
+  phone, and its log, to confirm.
+- ⏳ **3: export speed.** Waits on the owner's log: its "export done"
+  line says how the time splits between reading, drawing and writing.
+- ⏳ **If the chip still keeps nothing:** a software H.264 encoder
+  (OpenH264) in the phone's FFmpeg as a "best quality, slower" choice.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

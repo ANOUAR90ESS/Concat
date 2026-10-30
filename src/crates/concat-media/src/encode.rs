@@ -599,12 +599,13 @@ fn phone_mode(average: bool) -> &'static str {
     if average { "vbr" } else { "cbr" }
 }
 
-/// The bitrate a phone is held to for the quality setting: three fifths
-/// of what the CRF implies. Held to, not let fall under, so less is
-/// needed than the CRF's ceiling: 5.5 Mbit/s at 1080p30, about 400 MB for
-/// ten minutes.
+/// The bitrate a phone is asked for for the quality setting: all the CRF
+/// implies, 9.2 Mbit/s at 1080p30 and CRF 20. Three fifths of it were
+/// asked before, as a constant rate a chip would keep; the owner's chip
+/// kept a tenth of either, and writes what it writes under a smaller
+/// wish all the same.
 fn phone_kbps(implied: u32) -> u32 {
-    (implied / 5 * 3).max(500)
+    implied.max(500)
 }
 
 /// The coarsest a phone's H.264 or HEVC encoder may quantise each kind
@@ -624,23 +625,169 @@ fn phone_qp_ceiling(encoder_name: &str, crf: u8, average: bool) -> Option<(u8, u
     Some((base + 4, base + 6, base + 8))
 }
 
+/// The finest a phone's H.264 or HEVC encoder may quantise, for the
+/// quality setting: well under the CRF. A chip's own floor can sit near
+/// where the owner's chip wrote everything - a floor it will not go under
+/// however many bits it is given - so it is set low, out of the way.
+fn phone_qp_floor(encoder_name: &str, crf: u8, average: bool) -> Option<u8> {
+    phone_qp_ceiling(encoder_name, crf, average)?;
+    Some(crf.clamp(14, 40).saturating_sub(8).max(8))
+}
+
+/// What a phone says of the first encoder it has for one kind of video,
+/// the one an export gets: its name and, where it takes a constant
+/// quality, the range that quality is given in, worst to best.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhoneEncoder {
+    /// "video/avc", "video/hevc".
+    pub kind: String,
+    /// "c2.qti.avc.encoder".
+    pub name: String,
+    /// Worst to best, where the chip takes a constant quality.
+    pub constant_quality: Option<(i32, i32)>,
+}
+
+/// The phone's encoders, as its Java side lists them: one a line, in
+/// the order Android picks them - "video/avc c2.qti.avc.encoder hw
+/// cq=0-100 vbr cbr". The first of each kind is kept; a constant quality
+/// without a range (before Android 9) is taken as 0-100, the range every
+/// chip that says one gives.
+pub fn read_phone_encoders(report: &str) -> Vec<PhoneEncoder> {
+    let mut encoders: Vec<PhoneEncoder> = Vec::new();
+    for line in report.lines() {
+        let mut words = line.split_whitespace();
+        let (Some(kind), Some(name)) = (words.next(), words.next()) else {
+            continue;
+        };
+        if encoders.iter().any(|encoder| encoder.kind == kind) {
+            continue;
+        }
+        let constant_quality = words.find_map(|word| {
+            let range = word.strip_prefix("cq")?;
+            let Some(range) = range.strip_prefix('=') else {
+                return range.is_empty().then_some((0, 100));
+            };
+            let (low, high) = range.split_once('-')?;
+            let (low, high) = (low.parse().ok()?, high.parse().ok()?);
+            (low < high).then_some((low, high))
+        });
+        encoders.push(PhoneEncoder {
+            kind: kind.to_owned(),
+            name: name.to_owned(),
+            constant_quality,
+        });
+    }
+    encoders
+}
+
+static PHONE_ENCODERS: std::sync::Mutex<Vec<PhoneEncoder>> = std::sync::Mutex::new(Vec::new());
+
+/// Tells the exports what the phone said of its encoders. Once, at start.
+pub fn install_phone_encoders(encoders: Vec<PhoneEncoder>) {
+    *PHONE_ENCODERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = encoders;
+}
+
+/// The constant-quality range of the encoder `encoder_name` comes to on
+/// this phone, where it has one.
+fn phone_constant_quality(encoder_name: &str) -> Option<(i32, i32)> {
+    let kind = match encoder_name {
+        "h264_mediacodec" => "video/avc",
+        "hevc_mediacodec" => "video/hevc",
+        _ => return None,
+    };
+    PHONE_ENCODERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .find(|encoder| encoder.kind == kind)?
+        .constant_quality
+}
+
+/// The constant quality a phone is asked for, for a CRF: its best at 14
+/// and under, its worst at 40, in a line between - 85 of 0-100 at CRF 18,
+/// 77 at CRF 20.
+fn phone_quality(crf: u8, (worst, best): (i32, i32)) -> i32 {
+    let share = (40.0 - f64::from(crf.clamp(14, 40))) / 26.0;
+    worst + (f64::from(best - worst) * share).round() as i32
+}
+
+/// The colour tags an encoder's context is given.
+type Tags = (
+    ffmpeg::color::Primaries,
+    ffmpeg::color::TransferCharacteristic,
+    ffmpeg::color::Space,
+);
+
 /// One encoder's context, set up and opened for the file: the frame's
 /// size, rate and tags, and the settings `encoder_name` is steered by.
 /// Returns the encoder and the pixel format it takes its pictures in.
+///
+/// A phone whose chip takes a constant quality is asked for one for the
+/// quality setting - a bitrate is a wish the owner's chip kept a tenth
+/// of - and is asked again by bitrate if the chip will not open so.
+#[allow(clippy::too_many_arguments)]
 fn open_video(
+    encoder_name: &'static str,
+    codec: ffmpeg::Codec,
+    path: &Path,
+    size: (u32, u32),
+    rate: ffmpeg::Rational,
+    options: &EncodeOptions,
+    tags: Tags,
+    hdr: Option<Signal>,
+    global_header: bool,
+) -> Result<(encoder::video::Encoder, Pixel)> {
+    let by_name = options.rate_mode != RateMode::Vbr && options.bitrate_kbps > 0;
+    let quality = phone_constant_quality(encoder_name)
+        .filter(|_| !by_name)
+        .map(|range| phone_quality(options.crf, range));
+    if let Some(quality) = quality {
+        match open_video_as(
+            encoder_name,
+            codec,
+            path,
+            size,
+            rate,
+            options,
+            tags,
+            hdr,
+            global_header,
+            Some(quality),
+        ) {
+            Ok(opened) => return Ok(opened),
+            Err(error) => {
+                log::warn!("{encoder_name} will not open at a constant quality: {error}");
+            }
+        }
+    }
+    open_video_as(
+        encoder_name,
+        codec,
+        path,
+        size,
+        rate,
+        options,
+        tags,
+        hdr,
+        global_header,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_video_as(
     encoder_name: &'static str,
     codec: ffmpeg::Codec,
     path: &Path,
     (width, height): (u32, u32),
     rate: ffmpeg::Rational,
     options: &EncodeOptions,
-    tags: (
-        ffmpeg::color::Primaries,
-        ffmpeg::color::TransferCharacteristic,
-        ffmpeg::color::Space,
-    ),
+    tags: Tags,
     hdr: Option<Signal>,
     global_header: bool,
+    constant_quality: Option<i32>,
 ) -> Result<(encoder::video::Encoder, Pixel)> {
     let pq = hdr == Some(Signal::Pq);
     let family = Family::of(encoder_name);
@@ -818,15 +965,28 @@ fn open_video(
         // A phone's chip. The NDK's MediaCodec, not the Java one: no
         // JavaVM is handed to FFmpeg, and the NDK needs none.
         _ if family == Family::MediaCodec => {
-            let mut settings = ffmpeg::dict! {
-                "bitrate_mode" => phone_mode(average),
-            };
-            if let Some((i, p, b)) = phone_qp_ceiling(encoder_name, options.crf, average) {
-                settings.set("qp_i_max", i.to_string());
-                settings.set("qp_p_max", p.to_string());
-                settings.set("qp_b_max", b.to_string());
+            if let Some(quality) = constant_quality {
+                // SAFETY: `video` owns a live AVCodecContext not yet
+                // opened; FFmpeg hands this to the chip as its quality.
+                unsafe { (*video.as_mut_ptr()).global_quality = quality };
+                ffmpeg::dict! { "bitrate_mode" => "cq" }
+            } else {
+                let mut settings = ffmpeg::dict! {
+                    "bitrate_mode" => phone_mode(average),
+                };
+                if let Some((i, p, b)) = phone_qp_ceiling(encoder_name, options.crf, average) {
+                    settings.set("qp_i_max", i.to_string());
+                    settings.set("qp_p_max", p.to_string());
+                    settings.set("qp_b_max", b.to_string());
+                }
+                if let Some(floor) = phone_qp_floor(encoder_name, options.crf, average) {
+                    let floor = floor.to_string();
+                    settings.set("qp_i_min", &floor);
+                    settings.set("qp_p_min", &floor);
+                    settings.set("qp_b_min", &floor);
+                }
+                settings
             }
-            settings
         }
         // Windows' Media Foundation, whatever the machine has behind it.
         _ if family == Family::MediaFoundation => ffmpeg::dict! {
@@ -936,11 +1096,12 @@ fn open_video(
         // chip that keeps none of it writes a file far under the target.
         let asked: Vec<String> = settings.iter().map(|(k, v)| format!("{k}={v}")).collect();
         log::info!(
-            "{encoder_name}: {}x{} at {} kbit/s, {}",
+            "{encoder_name}: {}x{} at {} kbit/s, quality {}, {}",
             width,
             height,
             // SAFETY: `video` owns a live AVCodecContext; read only.
             unsafe { (*video.as_ptr()).bit_rate } / 1000,
+            constant_quality.map_or("by bitrate".to_owned(), |quality| quality.to_string()),
             asked.join(" ")
         );
     }
@@ -2162,7 +2323,7 @@ mod tests {
     }
 
     /// A phone's quality setting is held to a constant rate - its VBR ran
-    /// at a tenth of the target on stills - three fifths of the CRF's.
+    /// at a tenth of the target on stills - all the CRF implies.
     #[test]
     fn a_phone_holds_the_quality_setting_to_a_constant_rate() {
         assert_eq!(phone_mode(false), "cbr");
@@ -2175,7 +2336,7 @@ mod tests {
             ffmpeg::Rational::new(30, 1),
         );
         assert_eq!(implied, 9190);
-        assert_eq!(phone_kbps(implied), 5514);
+        assert_eq!(phone_kbps(implied), 9190);
         assert_eq!(phone_kbps(100), 500);
     }
 
@@ -2191,6 +2352,61 @@ mod tests {
         );
         assert_eq!(phone_qp_ceiling("av1_mediacodec", 20, false), None);
         assert_eq!(phone_qp_ceiling("h264_mediacodec", 20, true), None);
+    }
+
+    /// The floor under a phone's quantiser is set low, out of the way of
+    /// a chip whose own sits where it wrote everything.
+    #[test]
+    fn a_phone_may_quantise_finely() {
+        assert_eq!(phone_qp_floor("h264_mediacodec", 20, false), Some(12));
+        assert_eq!(phone_qp_floor("h264_mediacodec", 14, false), Some(8));
+        assert_eq!(phone_qp_floor("av1_mediacodec", 20, false), None);
+        assert_eq!(phone_qp_floor("h264_mediacodec", 20, true), None);
+    }
+
+    /// The phone's list of encoders: the first of each kind, and its
+    /// constant quality's range where it has one.
+    #[test]
+    fn a_phone_says_which_encoder_takes_a_constant_quality() {
+        let report = "video/avc c2.qti.avc.encoder hw cq=0-100 vbr cbr\n\
+                      video/avc c2.android.avc.encoder sw vbr cbr\n\
+                      video/hevc c2.qti.hevc.encoder hw vbr cbr\n\
+                      video/hevc c2.android.hevc.encoder sw cq vbr\n";
+        let encoders = read_phone_encoders(report);
+        assert_eq!(
+            encoders,
+            vec![
+                PhoneEncoder {
+                    kind: "video/avc".to_owned(),
+                    name: "c2.qti.avc.encoder".to_owned(),
+                    constant_quality: Some((0, 100)),
+                },
+                PhoneEncoder {
+                    kind: "video/hevc".to_owned(),
+                    name: "c2.qti.hevc.encoder".to_owned(),
+                    constant_quality: None,
+                },
+            ]
+        );
+        let older = read_phone_encoders("video/avc OMX.qcom.video.encoder.avc cq vbr");
+        assert_eq!(older[0].constant_quality, Some((0, 100)));
+        assert!(
+            read_phone_encoders("video/avc x cq=9-1")
+                .first()
+                .unwrap()
+                .constant_quality
+                .is_none()
+        );
+    }
+
+    /// A CRF comes to a phone's constant quality in a line from its best
+    /// at 14 to its worst at 40.
+    #[test]
+    fn a_crf_comes_to_a_phone_quality() {
+        assert_eq!(phone_quality(18, (0, 100)), 85);
+        assert_eq!(phone_quality(20, (0, 100)), 77);
+        assert_eq!(phone_quality(10, (0, 100)), 100);
+        assert_eq!(phone_quality(51, (1, 10)), 1);
     }
 
     /// Every codec has an encoder listed for every platform but AV1 on
