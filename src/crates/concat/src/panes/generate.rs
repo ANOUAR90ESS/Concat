@@ -26,7 +26,7 @@ use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
-use concat_generate::writer::{self, Brief, Publishing, Suggestion, Writing};
+use concat_generate::writer::{self, Brief, ContentStyle, Publishing, Suggestion, Writing};
 use concat_project::Command;
 use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
@@ -327,6 +327,12 @@ impl GeneratePane {
                     8 => prefs.spend_limit = text,
                     9 => prefs.clip_price = text,
                     10 => prefs.image_price = text,
+                    11 => prefs.channel_name = text,
+                    12 => prefs.channel_audience = text,
+                    13 => prefs.channel_voice = text,
+                    14 => prefs.channel_opening = text,
+                    15 => prefs.channel_closing = text,
+                    16 => prefs.channel_example = text,
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -354,6 +360,23 @@ impl GeneratePane {
                     }
                     6 => prefs.clips = Some(index.min(CLIP_SHARES.len() - 1)),
                     7 => prefs.caption_look = index.min(1),
+                    8 => prefs.content_style = index.min(ContentStyle::ALL.len() - 1),
+                    9 => {
+                        let professional = index == 1;
+                        prefs.replicate_image_model = if professional {
+                            PROFESSIONAL_IMAGE_MODEL.to_owned()
+                        } else {
+                            String::new()
+                        };
+                        prefs.image_price = if professional {
+                            PROFESSIONAL_IMAGE_PRICE.to_owned()
+                        } else {
+                            String::new()
+                        };
+                        studio.prefs.save(&studio.host.dirs);
+                        self.tally(studio);
+                        return;
+                    }
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -363,6 +386,10 @@ impl GeneratePane {
                 1 => self.titles = on,
                 2 => {
                     studio.prefs.generate.auto_export = Some(on);
+                    studio.prefs.save(&studio.host.dirs);
+                }
+                3 => {
+                    studio.prefs.generate.research = Some(on);
                     studio.prefs.save(&studio.host.dirs);
                 }
                 _ => {}
@@ -921,6 +948,9 @@ impl GeneratePane {
             aspect: ASPECTS[prefs.aspect.min(ASPECTS.len() - 1)].to_owned(),
             notes: self.notes.clone(),
             clip_share: CLIP_SHARES[self.clips_row(studio)],
+            style: ContentStyle::ALL[prefs.content_style.min(ContentStyle::ALL.len() - 1)],
+            channel: channel_profile(prefs),
+            research: prefs.research.unwrap_or(true),
         }
     }
 
@@ -1110,6 +1140,7 @@ impl GeneratePane {
                 let board =
                     writer::write(&brief, &prefs.anthropic_key, writer::DEFAULT_MODEL, |at| {
                         let (fraction, stage, detail) = match at {
+                            Writing::Research => (0.01, t("generate.researching"), String::new()),
                             Writing::Outline => (0.02, t("generate.writingOutline"), String::new()),
                             Writing::Chapter { n, of, title } => (
                                 n as f32 / (of + 1) as f32,
@@ -1698,6 +1729,17 @@ impl GeneratePane {
             music: self.music as i32,
             captions: self.captions,
             caption_look: prefs.caption_look as i32,
+            content_style: prefs.content_style as i32,
+            research: prefs.research.unwrap_or(true),
+            picture_quality: i32::from(
+                prefs.replicate_image_model.trim() == PROFESSIONAL_IMAGE_MODEL,
+            ),
+            channel_name: prefs.channel_name.as_str().into(),
+            channel_audience: prefs.channel_audience.as_str().into(),
+            channel_voice: prefs.channel_voice.as_str().into(),
+            channel_opening: prefs.channel_opening.as_str().into(),
+            channel_closing: prefs.channel_closing.as_str().into(),
+            channel_example: prefs.channel_example.as_str().into(),
             titles: self.titles,
             anthropic_key: prefs.anthropic_key.as_str().into(),
             replicate_token: prefs.replicate_token.as_str().into(),
@@ -2143,6 +2185,32 @@ fn dollars(value: f64) -> String {
     } else {
         format!("{value:.2}")
     }
+}
+
+/// The professional picture model, beside the default economical one:
+/// finer detail and truer light, at about four cents a picture.
+const PROFESSIONAL_IMAGE_MODEL: &str = "black-forest-labs/flux-1.1-pro";
+const PROFESSIONAL_IMAGE_PRICE: &str = "0.04";
+
+/// The channel as the writer is told it: one line for each thing the
+/// person filled in, nothing for what they left empty.
+fn channel_profile(prefs: &crate::prefs::GeneratePrefs) -> String {
+    [
+        ("Name", &prefs.channel_name),
+        ("Audience", &prefs.channel_audience),
+        ("Voice and tone", &prefs.channel_voice),
+        ("Opens every video with", &prefs.channel_opening),
+        ("Closes every video with", &prefs.channel_closing),
+        (
+            "A script it likes - write in its manner, not about its subject",
+            &prefs.channel_example,
+        ),
+    ]
+    .iter()
+    .filter(|(_, value)| !value.trim().is_empty())
+    .map(|(label, value)| format!("{label}: {}", value.trim()))
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 #[cfg(test)]

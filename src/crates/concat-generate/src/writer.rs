@@ -33,26 +33,117 @@ pub const DEFAULT_MODEL: &str = "claude-sonnet-5-5";
 /// recent, which are the ones it is likeliest to fall back on.
 const AVOID: usize = 80;
 
-const SYSTEM: &str = "You write long-form videos for YouTube: documentaries, explainers, stories.
-Narration is written to be heard, not read: short sentences, concrete images, a hook in the
-first ten seconds, a question or a turn that pulls the viewer into the next chapter. Never pad,
-and never say again what an earlier chapter said.
+const SYSTEM: &str = "You are the head writer of a channel that competes with the best on YouTube \
+and TikTok. You write like a person with a point of view, not like an assistant: every line \
+earns its place, and a viewer who leaves is a viewer lost.
 
-Every scene has three parts. The narration, in the video's language. The voice: one short line
-in English on how the narrator says it - pace, feeling, emphasis - never read aloud. And its
+Narration is written to be heard, not read. Short sentences, one idea each. Concrete over \
+abstract: a number, a name, a place, a moment, never a generality. Show the thing, then say \
+what it means. Use the second person and real questions where they pull the viewer in.
+
+Structure for retention. Open cold, inside the story or on the most surprising fact - never \
+with a greeting, a definition or 'in this video'. State the question the film answers within \
+the first twenty seconds. Every minute or so open a loop - a promise, a mystery, a 'but' - and \
+close it later. End each chapter on a turn that makes the next one necessary. Build to a \
+payoff: the last chapter answers the opening question and leaves one thought worth repeating.
+
+Never write these, in any language, or their like: 'in today's fast-paced world', 'let's dive \
+in', 'in conclusion', 'it is worth noting', 'without a doubt', 'a testament to', 'in the realm \
+of', 'unlock', 'delve', 'journey', 'game-changer', 'buckle up', 'stay tuned', 'smash that like \
+button'; in Arabic: 'في عالمنا المتسارع', 'دعونا نغوص', 'في الختام', 'لا شك أن', 'تجدر الإشارة', \
+'رحلة مثيرة', 'عالم مليء بالأسرار'. No filler, no lists of adjectives, no moralising, and never \
+say again what an earlier chapter said. Facts are exact or not given: no invented numbers, \
+quotes or names.
+
+In Arabic, write clear Modern Standard Arabic as a good narrator speaks it - natural, never \
+stiff - unless the producer asks for a dialect; put the vowel marks only on words a voice \
+would otherwise misread. In every language, write numbers the way they are said.
+
+Every scene has three parts. The narration, in the video's language. The voice: one short line \
+in English on how the narrator says it - pace, feeling, emphasis - never read aloud. And its \
 shots, each one of two kinds:
-- image: a still. Its prompt, in English, describes one photograph: subject, setting, framing,
-  lens, light. No text, logos or captions, no real people's names.
-- video: a clip of a few seconds. Its prompt describes the picture it starts from, as for an
-  image; its motion says in a short English phrase how the camera moves and what moves in the
-  frame.
+- image: a still. Its prompt, in English, describes one photograph in this order: the subject \
+  and what it is doing, the setting, the framing and the lens, the light, the mood. No text, \
+  logos or captions, no real people's names.
+- video: a clip of a few seconds. Its prompt describes the picture it starts from, as for an \
+  image; its motion gives one camera move (slow push-in, pull-back, pan, orbit, crane, \
+  handheld drift) and what moves in the frame.
 Describe what is there; do not tell the model what to avoid.
 
-Vary the pictures. Change the shot size from one shot to the next (aerial, wide, medium,
-close-up, macro detail), and the subject and the place from one scene to the next. Within one
-scene each shot shows something the others do not: another subject, or the same subject from
-another side, distance and height - never the same composition in other words. A picture
-already used, or one that would read as the same picture, is never used again.";
+Pictures follow the words. Most shots show what the narration says, literally; some give it a \
+visual metaphor; none is decoration. Vary them: change the shot size from one shot to the \
+next (aerial, wide, medium, close-up, macro detail), and the subject and the place from one \
+scene to the next. Within one scene each shot shows something the others do not. A picture \
+already used, or one that would read as the same picture, is never used again. Do not give \
+every picture the same colours: the film has one look, each chapter its own palette, and \
+teal-and-amber is one palette among many, not a default.";
+
+/// How the video is written: what it is for, and the shape that serves
+/// it. Chosen in the Long video sheet; each comes with its own brief to
+/// the writer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContentStyle {
+    /// A story told about the real world, with tension and a reveal.
+    #[default]
+    Documentary,
+    /// Teaches one idea, step by step, to someone new to it.
+    Educational,
+    /// Rigorous: the evidence, its sources, where it is unsure.
+    Academic,
+    /// A narrative with a character, a conflict and a turn.
+    Story,
+    /// What happened, why it matters, what comes next.
+    News,
+}
+
+impl ContentStyle {
+    /// In the sheet's order.
+    pub const ALL: [ContentStyle; 5] = [
+        ContentStyle::Documentary,
+        ContentStyle::Educational,
+        ContentStyle::Academic,
+        ContentStyle::Story,
+        ContentStyle::News,
+    ];
+
+    /// What the writer is told the video is, and how it is built.
+    fn brief(self) -> &'static str {
+        match self {
+            ContentStyle::Documentary => {
+                "A documentary. Tell the real story as a story: people, places, dates, the \
+                 stakes, a tension that builds and a reveal. Authoritative and cinematic, never \
+                 dry. Pictures: real places and objects, shot like a feature film."
+            }
+            ContentStyle::Educational => {
+                "An explainer that teaches. Start from what the viewer already knows, build one \
+                 idea on the last, explain every new term the moment it appears, and give each \
+                 idea an everyday example or analogy. Check understanding with a question, then \
+                 answer it. End with the three things to remember. Pictures: clear, literal, \
+                 one idea each - diagrams-as-photographs, close-ups of the thing explained."
+            }
+            ContentStyle::Academic => {
+                "An academic deep dive. Precise terms, the evidence behind every claim and \
+                 where it comes from (study, institution, year) in the narration, the debate \
+                 where there is one, and what is still unknown. Calm and exact, never \
+                 sensational. Pictures: documentary realism - laboratories, archives, \
+                 instruments, data on screens, the places the research happened."
+            }
+            ContentStyle::Story => {
+                "A story. One main character, real or composite and named as such, who wants \
+                 something; obstacles; a turning point; a resolution that carries the lesson \
+                 without stating it. Scenes, dialogue in a line or two, sensory detail. \
+                 Pictures: the character's world, the same character described the same way \
+                 in every shot they are in."
+            }
+            ContentStyle::News => {
+                "A news analysis. What happened, in one line, first; then why it matters, \
+                 who wins and who loses, the context that explains it, and what to watch \
+                 next. Neutral and sourced, fast-paced. Pictures: photojournalism - places, \
+                 crowds, objects and screens tied to the events, no staged look."
+            }
+        }
+    }
+}
 
 /// What the video is to be.
 #[derive(Clone, Debug, Default)]
@@ -69,6 +160,14 @@ pub struct Brief {
     pub notes: String,
     /// The share of shots that are clips, `0..=1`.
     pub clip_share: f64,
+    /// How it is written.
+    pub style: ContentStyle,
+    /// The channel it is for, as the person described it once: name,
+    /// audience, voice, opening and closing lines, scripts to write like.
+    /// Empty when they have not.
+    pub channel: String,
+    /// Read up on the web before writing, and list the sources.
+    pub research: bool,
 }
 
 impl Brief {
@@ -80,12 +179,21 @@ impl Brief {
     /// The brief as every call starts with it.
     fn text(&self) -> String {
         let mut text = format!(
-            "Topic: {}\nLength: about {} minutes\nNarration language: {}\nAspect ratio: {}\n",
+            "Topic: {}\nLength: about {} minutes\nNarration language: {}\nAspect ratio: {}\n\
+             What it is: {}\n",
             self.topic.trim(),
             self.minutes,
             self.language,
-            self.aspect
+            self.aspect,
+            self.style.brief()
         );
+        if !self.channel.trim().is_empty() {
+            text += &format!(
+                "The channel, as its owner describes it - write as this channel, in its voice, \
+                 with its opening and closing lines:\n{}\n",
+                self.channel.trim()
+            );
+        }
         if !self.notes.trim().is_empty() {
             text += &format!("Notes from the producer: {}\n", self.notes.trim());
         }
@@ -96,6 +204,8 @@ impl Brief {
 /// Where the writing is: the outline, then chapter `n` of `of`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Writing {
+    /// The topic is being read up on, on the web.
+    Research,
     /// The outline is being written.
     Outline,
     /// Chapter `n` (from 1) of `of` is being written.
@@ -121,7 +231,24 @@ pub fn write(
     }
     let ask =
         |tool: &Value, prompt: String| crate::providers::retry(|| call(key, model, tool, &prompt));
-    let brief_text = brief.text();
+    let mut brief_text = brief.text();
+    let mut sources = Vec::new();
+    if brief.research {
+        progress(Writing::Research);
+        match research(brief, key, model) {
+            Ok(found) => {
+                brief_text += &format!(
+                    "\nResearch notes, read on the web for this video. Build on these facts; \
+                     give no number, date, name or quote that is not here or certain:\n{}\n",
+                    found.notes
+                );
+                sources = found.sources;
+            }
+            // Written from what the writer knows, as before: the research
+            // is a help, not a condition.
+            Err(error) => log::warn!("research: {error}; writing without it"),
+        }
+    }
 
     progress(Writing::Outline);
     let mut shape = budget::budget(&brief.pacing());
@@ -165,6 +292,7 @@ pub fn write(
                 scenes: Vec::new(),
             })
             .collect(),
+        sources,
     };
     let points: Vec<String> = outlined
         .iter()
@@ -184,7 +312,7 @@ pub fn write(
             of,
             title: board.chapters[i].title.trim().to_owned(),
         });
-        let prompt = chapter_prompt(&board, brief, i, plan, points, &ending);
+        let prompt = chapter_prompt(&board, &brief_text, brief, i, plan, points, &ending);
         let mut got = ask(&scenes_tool(), prompt.clone())?;
         let mut scenes = scenes_of(&got)?;
         if let Some(problem) = misfit(&scenes, plan) {
@@ -203,6 +331,14 @@ pub fn write(
         board.tidy()?;
         ending = text(&got["ending"]);
 
+        // An editor's pass over the chapter's words: what a first draft
+        // leaves - a soft opening, a phrase every script uses, a line that
+        // says again what another said - taken out, at the same length.
+        match ask(&edit_tool(), edit_prompt(&board, brief, i)) {
+            Ok(edited) => apply_edits(&mut board.chapters[i].scenes, &edited),
+            Err(error) => log::warn!("chapter {}: the editor's pass failed: {error}", i + 1),
+        }
+
         // The pictures that came back the same as earlier ones, replaced.
         let repeated = repeats_in(&board, i);
         if !repeated.is_empty() {
@@ -218,6 +354,98 @@ pub fn write(
     }
     board.tidy()?;
     Ok(board)
+}
+
+/// What the writer read up on before writing: its notes, and the pages
+/// they came from.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Research {
+    /// The facts, in English, each with the number of its source.
+    pub notes: String,
+    /// The pages, numbered from 1 in that order.
+    pub sources: Vec<crate::storyboard::Source>,
+}
+
+/// How many searches one research may run: about ten cents of them.
+const SEARCHES: u32 = 8;
+
+/// Reads up on `brief`'s topic on the web, with Anthropic's web search:
+/// the facts, the numbers and their dates, the people and places, the
+/// debate and the latest, for the kind of video it is.
+pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to read up on the topic".to_owned());
+    }
+    let prompt = format!(
+        "{}\nBefore anything is written, research this topic on the web for the video \
+         described. Find what a specialist would put in it: the key facts and how they connect, \
+         numbers with their dates and units, the people, places and events, what is surprising \
+         or little known, where experts disagree, and the latest developments. Prefer primary \
+         and reputable sources. Write the notes in English as short factual lines, each ending \
+         with the number of its source in brackets, like [2]; list the sources in that order.",
+        brief.text()
+    );
+    let search = |kind: &str| json!({"type": kind, "name": "web_search", "max_uses": SEARCHES});
+    // The newer search on the models that take it, the first one on the
+    // others - a model the person named themselves may be older.
+    let got = crate::providers::retry(|| {
+        call_with(
+            key,
+            model,
+            &[search("web_search_20260209")],
+            &research_tool(),
+            &prompt,
+        )
+    })
+    .or_else(|error| {
+        if error.contains("web_search") {
+            call_with(
+                key,
+                model,
+                &[search("web_search_20250305")],
+                &research_tool(),
+                &prompt,
+            )
+        } else {
+            Err(error)
+        }
+    })?;
+    let sources = got["sources"]
+        .as_array()
+        .map(|sources| {
+            sources
+                .iter()
+                .map(|source| crate::storyboard::Source {
+                    title: text(&source["title"]),
+                    url: text(&source["url"]),
+                })
+                .filter(|source| source.url.starts_with("http"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let notes = text(&got["notes"]);
+    if notes.is_empty() {
+        return Err("the research came back empty".to_owned());
+    }
+    Ok(Research { notes, sources })
+}
+
+/// The sources, as a YouTube description lists them.
+pub fn sources_text(sources: &[crate::storyboard::Source]) -> String {
+    if sources.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<String> = sources
+        .iter()
+        .map(|source| {
+            if source.title.trim().is_empty() {
+                source.url.clone()
+            } else {
+                format!("{} - {}", source.title.trim(), source.url)
+            }
+        })
+        .collect();
+    format!("Sources:\n{}", lines.join("\n"))
 }
 
 /// Writes one scene again in place - the chapter's `chapter` (from 0),
@@ -481,9 +709,14 @@ pub fn publishing(board: &Storyboard, key: &str, model: &str) -> Result<Publishi
                 .collect()
         })
         .unwrap_or_default();
+    let mut description = text(&got["description"]);
+    let sources = sources_text(&board.sources);
+    if !sources.is_empty() {
+        description = format!("{}\n\n{sources}", description.trim_end());
+    }
     let publishing = Publishing {
         title: text(&got["title"]),
-        description: text(&got["description"]),
+        description,
         tags,
         thumbnail_text: text(&got["thumbnail_text"]),
         thumbnail_prompt: text(&got["thumbnail_prompt"]),
@@ -652,8 +885,10 @@ fn suggest_prompt(
 
 /// The prompt for chapter `i`: the brief, the outline, the shape scene by
 /// scene, and the pictures to keep clear of.
+#[allow(clippy::too_many_arguments)]
 fn chapter_prompt(
     board: &Storyboard,
+    brief_text: &str,
     brief: &Brief,
     i: usize,
     plan: &ChapterPlan,
@@ -670,7 +905,7 @@ fn chapter_prompt(
     let mut prompt = format!(
         "{}\n{}\nVisual style of the whole film: {}\nNarrator: {}\n\n\
          Write chapter {} of {}, \"{}\": {}\n",
-        brief.text(),
+        brief_text,
         outline_summary(board),
         board.style.visual,
         board.style.voice,
@@ -692,6 +927,69 @@ fn chapter_prompt(
         plan.scenes.len(),
     );
     prompt + &avoid_list(board, None)
+}
+
+/// What the editor is asked of chapter `i`: its narration, scene by
+/// scene, to be tightened without changing what it says or how long it
+/// takes to say.
+fn edit_prompt(board: &Storyboard, brief: &Brief, i: usize) -> String {
+    let chapter = &board.chapters[i];
+    let scenes: String = chapter
+        .scenes
+        .iter()
+        .enumerate()
+        .map(|(n, scene)| {
+            format!(
+                "{}. ({} words) {}\n",
+                n + 1,
+                scene.narration.split_whitespace().count(),
+                scene.narration.trim()
+            )
+        })
+        .collect();
+    format!(
+        "{}\n{}\nYou are now the channel's editor. This is the narration of chapter {} of {}, \
+         \"{}\", scene by scene:\n{scenes}\n\
+         Edit it the way a senior editor edits a first draft for a channel that lives on \
+         retention: a stronger first line, sharper verbs, concrete detail where it is vague, \
+         every phrase from the list you never write taken out, nothing said twice, the turn at \
+         the end kept. Keep every fact, the order, the language and the meaning of each scene; \
+         keep each scene within a tenth of its word count, so it still fits its pictures. \
+         Return all {} scenes, in order.",
+        brief.text(),
+        outline_summary(board),
+        i + 1,
+        board.chapters.len(),
+        chapter.title,
+        chapter.scenes.len(),
+    )
+}
+
+/// The editor's narration put in place, scene for scene, where it kept
+/// to the shape: the same number of scenes, each near its length. A
+/// scene that drifted keeps the writer's words, which fit its pictures.
+fn apply_edits(scenes: &mut [Scene], edited: &Value) {
+    let Some(lines) = edited["narrations"].as_array() else {
+        return;
+    };
+    if lines.len() != scenes.len() {
+        log::warn!(
+            "the editor returned {} scenes for {}; the draft stands",
+            lines.len(),
+            scenes.len()
+        );
+        return;
+    }
+    for (scene, line) in scenes.iter_mut().zip(lines) {
+        let line = text(line);
+        let (was, now) = (
+            scene.narration.split_whitespace().count() as f64,
+            line.split_whitespace().count() as f64,
+        );
+        if !line.trim().is_empty() && (now - was).abs() <= (was * 0.2).max(3.0) {
+            scene.narration = line.trim().to_owned();
+        }
+    }
 }
 
 /// Every chapter in a line each: what the next call is told the video is.
@@ -877,7 +1175,22 @@ fn apply_revisions(board: &mut Storyboard, revised: &Value) {
 /// as what it says, and an answer still missing what the tool requires is
 /// sent back, with what is missing, twice at most.
 fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, String> {
+    call_with(key, model, &[], tool, prompt)
+}
+
+/// [`call`], with Anthropic's own tools - web search - offered beside the
+/// answer's: the server runs them in the same turn, and a turn it pauses
+/// for running long is sent back to carry on.
+fn call_with(
+    key: &str,
+    model: &str,
+    server_tools: &[Value],
+    tool: &Value,
+    prompt: &str,
+) -> Result<Value, String> {
     let name = tool["name"].as_str().unwrap_or_default();
+    let mut tools: Vec<Value> = server_tools.to_vec();
+    tools.push(tool.clone());
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(20))
         .timeout_read(std::time::Duration::from_secs(600))
@@ -887,12 +1200,15 @@ fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, Str
         "content": format!("{prompt}\n\nAnswer by calling the {name} tool, once."),
     })];
     let mut last = format!("Claude did not answer with the {name}");
-    for _ in 0..3 {
+    let mut paused = 0;
+    let mut tries = 0;
+    while tries < 3 {
+        tries += 1;
         let body = json!({
             "model": model,
             "max_tokens": 32000,
             "system": SYSTEM,
-            "tools": [tool],
+            "tools": tools,
             "tool_choice": {"type": "auto"},
             "messages": messages,
         });
@@ -917,6 +1233,14 @@ fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, Str
                 ));
             }
             "refusal" => return Err(format!("Claude declined to write the {name}")),
+            // The server's searching ran long: its turn is sent back as it
+            // is, and it carries on where it stopped.
+            "pause_turn" if paused < 5 => {
+                paused += 1;
+                tries -= 1;
+                messages.push(json!({"role": "assistant", "content": reply["content"].clone()}));
+                continue;
+            }
             _ => {}
         }
         let content = reply["content"].clone();
@@ -1057,7 +1381,7 @@ fn outline_tool() -> Value {
                 "title": {"type": "string"},
                 "visual_style": {
                     "type": "string",
-                    "description": "One line in English appended to every shot prompt so all shots look like one film: medium, lens, light, palette, grade."
+                    "description": "One line in English appended to every shot prompt so all shots look like one film, chosen for this topic and this kind of video: the medium (cinematic photograph, photojournalism, archival film, 3D render, illustration), the lens and film or sensor look, the light and the grade. No palette: each chapter brings its own."
                 },
                 "voice_style": {"type": "string", "description": "How the narrator sounds."},
                 "chapters": {
@@ -1074,7 +1398,7 @@ fn outline_tool() -> Value {
                             },
                             "mood": {
                                 "type": "string",
-                                "description": "In English, this chapter's own light and palette within the film's style, unlike the chapters beside it."
+                                "description": "In English, this chapter's own light and palette - name its two or three colours and the time of day - unlike every other chapter's: warm against cold, bright against dark, as the story turns."
                             }
                         },
                         "required": ["title", "summary", "points", "mood"]
@@ -1100,6 +1424,15 @@ fn scene_schema() -> Value {
                 "type": ["string", "null"],
                 "description": "A short title shown over the scene's start, or null."
             },
+            "card": {
+                "type": ["object", "null"],
+                "description": "When the scene turns on a number, a date or a comparison, the card the app draws over its pictures: the figure in large type ('$1.2 trillion', '1999', '3x') and a label of a few words in the narration's language. Null otherwise; at most one scene in four.",
+                "properties": {
+                    "figure": {"type": "string"},
+                    "label": {"type": "string"}
+                },
+                "required": ["figure", "label"]
+            },
             "shots": {
                 "type": "array",
                 "items": {
@@ -1117,6 +1450,45 @@ fn scene_schema() -> Value {
             }
         },
         "required": ["narration", "voice", "shots"]
+    })
+}
+
+fn research_tool() -> Value {
+    json!({
+        "name": "research",
+        "description": "What the research found: notes citing sources by number, and the sources.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "notes": {"type": "string"},
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "url": {"type": "string"}
+                        },
+                        "required": ["title", "url"]
+                    }
+                }
+            },
+            "required": ["notes", "sources"]
+        }
+    })
+}
+
+fn edit_tool() -> Value {
+    json!({
+        "name": "edit",
+        "description": "The chapter's narration, edited, one entry per scene in order.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "narrations": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["narrations"]
+        }
     })
 }
 
@@ -1290,6 +1662,78 @@ mod tests {
         }
     }
 
+    /// The editor's words go in where they keep to the scene's length;
+    /// a scene that drifted, or an answer of the wrong size, keeps the
+    /// draft.
+    #[test]
+    fn an_editor_keeps_each_scene_to_its_length() {
+        let mut scenes = vec![scene(&[]), scene(&[])];
+        scenes[0].narration = "one two three four five six seven eight nine ten".into();
+        scenes[1].narration = "one two three four five six seven eight nine ten".into();
+        apply_edits(
+            &mut scenes,
+            &json!({"narrations": [
+                "un deux trois quatre cinq six sept huit neuf dix onze",
+                "far too short"
+            ]}),
+        );
+        assert!(scenes[0].narration.starts_with("un deux"));
+        assert!(
+            scenes[1].narration.starts_with("one two"),
+            "drifted: the draft stands"
+        );
+
+        let before = scenes.clone();
+        apply_edits(&mut scenes, &json!({"narrations": ["just one"]}));
+        assert_eq!(scenes, before, "one scene for two: the draft stands");
+    }
+
+    /// The sources go under the description as YouTube shows them; none,
+    /// nothing.
+    #[test]
+    fn the_sources_are_listed_for_the_description() {
+        use crate::storyboard::Source;
+        assert_eq!(sources_text(&[]), "");
+        let listed = sources_text(&[
+            Source {
+                title: "IMF outlook".into(),
+                url: "https://imf.org/a".into(),
+            },
+            Source {
+                title: String::new(),
+                url: "https://example.org/b".into(),
+            },
+        ]);
+        assert_eq!(
+            listed,
+            "Sources:\nIMF outlook - https://imf.org/a\nhttps://example.org/b"
+        );
+    }
+
+    /// The channel the person described is in every call's brief.
+    #[test]
+    fn the_brief_carries_the_channel() {
+        let brief = Brief {
+            topic: "Rome".into(),
+            channel: "Name: Tarikh. Opens with: Ahlan.".into(),
+            ..Brief::default()
+        };
+        assert!(brief.text().contains("Name: Tarikh. Opens with: Ahlan."));
+        assert!(!Brief::default().text().contains("The channel"));
+    }
+
+    /// Every call is told what kind of video it writes.
+    #[test]
+    fn the_brief_says_what_the_video_is() {
+        let brief = Brief {
+            topic: "Rome".into(),
+            style: ContentStyle::Educational,
+            ..Brief::default()
+        };
+        assert!(brief.text().contains("An explainer that teaches"));
+        assert_eq!(ContentStyle::ALL[0], ContentStyle::default());
+    }
+
     #[test]
     fn the_answer_is_the_tool_call_after_any_thinking_or_words() {
         let reply = json!({"content": [
@@ -1424,7 +1868,15 @@ mod tests {
             language: "Arabic".into(),
             ..Brief::default()
         };
-        let prompt = chapter_prompt(&board, &brief, 1, &plan(), "the siege; the fire", "x");
+        let prompt = chapter_prompt(
+            &board,
+            &brief.text(),
+            &brief,
+            1,
+            &plan(),
+            "the siege; the fire",
+            "x",
+        );
         assert!(prompt.contains("Write chapter 2 of 2, \"Two\": the fall"));
         assert!(prompt.contains("Exactly 2 scenes"));
         assert!(prompt.contains("Scene 1: 12 s, about 29 words; shots: video 6.0 s, image 6.0 s"));

@@ -146,6 +146,25 @@ pub struct GeneratePrefs {
     pub image_price: String,
     /// How the captions look: 0 classic, 1 animated.
     pub caption_look: usize,
+    /// Row of the content style list: documentary, educational, academic,
+    /// story, news.
+    pub content_style: usize,
+    /// Read up on the web before writing; on unless turned off.
+    pub research: Option<bool>,
+    /// The channel the videos are for, told once and given to the writer
+    /// every time: its name, who watches it, how it sounds, the line it
+    /// opens with and the one it closes with, and a script it likes.
+    pub channel_name: String,
+    /// Who watches it.
+    pub channel_audience: String,
+    /// How it sounds.
+    pub channel_voice: String,
+    /// The line every video opens with.
+    pub channel_opening: String,
+    /// The line every video closes with.
+    pub channel_closing: String,
+    /// A few lines of a script to write like.
+    pub channel_example: String,
 }
 
 impl Preferences {

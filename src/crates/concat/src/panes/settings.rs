@@ -885,57 +885,6 @@ pub fn new_token() -> String {
     format!("{:016x}{:016x}", word(1), word(2))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_token_is_thirty_two_hex_digits_and_never_the_same_twice() {
-        let a = new_token();
-        let b = new_token();
-        assert_eq!(a.len(), 32);
-        assert!(a.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn a_row_shows_the_download_as_a_fraction_of_the_whole() {
-        let model = ModelState {
-            id: "base".into(),
-            name: "Base".into(),
-            note: String::new(),
-            megabytes: 200.0,
-            accuracy: 3,
-            installed: false,
-            active: true,
-            fetched: Some(50.0),
-            unpacking: false,
-        };
-        let row = model.row();
-        assert!(row.downloading);
-        assert!(!row.active, "a model that is not installed is not active");
-        assert!((row.progress - 0.25).abs() < 1e-6);
-    }
-
-    #[test]
-    fn installed_keeps_the_settings_order() {
-        let model = |id: &str, installed: bool| ModelState {
-            id: id.into(),
-            name: id.into(),
-            note: String::new(),
-            megabytes: 1.0,
-            accuracy: 1,
-            installed,
-            active: false,
-            fetched: None,
-            unpacking: false,
-        };
-        let list = [model("a", true), model("b", false), model("c", true)];
-        let ids: Vec<&str> = installed(&list).iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["a", "c"]);
-    }
-}
-
 /// The listen address as its two halves: the host and the port. The
 /// stored form is one string, "127.0.0.1:7420", because that is what the
 /// server binds and the CLI takes; the sheet shows and edits the halves.
@@ -1098,4 +1047,55 @@ fn log_tail(path: &std::path::Path) -> Result<String, String> {
         tail = &tail[line + 1..];
     }
     Ok(String::from_utf8_lossy(tail).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_token_is_thirty_two_hex_digits_and_never_the_same_twice() {
+        let a = new_token();
+        let b = new_token();
+        assert_eq!(a.len(), 32);
+        assert!(a.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn a_row_shows_the_download_as_a_fraction_of_the_whole() {
+        let model = ModelState {
+            id: "base".into(),
+            name: "Base".into(),
+            note: String::new(),
+            megabytes: 200.0,
+            accuracy: 3,
+            installed: false,
+            active: true,
+            fetched: Some(50.0),
+            unpacking: false,
+        };
+        let row = model.row();
+        assert!(row.downloading);
+        assert!(!row.active, "a model that is not installed is not active");
+        assert!((row.progress - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn installed_keeps_the_settings_order() {
+        let model = |id: &str, installed: bool| ModelState {
+            id: id.into(),
+            name: id.into(),
+            note: String::new(),
+            megabytes: 1.0,
+            accuracy: 1,
+            installed,
+            active: false,
+            fetched: None,
+            unpacking: false,
+        };
+        let list = [model("a", true), model("b", false), model("c", true)];
+        let ids: Vec<&str> = installed(&list).iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["a", "c"]);
+    }
 }

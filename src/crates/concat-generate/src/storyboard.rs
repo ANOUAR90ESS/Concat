@@ -53,6 +53,19 @@ pub struct Storyboard {
     pub style: Style,
     /// The video, chapter by chapter.
     pub chapters: Vec<Chapter>,
+    /// Where the facts came from, when the writer researched on the web
+    /// first: listed in the YouTube description.
+    pub sources: Vec<Source>,
+}
+
+/// A page the writer's research read.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Source {
+    /// The page's title.
+    pub title: String,
+    /// Its address.
+    pub url: String,
 }
 
 /// What every scene shares.
@@ -96,11 +109,24 @@ pub struct Scene {
     pub voice: String,
     /// A title over the scene's start, if any.
     pub on_screen_text: Option<String>,
+    /// A number, date or comparison the scene turns on, drawn large over
+    /// its pictures by the app - image models cannot write text.
+    pub card: Option<Card>,
     /// How long the scene was written to last; its narration decides in
     /// the end, and this is the length of a scene with none.
     pub seconds: f64,
     /// What the camera sees, one shot after another.
     pub shots: Vec<Shot>,
+}
+
+/// A data card: a figure in large type, and what it counts.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Card {
+    /// "$1.2 trillion", "1999", "3x".
+    pub figure: String,
+    /// What it is, in a few words of the narration's language.
+    pub label: String,
 }
 
 /// One shot: a picture, still or moving.
