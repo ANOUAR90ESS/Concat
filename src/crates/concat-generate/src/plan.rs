@@ -1092,10 +1092,19 @@ mod tests {
         let placements = plan(&board, &files, &Options::default(), None).unwrap();
         let cards = of(&placements, Kind::Card);
         assert_eq!(cards.len(), 1);
-        assert_eq!(cards[0].text.as_deref(), Some("$1.2 trillion\nspent in 2025"));
+        assert_eq!(
+            cards[0].text.as_deref(),
+            Some("$1.2 trillion\nspent in 2025")
+        );
         assert!((cards[0].start - CARD_LEAD).abs() < 1e-9);
         assert!(cards[0].start + cards[0].length <= 6.0 + 1e-9);
-        assert!(of(&plan(&self::board(), &files, &Options::default(), None).unwrap(), Kind::Card).is_empty());
+        assert!(
+            of(
+                &plan(&self::board(), &files, &Options::default(), None).unwrap(),
+                Kind::Card
+            )
+            .is_empty()
+        );
     }
 
     #[test]
