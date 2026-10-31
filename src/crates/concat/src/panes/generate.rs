@@ -26,7 +26,7 @@ use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
-use concat_generate::writer::{self, Brief, Publishing, Suggestion, Writing};
+use concat_generate::writer::{self, Brief, ContentStyle, Publishing, Suggestion, Writing};
 use concat_project::Command;
 use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
@@ -354,6 +354,7 @@ impl GeneratePane {
                     }
                     6 => prefs.clips = Some(index.min(CLIP_SHARES.len() - 1)),
                     7 => prefs.caption_look = index.min(1),
+                    8 => prefs.content_style = index.min(ContentStyle::ALL.len() - 1),
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -921,6 +922,7 @@ impl GeneratePane {
             aspect: ASPECTS[prefs.aspect.min(ASPECTS.len() - 1)].to_owned(),
             notes: self.notes.clone(),
             clip_share: CLIP_SHARES[self.clips_row(studio)],
+            style: ContentStyle::ALL[prefs.content_style.min(ContentStyle::ALL.len() - 1)],
         }
     }
 
@@ -1698,6 +1700,7 @@ impl GeneratePane {
             music: self.music as i32,
             captions: self.captions,
             caption_look: prefs.caption_look as i32,
+            content_style: prefs.content_style as i32,
             titles: self.titles,
             anthropic_key: prefs.anthropic_key.as_str().into(),
             replicate_token: prefs.replicate_token.as_str().into(),

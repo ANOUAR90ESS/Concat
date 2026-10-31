@@ -218,6 +218,35 @@ quantiser ceiling. And a one-minute video was slow to export.
 - ⏳ **If the chip still keeps nothing:** a software H.264 encoder
   (OpenH264) in the phone's FFmpeg as a "best quality, slower" choice.
 
+## The writer as a content writer (owner, 31 Oct)
+
+The owner found the scripts general - not professional, academic or
+educational enough to compete with channels - and every picture in the
+same teal and amber. Three stages, the first built now.
+
+- 🚧 **1: a professional writer.** A Content style choice in the Long
+  video sheet - Documentary, Educational, Academic, Story, News analysis
+  - each with its own brief to the writer and its own kind of pictures.
+  The writer's standing instructions are a head writer's: a cold open,
+  the film's question within twenty seconds, a loop opened every minute
+  or so, chapters that end on a turn, a payoff; concrete over abstract,
+  exact facts or none; a list of phrases every machine script uses, in
+  English and Arabic, never written; vowel marks only where a voice would
+  misread. After each chapter an editor's pass tightens the words at the
+  same length (a scene that drifts keeps the draft, which fits its
+  pictures). The film has one look - its medium chosen for the topic -
+  and each chapter its own named palette; teal and amber are one palette
+  among many. Shot prompts follow one order (subject and action, setting,
+  framing and lens, light, mood), clips one camera move.
+- ⏳ **2: the channel and the facts.** A channel profile kept once and
+  applied to every video (name, audience, voice, opening and closing
+  lines, scripts to write like); research on the web before writing, the
+  sources in the YouTube description.
+- ⏳ **3: data cards and a better picture model.** Numbers, dates and
+  comparisons drawn by the app as cards (models cannot write text); a
+  "professional" picture choice (flux-1.1-pro, about $0.04 a picture)
+  beside the economical one.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

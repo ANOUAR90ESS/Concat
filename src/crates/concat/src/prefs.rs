@@ -146,6 +146,9 @@ pub struct GeneratePrefs {
     pub image_price: String,
     /// How the captions look: 0 classic, 1 animated.
     pub caption_look: usize,
+    /// Row of the content style list: documentary, educational, academic,
+    /// story, news.
+    pub content_style: usize,
 }
 
 impl Preferences {

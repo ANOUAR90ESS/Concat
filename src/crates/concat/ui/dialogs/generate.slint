@@ -46,6 +46,8 @@ export struct GenerateSheetData {
     language: int,
     /// 0 16:9, 1 9:16, 2 1:1
     aspect: int,
+    /// 0 documentary, 1 educational, 2 academic, 3 story, 4 news
+    content-style: int,
     /// 0 none, 1 Concat's own voices, 2 ElevenLabs
     voice: int,
     /// 0 draft cards, 1 Replicate, 2 made by hand
@@ -204,7 +206,7 @@ export component GenerateDialog inherits Modal {
     /// of a still.
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
-    /// 5 music, 6 clips, 7 caption look.
+    /// 5 music, 6 clips, 7 caption look, 8 content style.
     callback choice-changed(field: int, index: int);
     /// Which switch: 0 captions, 1 titles, 2 export when done.
     callback toggled(field: int, on: bool);
@@ -351,6 +353,23 @@ export component GenerateDialog inherits Modal {
                                 options: ["العربية", "English", "Français", "Español", "Deutsch", "Türkçe", "Português", "Bahasa Indonesia", "हिन्दी", "اردو"];
                                 current: root.data.language;
                                 changed(index) => { root.choice-changed(1, index); }
+                            }
+                        }
+
+                        // What the video is for: the writer is briefed
+                        // differently for each, and its pictures with it.
+                        DialogRow {
+                            label: I18n.t("generate.contentStyle");
+                            Select {
+                                options: [
+                                    I18n.t("generate.styleDocumentary"),
+                                    I18n.t("generate.styleEducational"),
+                                    I18n.t("generate.styleAcademic"),
+                                    I18n.t("generate.styleStory"),
+                                    I18n.t("generate.styleNews"),
+                                ];
+                                current: root.data.content-style;
+                                changed(index) => { root.choice-changed(8, index); }
                             }
                         }
 
