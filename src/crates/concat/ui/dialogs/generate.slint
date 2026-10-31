@@ -48,6 +48,16 @@ export struct GenerateSheetData {
     aspect: int,
     /// 0 documentary, 1 educational, 2 academic, 3 story, 4 news
     content-style: int,
+    /// Read up on the web before writing.
+    research: bool,
+    /// 0 economical pictures, 1 professional.
+    picture-quality: int,
+    channel-name: string,
+    channel-audience: string,
+    channel-voice: string,
+    channel-opening: string,
+    channel-closing: string,
+    channel-example: string,
     /// 0 none, 1 Concat's own voices, 2 ElevenLabs
     voice: int,
     /// 0 draft cards, 1 Replicate, 2 made by hand
@@ -203,12 +213,14 @@ export component GenerateDialog inherits Modal {
     /// Which text: 0 topic, 1 notes, 2 Anthropic key, 3 Replicate token,
     /// 4 Replicate video model, 5 ElevenLabs key, 6 ElevenLabs voice,
     /// 7 Replicate image model, 8 spend limit, 9 price of a clip, 10 price
-    /// of a still.
+    /// of a still, 11-16 the channel: name, audience, voice, opening line,
+    /// closing line, a script it likes.
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
-    /// 5 music, 6 clips, 7 caption look, 8 content style.
+    /// 5 music, 6 clips, 7 caption look, 8 content style, 9 picture quality.
     callback choice-changed(field: int, index: int);
-    /// Which switch: 0 captions, 1 titles, 2 export when done.
+    /// Which switch: 0 captions, 1 titles, 2 export when done, 3 research
+    /// on the web.
     callback toggled(field: int, on: bool);
     callback write-script();
     callback create();
@@ -518,6 +530,19 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
+                        // Economical: flux-schnell, a third of a cent a
+                        // picture; professional: flux-1.1-pro, finer detail
+                        // and truer light, about four cents. Sets the model
+                        // and its price below.
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.pictureQuality");
+                            SegmentedControl {
+                                options: [I18n.t("generate.pictureEconomy"), I18n.t("generate.pictureProfessional")];
+                                current: root.data.picture-quality;
+                                changed(index) => { root.choice-changed(9, index); }
+                            }
+                        }
+
                         if root.data.shots == 1: DialogRow {
                             label: I18n.t("generate.imageModel");
                             Field {
@@ -555,6 +580,82 @@ export component GenerateDialog inherits Modal {
                                 technical: true;
                                 placeholder: "0.003";
                                 edited(text) => { root.text-edited(10, text); }
+                            }
+                        }
+                    }
+
+                    // The channel the writer writes for, told once and
+                    // kept; and whether it reads up on the web first.
+                    DialogSection {
+                        title: I18n.t("generate.channel");
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.research");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.research;
+                                    toggled(on) => { root.toggled(3, on); }
+                                }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.channelName");
+                            Field {
+                                value: root.data.channel-name;
+                                edited(text) => { root.text-edited(11, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.channelAudience");
+                            Field {
+                                value: root.data.channel-audience;
+                                placeholder: I18n.t("generate.channelAudienceHint");
+                                edited(text) => { root.text-edited(12, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.channelVoice");
+                            Field {
+                                value: root.data.channel-voice;
+                                placeholder: I18n.t("generate.channelVoiceHint");
+                                edited(text) => { root.text-edited(13, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.channelOpening");
+                            Field {
+                                value: root.data.channel-opening;
+                                edited(text) => { root.text-edited(14, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.channelClosing");
+                            Field {
+                                value: root.data.channel-closing;
+                                edited(text) => { root.text-edited(15, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.channelExample");
+                            Field {
+                                value: root.data.channel-example;
+                                placeholder: I18n.t("generate.channelExampleHint");
+                                edited(text) => { root.text-edited(16, text); }
                             }
                         }
                     }

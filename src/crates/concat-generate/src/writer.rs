@@ -162,6 +162,12 @@ pub struct Brief {
     pub clip_share: f64,
     /// How it is written.
     pub style: ContentStyle,
+    /// The channel it is for, as the person described it once: name,
+    /// audience, voice, opening and closing lines, scripts to write like.
+    /// Empty when they have not.
+    pub channel: String,
+    /// Read up on the web before writing, and list the sources.
+    pub research: bool,
 }
 
 impl Brief {
@@ -181,6 +187,13 @@ impl Brief {
             self.aspect,
             self.style.brief()
         );
+        if !self.channel.trim().is_empty() {
+            text += &format!(
+                "The channel, as its owner describes it - write as this channel, in its voice, \
+                 with its opening and closing lines:\n{}\n",
+                self.channel.trim()
+            );
+        }
         if !self.notes.trim().is_empty() {
             text += &format!("Notes from the producer: {}\n", self.notes.trim());
         }
@@ -191,6 +204,8 @@ impl Brief {
 /// Where the writing is: the outline, then chapter `n` of `of`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Writing {
+    /// The topic is being read up on, on the web.
+    Research,
     /// The outline is being written.
     Outline,
     /// Chapter `n` (from 1) of `of` is being written.
@@ -216,7 +231,24 @@ pub fn write(
     }
     let ask =
         |tool: &Value, prompt: String| crate::providers::retry(|| call(key, model, tool, &prompt));
-    let brief_text = brief.text();
+    let mut brief_text = brief.text();
+    let mut sources = Vec::new();
+    if brief.research {
+        progress(Writing::Research);
+        match research(brief, key, model) {
+            Ok(found) => {
+                brief_text += &format!(
+                    "\nResearch notes, read on the web for this video. Build on these facts; \
+                     give no number, date, name or quote that is not here or certain:\n{}\n",
+                    found.notes
+                );
+                sources = found.sources;
+            }
+            // Written from what the writer knows, as before: the research
+            // is a help, not a condition.
+            Err(error) => log::warn!("research: {error}; writing without it"),
+        }
+    }
 
     progress(Writing::Outline);
     let mut shape = budget::budget(&brief.pacing());
@@ -260,6 +292,7 @@ pub fn write(
                 scenes: Vec::new(),
             })
             .collect(),
+        sources,
     };
     let points: Vec<String> = outlined
         .iter()
@@ -279,7 +312,7 @@ pub fn write(
             of,
             title: board.chapters[i].title.trim().to_owned(),
         });
-        let prompt = chapter_prompt(&board, brief, i, plan, points, &ending);
+        let prompt = chapter_prompt(&board, &brief_text, brief, i, plan, points, &ending);
         let mut got = ask(&scenes_tool(), prompt.clone())?;
         let mut scenes = scenes_of(&got)?;
         if let Some(problem) = misfit(&scenes, plan) {
@@ -321,6 +354,98 @@ pub fn write(
     }
     board.tidy()?;
     Ok(board)
+}
+
+/// What the writer read up on before writing: its notes, and the pages
+/// they came from.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Research {
+    /// The facts, in English, each with the number of its source.
+    pub notes: String,
+    /// The pages, numbered from 1 in that order.
+    pub sources: Vec<crate::storyboard::Source>,
+}
+
+/// How many searches one research may run: about ten cents of them.
+const SEARCHES: u32 = 8;
+
+/// Reads up on `brief`'s topic on the web, with Anthropic's web search:
+/// the facts, the numbers and their dates, the people and places, the
+/// debate and the latest, for the kind of video it is.
+pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to read up on the topic".to_owned());
+    }
+    let prompt = format!(
+        "{}\nBefore anything is written, research this topic on the web for the video \
+         described. Find what a specialist would put in it: the key facts and how they connect, \
+         numbers with their dates and units, the people, places and events, what is surprising \
+         or little known, where experts disagree, and the latest developments. Prefer primary \
+         and reputable sources. Write the notes in English as short factual lines, each ending \
+         with the number of its source in brackets, like [2]; list the sources in that order.",
+        brief.text()
+    );
+    let search = |kind: &str| json!({"type": kind, "name": "web_search", "max_uses": SEARCHES});
+    // The newer search on the models that take it, the first one on the
+    // others - a model the person named themselves may be older.
+    let got = crate::providers::retry(|| {
+        call_with(
+            key,
+            model,
+            &[search("web_search_20260209")],
+            &research_tool(),
+            &prompt,
+        )
+    })
+    .or_else(|error| {
+        if error.contains("web_search") {
+            call_with(
+                key,
+                model,
+                &[search("web_search_20250305")],
+                &research_tool(),
+                &prompt,
+            )
+        } else {
+            Err(error)
+        }
+    })?;
+    let sources = got["sources"]
+        .as_array()
+        .map(|sources| {
+            sources
+                .iter()
+                .map(|source| crate::storyboard::Source {
+                    title: text(&source["title"]),
+                    url: text(&source["url"]),
+                })
+                .filter(|source| source.url.starts_with("http"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let notes = text(&got["notes"]);
+    if notes.is_empty() {
+        return Err("the research came back empty".to_owned());
+    }
+    Ok(Research { notes, sources })
+}
+
+/// The sources, as a YouTube description lists them.
+pub fn sources_text(sources: &[crate::storyboard::Source]) -> String {
+    if sources.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<String> = sources
+        .iter()
+        .map(|source| {
+            if source.title.trim().is_empty() {
+                source.url.clone()
+            } else {
+                format!("{} - {}", source.title.trim(), source.url)
+            }
+        })
+        .collect();
+    format!("Sources:\n{}", lines.join("\n"))
 }
 
 /// Writes one scene again in place - the chapter's `chapter` (from 0),
@@ -584,9 +709,14 @@ pub fn publishing(board: &Storyboard, key: &str, model: &str) -> Result<Publishi
                 .collect()
         })
         .unwrap_or_default();
+    let mut description = text(&got["description"]);
+    let sources = sources_text(&board.sources);
+    if !sources.is_empty() {
+        description = format!("{}\n\n{sources}", description.trim_end());
+    }
     let publishing = Publishing {
         title: text(&got["title"]),
-        description: text(&got["description"]),
+        description,
         tags,
         thumbnail_text: text(&got["thumbnail_text"]),
         thumbnail_prompt: text(&got["thumbnail_prompt"]),
@@ -755,8 +885,10 @@ fn suggest_prompt(
 
 /// The prompt for chapter `i`: the brief, the outline, the shape scene by
 /// scene, and the pictures to keep clear of.
+#[allow(clippy::too_many_arguments)]
 fn chapter_prompt(
     board: &Storyboard,
+    brief_text: &str,
     brief: &Brief,
     i: usize,
     plan: &ChapterPlan,
@@ -773,7 +905,7 @@ fn chapter_prompt(
     let mut prompt = format!(
         "{}\n{}\nVisual style of the whole film: {}\nNarrator: {}\n\n\
          Write chapter {} of {}, \"{}\": {}\n",
-        brief.text(),
+        brief_text,
         outline_summary(board),
         board.style.visual,
         board.style.voice,
@@ -1043,7 +1175,22 @@ fn apply_revisions(board: &mut Storyboard, revised: &Value) {
 /// as what it says, and an answer still missing what the tool requires is
 /// sent back, with what is missing, twice at most.
 fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, String> {
+    call_with(key, model, &[], tool, prompt)
+}
+
+/// [`call`], with Anthropic's own tools - web search - offered beside the
+/// answer's: the server runs them in the same turn, and a turn it pauses
+/// for running long is sent back to carry on.
+fn call_with(
+    key: &str,
+    model: &str,
+    server_tools: &[Value],
+    tool: &Value,
+    prompt: &str,
+) -> Result<Value, String> {
     let name = tool["name"].as_str().unwrap_or_default();
+    let mut tools: Vec<Value> = server_tools.to_vec();
+    tools.push(tool.clone());
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(20))
         .timeout_read(std::time::Duration::from_secs(600))
@@ -1053,12 +1200,15 @@ fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, Str
         "content": format!("{prompt}\n\nAnswer by calling the {name} tool, once."),
     })];
     let mut last = format!("Claude did not answer with the {name}");
-    for _ in 0..3 {
+    let mut paused = 0;
+    let mut tries = 0;
+    while tries < 3 {
+        tries += 1;
         let body = json!({
             "model": model,
             "max_tokens": 32000,
             "system": SYSTEM,
-            "tools": [tool],
+            "tools": tools,
             "tool_choice": {"type": "auto"},
             "messages": messages,
         });
@@ -1083,6 +1233,14 @@ fn call(key: &str, model: &str, tool: &Value, prompt: &str) -> Result<Value, Str
                 ));
             }
             "refusal" => return Err(format!("Claude declined to write the {name}")),
+            // The server's searching ran long: its turn is sent back as it
+            // is, and it carries on where it stopped.
+            "pause_turn" if paused < 5 => {
+                paused += 1;
+                tries -= 1;
+                messages.push(json!({"role": "assistant", "content": reply["content"].clone()}));
+                continue;
+            }
             _ => {}
         }
         let content = reply["content"].clone();
@@ -1266,6 +1424,15 @@ fn scene_schema() -> Value {
                 "type": ["string", "null"],
                 "description": "A short title shown over the scene's start, or null."
             },
+            "card": {
+                "type": ["object", "null"],
+                "description": "When the scene turns on a number, a date or a comparison, the card the app draws over its pictures: the figure in large type ('$1.2 trillion', '1999', '3x') and a label of a few words in the narration's language. Null otherwise; at most one scene in four.",
+                "properties": {
+                    "figure": {"type": "string"},
+                    "label": {"type": "string"}
+                },
+                "required": ["figure", "label"]
+            },
             "shots": {
                 "type": "array",
                 "items": {
@@ -1283,6 +1450,31 @@ fn scene_schema() -> Value {
             }
         },
         "required": ["narration", "voice", "shots"]
+    })
+}
+
+fn research_tool() -> Value {
+    json!({
+        "name": "research",
+        "description": "What the research found: notes citing sources by number, and the sources.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "notes": {"type": "string"},
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "url": {"type": "string"}
+                        },
+                        "required": ["title", "url"]
+                    }
+                }
+            },
+            "required": ["notes", "sources"]
+        }
     })
 }
 
@@ -1496,6 +1688,40 @@ mod tests {
         assert_eq!(scenes, before, "one scene for two: the draft stands");
     }
 
+    /// The sources go under the description as YouTube shows them; none,
+    /// nothing.
+    #[test]
+    fn the_sources_are_listed_for_the_description() {
+        use crate::storyboard::Source;
+        assert_eq!(sources_text(&[]), "");
+        let listed = sources_text(&[
+            Source {
+                title: "IMF outlook".into(),
+                url: "https://imf.org/a".into(),
+            },
+            Source {
+                title: String::new(),
+                url: "https://example.org/b".into(),
+            },
+        ]);
+        assert_eq!(
+            listed,
+            "Sources:\nIMF outlook - https://imf.org/a\nhttps://example.org/b"
+        );
+    }
+
+    /// The channel the person described is in every call's brief.
+    #[test]
+    fn the_brief_carries_the_channel() {
+        let brief = Brief {
+            topic: "Rome".into(),
+            channel: "Name: Tarikh. Opens with: Ahlan.".into(),
+            ..Brief::default()
+        };
+        assert!(brief.text().contains("Name: Tarikh. Opens with: Ahlan."));
+        assert!(!Brief::default().text().contains("The channel"));
+    }
+
     /// Every call is told what kind of video it writes.
     #[test]
     fn the_brief_says_what_the_video_is() {
@@ -1642,7 +1868,15 @@ mod tests {
             language: "Arabic".into(),
             ..Brief::default()
         };
-        let prompt = chapter_prompt(&board, &brief, 1, &plan(), "the siege; the fire", "x");
+        let prompt = chapter_prompt(
+            &board,
+            &brief.text(),
+            &brief,
+            1,
+            &plan(),
+            "the siege; the fire",
+            "x",
+        );
         assert!(prompt.contains("Write chapter 2 of 2, \"Two\": the fall"));
         assert!(prompt.contains("Exactly 2 scenes"));
         assert!(prompt.contains("Scene 1: 12 s, about 29 words; shots: video 6.0 s, image 6.0 s"));

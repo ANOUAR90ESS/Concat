@@ -117,6 +117,8 @@ pub enum Kind {
     Title,
     /// A caption card.
     Caption,
+    /// A data card: a figure the scene turns on, drawn large.
+    Card,
 }
 
 /// One clip to lay down.
@@ -370,6 +372,28 @@ pub fn plan(
                 text: Some(text.trim().to_owned()),
             });
         }
+        // A data card a moment into the scene, held while the point is
+        // made: four seconds and a half at most, never past the scene.
+        if let Some(card) = scene
+            .card
+            .as_ref()
+            .filter(|card| !card.figure.trim().is_empty())
+        {
+            let at = CARD_LEAD.min(length / 4.0);
+            let text = match card.label.trim() {
+                "" => card.figure.trim().to_owned(),
+                label => format!("{}\n{label}", card.figure.trim()),
+            };
+            out.push(Placement {
+                kind: Kind::Card,
+                start: t + at,
+                length: CARD_SECONDS.min(length - at),
+                file: None,
+                source: None,
+                from: 0.0,
+                text: Some(text),
+            });
+        }
         t += length;
     }
 
@@ -390,6 +414,10 @@ pub fn plan(
     }
     Ok(out)
 }
+
+/// How long into its scene a data card comes up, and how long it stays.
+const CARD_LEAD: f64 = 0.4;
+const CARD_SECONDS: f64 = 4.5;
 
 /// The end of the last placement.
 pub fn total_length(placements: &[Placement]) -> f64 {
@@ -554,7 +582,7 @@ pub fn cut(
             Kind::Shot => lanes[0].clone(),
             Kind::Voice => lanes[1].clone(),
             Kind::Music => lanes[2].clone(),
-            Kind::Title | Kind::Caption => lanes[3].clone(),
+            Kind::Title | Kind::Caption | Kind::Card => lanes[3].clone(),
         }
     };
 
@@ -583,11 +611,13 @@ pub fn cut(
         Kind::Voice,
         Kind::Music,
         Kind::Title,
+        Kind::Card,
         Kind::Caption,
     ];
     let shots: Vec<&Placement> = placements.iter().filter(|p| p.kind == Kind::Shot).collect();
     let last_music = placements.iter().rposition(|p| p.kind == Kind::Music);
     let mut captions: Option<String> = None;
+    let mut figures: Option<String> = None;
     let mut cards = 0usize;
     let mut left_out = Vec::new();
     for kind in order {
@@ -682,6 +712,24 @@ pub fn cut(
                         duration: Some(p.length),
                         offset_y: Some(-0.3),
                     });
+                }
+                // On a lane of their own, under the captions: a card and
+                // the words being said can be on screen together.
+                Kind::Card => {
+                    if figures.is_none() {
+                        figures = editor.apply(Command::AddTrack { bottom: false });
+                    }
+                    let card = editor.apply(Command::AddTextClip {
+                        track_id: figures.clone(),
+                        above: true,
+                        start: p.start,
+                        style: Some(card_style(p.text.clone().unwrap_or_default())),
+                        duration: Some(p.length),
+                        offset_y: Some(-0.04),
+                    });
+                    if let Some(card) = card {
+                        pop(editor, &card, p.length);
+                    }
                 }
                 Kind::Caption => {
                     if captions.is_none() {
@@ -832,6 +880,24 @@ fn title_style(content: String) -> TextStyle {
         font_weight: 800.0,
         shadow: true,
         max_width: 0.86,
+        ..TextStyle::default()
+    }
+}
+
+/// A data card: the figure large and heavy in yellow, its label under
+/// it, on a dark plate that reads over any picture.
+fn card_style(content: String) -> TextStyle {
+    TextStyle {
+        content,
+        font_size: 0.085,
+        font_weight: 900.0,
+        color: "#FFD400".to_owned(),
+        shadow: false,
+        background: "#000000bf".to_owned(),
+        background_radius: 0.018,
+        background_padding_x: 0.04,
+        background_padding_y: 0.024,
+        max_width: 0.8,
         ..TextStyle::default()
     }
 }
@@ -1009,6 +1075,27 @@ mod tests {
         )
         .unwrap();
         assert!(of(&off, Kind::Caption).is_empty());
+    }
+
+    /// A scene that turns on a figure gets its card a moment in, the
+    /// figure over its label, held a few seconds and never past the scene.
+    #[test]
+    fn a_figure_is_carded_over_its_scene() {
+        let mut board = board();
+        let scene = board.chapters[0].scenes.first_mut().unwrap();
+        scene.card = Some(crate::storyboard::Card {
+            figure: "$1.2 trillion".into(),
+            label: "spent in 2025".into(),
+        });
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().voice = None;
+        let placements = plan(&board, &files, &Options::default(), None).unwrap();
+        let cards = of(&placements, Kind::Card);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].text.as_deref(), Some("$1.2 trillion\nspent in 2025"));
+        assert!((cards[0].start - CARD_LEAD).abs() < 1e-9);
+        assert!(cards[0].start + cards[0].length <= 6.0 + 1e-9);
+        assert!(of(&plan(&self::board(), &files, &Options::default(), None).unwrap(), Kind::Card).is_empty());
     }
 
     #[test]

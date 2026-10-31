@@ -222,7 +222,8 @@ quantiser ceiling. And a one-minute video was slow to export.
 
 The owner found the scripts general - not professional, academic or
 educational enough to compete with channels - and every picture in the
-same teal and amber. Three stages, the first built now.
+same teal and amber. Three stages, built one after another on the
+branch and sent up as one pull request and one release.
 
 - 🚧 **1: a professional writer.** A Content style choice in the Long
   video sheet - Documentary, Educational, Academic, Story, News analysis
@@ -238,14 +239,23 @@ same teal and amber. Three stages, the first built now.
   and each chapter its own named palette; teal and amber are one palette
   among many. Shot prompts follow one order (subject and action, setting,
   framing and lens, light, mood), clips one camera move.
-- ⏳ **2: the channel and the facts.** A channel profile kept once and
-  applied to every video (name, audience, voice, opening and closing
-  lines, scripts to write like); research on the web before writing, the
-  sources in the YouTube description.
-- ⏳ **3: data cards and a better picture model.** Numbers, dates and
-  comparisons drawn by the app as cards (models cannot write text); a
-  "professional" picture choice (flux-1.1-pro, about $0.04 a picture)
-  beside the economical one.
+- 🚧 **2: the channel and the facts.** A "Your channel" section in the
+  sheet - name, audience, voice, opening line, closing line, a script to
+  write like - kept and given to the writer with every video. Research
+  on the web first (on by default, about ten cents): before the outline
+  the writer reads up with Anthropic's web search (up to eight searches)
+  and writes notes that cite their sources by number; the outline and
+  every chapter build on them and give no figure that is not there or
+  certain. The sources are kept in the storyboard and listed under the
+  YouTube description. A model without the newer search falls back to
+  the first one; research that fails leaves the writing as before.
+- 🚧 **3: data cards and a better picture model.** A scene that turns on
+  a number, a date or a comparison carries a card - the figure and a
+  label - which the cut draws large in yellow on a dark plate, popping
+  in a moment into the scene for up to four and a half seconds, on a
+  lane of its own under the captions. A Pictures choice beside the image
+  model: Economical (flux-schnell) or Professional (flux-1.1-pro, about
+  four cents a picture), which sets the model and its price.
 
 ## Done since alpha.14
 
