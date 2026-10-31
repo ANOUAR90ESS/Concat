@@ -2187,6 +2187,32 @@ fn dollars(value: f64) -> String {
     }
 }
 
+/// The professional picture model, beside the default economical one:
+/// finer detail and truer light, at about four cents a picture.
+const PROFESSIONAL_IMAGE_MODEL: &str = "black-forest-labs/flux-1.1-pro";
+const PROFESSIONAL_IMAGE_PRICE: &str = "0.04";
+
+/// The channel as the writer is told it: one line for each thing the
+/// person filled in, nothing for what they left empty.
+fn channel_profile(prefs: &crate::prefs::GeneratePrefs) -> String {
+    [
+        ("Name", &prefs.channel_name),
+        ("Audience", &prefs.channel_audience),
+        ("Voice and tone", &prefs.channel_voice),
+        ("Opens every video with", &prefs.channel_opening),
+        ("Closes every video with", &prefs.channel_closing),
+        (
+            "A script it likes - write in its manner, not about its subject",
+            &prefs.channel_example,
+        ),
+    ]
+    .iter()
+    .filter(|(_, value)| !value.trim().is_empty())
+    .map(|(label, value)| format!("{label}: {}", value.trim()))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2231,30 +2257,4 @@ mod tests {
         let flipped = Likeness::of(&scene(80.0, 0).fliph()).unwrap();
         assert!(!a.alike(&flipped));
     }
-}
-
-/// The professional picture model, beside the default economical one:
-/// finer detail and truer light, at about four cents a picture.
-const PROFESSIONAL_IMAGE_MODEL: &str = "black-forest-labs/flux-1.1-pro";
-const PROFESSIONAL_IMAGE_PRICE: &str = "0.04";
-
-/// The channel as the writer is told it: one line for each thing the
-/// person filled in, nothing for what they left empty.
-fn channel_profile(prefs: &crate::prefs::GeneratePrefs) -> String {
-    [
-        ("Name", &prefs.channel_name),
-        ("Audience", &prefs.channel_audience),
-        ("Voice and tone", &prefs.channel_voice),
-        ("Opens every video with", &prefs.channel_opening),
-        ("Closes every video with", &prefs.channel_closing),
-        (
-            "A script it likes - write in its manner, not about its subject",
-            &prefs.channel_example,
-        ),
-    ]
-    .iter()
-    .filter(|(_, value)| !value.trim().is_empty())
-    .map(|(label, value)| format!("{label}: {}", value.trim()))
-    .collect::<Vec<_>>()
-    .join("\n")
 }
