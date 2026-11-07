@@ -1360,11 +1360,7 @@ fn tool_call(reply: &Value) -> Option<(String, Value)> {
 fn decode_json_text(value: &mut Value) {
     match value {
         Value::String(text) => {
-            let trimmed = text.trim();
-            if ((trimmed.starts_with('[') && trimmed.ends_with(']'))
-                || (trimmed.starts_with('{') && trimmed.ends_with('}')))
-                && let Ok(mut decoded) = serde_json::from_str::<Value>(trimmed)
-            {
+            if let Some(mut decoded) = json_in(text) {
                 decode_json_text(&mut decoded);
                 *value = decoded;
             }
@@ -1375,8 +1371,34 @@ fn decode_json_text(value: &mut Value) {
     }
 }
 
-/// The required fields of `tool` that `input` leaves out or empty.
+/// The list or object a text holds, where a tool answer put one in a
+/// string: as it is, inside a code fence, or after a line of words - the
+/// owner's outlines came back with their chapters so, and read as none.
+fn json_in(text: &str) -> Option<Value> {
+    let trimmed = text.trim();
+    let fenced = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|rest| rest.trim_end().strip_suffix("```"))
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    let span = |open: char, close: char| {
+        let start = fenced.find(open)?;
+        let end = fenced.rfind(close)?;
+        (start < end).then(|| &fenced[start..=end])
+    };
+    [Some(fenced), span('[', ']'), span('{', '}')]
+        .into_iter()
+        .flatten()
+        .filter(|candidate| candidate.starts_with('[') || candidate.starts_with('{'))
+        .find_map(|candidate| serde_json::from_str::<Value>(candidate).ok())
+}
+
+/// The required fields of `tool` that `input` leaves out or empty, or
+/// gives as something other than the list the schema asks for: such an
+/// answer is asked again rather than taken as having nothing in it.
 fn missing(tool: &Value, input: &Value) -> Vec<String> {
+    let properties = &tool["input_schema"]["properties"];
     tool["input_schema"]["required"]
         .as_array()
         .into_iter()
@@ -1384,6 +1406,7 @@ fn missing(tool: &Value, input: &Value) -> Vec<String> {
         .filter_map(Value::as_str)
         .filter(|field| match &input[*field] {
             Value::Null => true,
+            _ if properties[*field]["type"] == "array" && !input[*field].is_array() => true,
             Value::String(text) => text.trim().is_empty(),
             Value::Array(items) => items.is_empty(),
             Value::Object(map) => map.is_empty(),
@@ -1783,6 +1806,42 @@ mod tests {
         };
         assert!(brief.text().contains("Name: Tarikh. Opens with: Ahlan."));
         assert!(!Brief::default().text().contains("The channel"));
+    }
+
+    /// A list put in a string comes out as the list, fenced or after a
+    /// line of words; text that holds none stays text.
+    #[test]
+    fn a_list_written_as_text_is_read_as_the_list() {
+        let mut fenced = json!({"chapters": "```json\n[{\"title\": \"One\"}]\n```"});
+        decode_json_text(&mut fenced);
+        assert_eq!(fenced["chapters"][0]["title"], "One");
+        let mut prefaced = json!({"chapters": "Here are the chapters: [{\"title\": \"Two\"}]"});
+        decode_json_text(&mut prefaced);
+        assert_eq!(prefaced["chapters"][0]["title"], "Two");
+        let mut plain = json!({"title": "Rome [the city]"});
+        decode_json_text(&mut plain);
+        assert_eq!(plain["title"], "Rome [the city]");
+    }
+
+    /// A list the schema asks for, given as anything else, is asked for
+    /// again.
+    #[test]
+    fn a_list_given_as_text_is_missing() {
+        let tool = outline_tool();
+        let answer = json!({
+            "title": "Rome",
+            "visual_style": "film",
+            "voice_style": "calm",
+            "chapters": "One, two and three"
+        });
+        assert_eq!(missing(&tool, &answer), ["chapters"]);
+        let good = json!({
+            "title": "Rome",
+            "visual_style": "film",
+            "voice_style": "calm",
+            "chapters": [{"title": "One"}]
+        });
+        assert!(missing(&tool, &good).is_empty());
     }
 
     /// Every call is told what kind of video it writes.

@@ -278,6 +278,11 @@ from what science communicators and the models' own guides recommend.
   quote against those notes and corrects or removes what they do not
   support, and listens as a newcomer: unexplained terms, skipped steps,
   breathless sentences.
+- 🚧 **"The writer returned an outline with no chapters"** (owner, alpha.22).
+  A tool answer can give a list as text - in a code fence, or after a
+  line of words - and the outline then read as having no chapters. Such
+  text is decoded into its list, and a list field given as anything else
+  is asked for again instead of being taken as empty.
 - 🚧 **Pictures.** Image prompts of 40-70 words of natural prose, the
   lens with its aperture, at most two style words of their own (FLUX's
   guidance); clip motion under twenty words that does not describe the
