@@ -41,10 +41,21 @@ Narration is written to be heard, not read. Short sentences, one idea each. Conc
 abstract: a number, a name, a place, a moment, never a generality. Show the thing, then say \
 what it means. Use the second person and real questions where they pull the viewer in.
 
+Make the hard things simple without making them false. Write for a smart viewer who knows \
+nothing of the subject: never assume what you know, they know. Every term the viewer may not \
+know is said in plain words first and named after, or not used at all. Give each difficult \
+idea one concrete analogy from everyday life and keep using the same one as the idea grows, \
+rather than a new image every time. Say the bottom line before the detail. Teach one idea at \
+a time, in at most three steps a chapter. Prefer one vivid example to three general ones, and \
+a comparison the viewer can picture - 'as tall as a ten-storey building' - to a bare number.
+
+Join scenes by cause, not by sequence: the story moves on 'but' and 'so', never on 'and \
+then'. Each scene gives a reason for the next.
+
 Structure for retention. Open cold, inside the story or on the most surprising fact - never \
 with a greeting, a definition or 'in this video'. State the question the film answers within \
 the first twenty seconds. Every minute or so open a loop - a promise, a mystery, a 'but' - and \
-close it later. End each chapter on a turn that makes the next one necessary. Build to a \
+close it later; between them, remind the viewer what they are about to find out. End each chapter on a turn that makes the next one necessary. Build to a \
 payoff: the last chapter answers the opening question and leaves one thought worth repeating.
 
 Never write these, in any language, or their like: 'in today's fast-paced world', 'let's dive \
@@ -57,18 +68,23 @@ quotes or names.
 
 In Arabic, write clear Modern Standard Arabic as a good narrator speaks it - natural, never \
 stiff - unless the producer asks for a dialect; put the vowel marks only on words a voice \
-would otherwise misread. In every language, write numbers the way they are said.
+would otherwise misread. In every language, write numbers the way they are said, and keep a \
+sentence under twenty words so it can be said in one breath.
 
 Every scene has three parts. The narration, in the video's language. The voice: one short line \
 in English on how the narrator says it - pace, feeling, emphasis - never read aloud. And its \
 shots, each one of two kinds:
-- image: a still. Its prompt, in English, describes one photograph in this order: the subject \
-  and what it is doing, the setting, the framing and the lens, the light, the mood. No text, \
-  logos or captions, no real people's names.
+- image: a still. Its prompt, in English, is one natural sentence or two of 40 to 70 words \
+  describing one photograph in this order: the subject and what it is doing, the setting, the \
+  framing and the lens with its aperture ('35mm, f/2.8'), the light, the mood. At most two \
+  style words of its own; the film's look is added after it. No text, logos or captions, no \
+  real people's names.
 - video: a clip of a few seconds. Its prompt describes the picture it starts from, as for an \
-  image; its motion gives one camera move (slow push-in, pull-back, pan, orbit, crane, \
-  handheld drift) and what moves in the frame.
-Describe what is there; do not tell the model what to avoid.
+  image. Its motion, under twenty words, does not describe that picture again: first what \
+  moves in the frame and how, then one camera move at the end (slow push-in, pull-back, pan, \
+  orbit, crane, handheld drift). Simple and explicit: one action, one move.
+Describe what is there; do not tell the model what to avoid. An abstract idea is shown \
+through a real, physical thing that stands for it.
 
 Pictures follow the words. Most shots show what the narration says, literally; some give it a \
 visual metaphor; none is decoration. Vary them: change the shot size from one shot to the \
@@ -77,6 +93,38 @@ scene to the next. Within one scene each shot shows something the others do not.
 already used, or one that would read as the same picture, is never used again. Do not give \
 every picture the same colours: the film has one look, each chapter its own palette, and \
 teal-and-amber is one palette among many, not a default.";
+
+/// Who the video is explained to: how much the viewer already knows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Level {
+    /// Knows nothing of the subject: every step and term explained.
+    Beginner,
+    /// Curious and bright, new to this subject.
+    #[default]
+    General,
+    /// Knows the basics: deeper, the common terms taken as known.
+    Informed,
+}
+
+impl Level {
+    /// In the sheet's order.
+    pub const ALL: [Level; 3] = [Level::Beginner, Level::General, Level::Informed];
+
+    /// What the writer is told of the viewer.
+    fn brief(self) -> &'static str {
+        match self {
+            Level::Beginner => {
+                "complete beginners: no step skipped, every term in plain words, an everyday \
+                 example for each idea, slower and warmer"
+            }
+            Level::General => "bright and curious viewers new to this subject",
+            Level::Informed => {
+                "viewers who know the basics: common terms taken as known, more depth, \
+                 nuance and the latest findings, no explaining what they already know"
+            }
+        }
+    }
+}
 
 /// How the video is written: what it is for, and the shape that serves
 /// it. Chosen in the Long video sheet; each comes with its own brief to
@@ -162,6 +210,8 @@ pub struct Brief {
     pub clip_share: f64,
     /// How it is written.
     pub style: ContentStyle,
+    /// Who it is explained to.
+    pub level: Level,
     /// The channel it is for, as the person described it once: name,
     /// audience, voice, opening and closing lines, scripts to write like.
     /// Empty when they have not.
@@ -180,12 +230,13 @@ impl Brief {
     fn text(&self) -> String {
         let mut text = format!(
             "Topic: {}\nLength: about {} minutes\nNarration language: {}\nAspect ratio: {}\n\
-             What it is: {}\n",
+             What it is: {}\nWho it is for: {}\n",
             self.topic.trim(),
             self.minutes,
             self.language,
             self.aspect,
-            self.style.brief()
+            self.style.brief(),
+            self.level.brief()
         );
         if !self.channel.trim().is_empty() {
             text += &format!(
@@ -334,7 +385,7 @@ pub fn write(
         // An editor's pass over the chapter's words: what a first draft
         // leaves - a soft opening, a phrase every script uses, a line that
         // says again what another said - taken out, at the same length.
-        match ask(&edit_tool(), edit_prompt(&board, brief, i)) {
+        match ask(&edit_tool(), edit_prompt(&board, &brief_text, i)) {
             Ok(edited) => apply_edits(&mut board.chapters[i].scenes, &edited),
             Err(error) => log::warn!("chapter {}: the editor's pass failed: {error}", i + 1),
         }
@@ -368,6 +419,8 @@ pub struct Research {
 
 /// How many searches one research may run: about ten cents of them.
 const SEARCHES: u32 = 8;
+/// How many pages it may read in full: the few that matter most.
+const FETCHES: u32 = 4;
 
 /// Reads up on `brief`'s topic on the web, with Anthropic's web search:
 /// the facts, the numbers and their dates, the people and places, the
@@ -380,25 +433,31 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
         "{}\nBefore anything is written, research this topic on the web for the video \
          described. Find what a specialist would put in it: the key facts and how they connect, \
          numbers with their dates and units, the people, places and events, what is surprising \
-         or little known, where experts disagree, and the latest developments. Prefer primary \
-         and reputable sources. Write the notes in English as short factual lines, each ending \
-         with the number of its source in brackets, like [2]; list the sources in that order.",
+         or little known, where experts disagree, and the latest developments; and how the \
+         best teachers explain it - the plain-language explanation, the analogies they use \
+         and the misconceptions people commonly have. Prefer primary and reputable sources, \
+         and read the two or three most important pages in full rather than their snippets. Write the notes in English as short factual lines, each ending \
+         with the number of its source in brackets, like [2]; list the sources in that order. \
+         End the notes with a line 'Explain it like this:' giving the clearest analogy you \
+         found, and a line 'Common misconception:'.",
         brief.text()
     );
     let search = |kind: &str| json!({"type": kind, "name": "web_search", "max_uses": SEARCHES});
-    // The newer search on the models that take it, the first one on the
-    // others - a model the person named themselves may be older.
+    let fetch = json!({"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": FETCHES});
+    // The newer search, with pages read in full, on the models that take
+    // them; the first search alone on the others - a model the person
+    // named themselves may be older.
     let got = crate::providers::retry(|| {
         call_with(
             key,
             model,
-            &[search("web_search_20260209")],
+            &[search("web_search_20260209"), fetch.clone()],
             &research_tool(),
             &prompt,
         )
     })
     .or_else(|error| {
-        if error.contains("web_search") {
+        if error.contains("web_search") || error.contains("web_fetch") {
             call_with(
                 key,
                 model,
@@ -932,7 +991,7 @@ fn chapter_prompt(
 /// What the editor is asked of chapter `i`: its narration, scene by
 /// scene, to be tightened without changing what it says or how long it
 /// takes to say.
-fn edit_prompt(board: &Storyboard, brief: &Brief, i: usize) -> String {
+fn edit_prompt(board: &Storyboard, brief_text: &str, i: usize) -> String {
     let chapter = &board.chapters[i];
     let scenes: String = chapter
         .scenes
@@ -953,10 +1012,14 @@ fn edit_prompt(board: &Storyboard, brief: &Brief, i: usize) -> String {
          Edit it the way a senior editor edits a first draft for a channel that lives on \
          retention: a stronger first line, sharper verbs, concrete detail where it is vague, \
          every phrase from the list you never write taken out, nothing said twice, the turn at \
-         the end kept. Keep every fact, the order, the language and the meaning of each scene; \
+         the end kept. Check it as a viewer new to the subject would hear it: a term left \
+         unexplained gets its plain words, a step that is skipped is put back, a sentence too \
+         long for one breath is split. Check every number, date, name and quote against the \
+         research notes above, where there are any: one the notes do not support is corrected \
+         from them or taken out. Keep the order, the language and the meaning of each scene; \
          keep each scene within a tenth of its word count, so it still fits its pictures. \
          Return all {} scenes, in order.",
-        brief.text(),
+        brief_text,
         outline_summary(board),
         i + 1,
         board.chapters.len(),
@@ -1731,6 +1794,12 @@ mod tests {
             ..Brief::default()
         };
         assert!(brief.text().contains("An explainer that teaches"));
+        assert!(brief.text().contains("bright and curious viewers"));
+        let beginners = Brief {
+            level: Level::Beginner,
+            ..Brief::default()
+        };
+        assert!(beginners.text().contains("complete beginners"));
         assert_eq!(ContentStyle::ALL[0], ContentStyle::default());
     }
 
