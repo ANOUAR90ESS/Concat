@@ -26,7 +26,7 @@ use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
-use concat_generate::writer::{self, Brief, ContentStyle, Publishing, Suggestion, Writing};
+use concat_generate::writer::{self, Brief, ContentStyle, Level, Publishing, Suggestion, Writing};
 use concat_project::Command;
 use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
@@ -361,6 +361,7 @@ impl GeneratePane {
                     6 => prefs.clips = Some(index.min(CLIP_SHARES.len() - 1)),
                     7 => prefs.caption_look = index.min(1),
                     8 => prefs.content_style = index.min(ContentStyle::ALL.len() - 1),
+                    10 => prefs.level = Some(index.min(Level::ALL.len() - 1)),
                     9 => {
                         let professional = index == 1;
                         prefs.replicate_image_model = if professional {
@@ -949,6 +950,7 @@ impl GeneratePane {
             notes: self.notes.clone(),
             clip_share: CLIP_SHARES[self.clips_row(studio)],
             style: ContentStyle::ALL[prefs.content_style.min(ContentStyle::ALL.len() - 1)],
+            level: Level::ALL[level_row(prefs)],
             channel: channel_profile(prefs),
             research: prefs.research.unwrap_or(true),
         }
@@ -1730,6 +1732,7 @@ impl GeneratePane {
             captions: self.captions,
             caption_look: prefs.caption_look as i32,
             content_style: prefs.content_style as i32,
+            level: level_row(prefs) as i32,
             research: prefs.research.unwrap_or(true),
             picture_quality: i32::from(
                 prefs.replicate_image_model.trim() == PROFESSIONAL_IMAGE_MODEL,
@@ -2191,6 +2194,11 @@ fn dollars(value: f64) -> String {
 /// finer detail and truer light, at about four cents a picture.
 const PROFESSIONAL_IMAGE_MODEL: &str = "black-forest-labs/flux-1.1-pro";
 const PROFESSIONAL_IMAGE_PRICE: &str = "0.04";
+
+/// The audience level's row: general until one is chosen.
+fn level_row(prefs: &crate::prefs::GeneratePrefs) -> usize {
+    prefs.level.unwrap_or(1).min(Level::ALL.len() - 1)
+}
 
 /// The channel as the writer is told it: one line for each thing the
 /// person filled in, nothing for what they left empty.

@@ -149,6 +149,9 @@ pub struct GeneratePrefs {
     /// Row of the content style list: documentary, educational, academic,
     /// story, news.
     pub content_style: usize,
+    /// Row of the audience level list: beginner, general, informed;
+    /// general unless chosen.
+    pub level: Option<usize>,
     /// Read up on the web before writing; on unless turned off.
     pub research: Option<bool>,
     /// The channel the videos are for, told once and given to the writer

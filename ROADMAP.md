@@ -257,6 +257,34 @@ branch and sent up as one pull request and one release.
   model: Economical (flux-schnell) or Professional (flux-1.1-pro, about
   four cents a picture), which sets the model and its price.
 
+## Simple, true and well shown (owner, 7 Nov)
+
+After the content writer (#29) the owner asked for scripts that explain
+better - simplify without falsifying - and for better picture prompts,
+from what science communicators and the models' own guides recommend.
+
+- 🚧 **Explaining.** An Audience choice - Beginner, General, Informed -
+  tells the writer how much the viewer knows. Its standing brief now
+  guards against the curse of knowledge: every term in plain words
+  first, one everyday analogy per hard idea carried through, the bottom
+  line before the detail, at most three steps a chapter, comparisons the
+  viewer can picture over bare numbers, sentences under twenty words;
+  scenes joined by "but" and "so", not "and then"; a reminder between
+  open loops of what is coming.
+- 🚧 **Facts.** The research reads the two or three key pages in full
+  (web fetch, up to four) besides searching, and brings back how the
+  best teachers explain the topic - its clearest analogy and the common
+  misconception. The editor's pass checks every number, date, name and
+  quote against those notes and corrects or removes what they do not
+  support, and listens as a newcomer: unexplained terms, skipped steps,
+  breathless sentences.
+- 🚧 **Pictures.** Image prompts of 40-70 words of natural prose, the
+  lens with its aperture, at most two style words of their own (FLUX's
+  guidance); clip motion under twenty words that does not describe the
+  picture again - what moves, then one camera move at the end (the
+  image-to-video guidance); an abstract idea shown through a physical
+  thing that stands for it.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no
