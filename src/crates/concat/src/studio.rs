@@ -731,6 +731,10 @@ pub struct Studio {
     /// Unsaved changes, and the timer that writes them.
     dirty: bool,
     autosave: slint::Timer,
+    /// Edits are being laid down many at once, as a generated cut's
+    /// hundreds are, and the bookkeeping each needs waits for the last; see
+    /// [`Studio::batch`].
+    batching: bool,
 
     // ── the bin ──
     pub media: crate::panes::media_bin::MediaBin,
@@ -2084,6 +2088,7 @@ impl Studio {
             empty: Project::new(),
             dirty: false,
             autosave: slint::Timer::default(),
+            batching: false,
             media: crate::panes::media_bin::MediaBin::default(),
             peaks: HashMap::new(),
             strips: HashMap::new(),
@@ -2492,7 +2497,12 @@ impl Studio {
         match session.apply_within(Some(gesture), command) {
             Ok(view) => {
                 let after = session.video().color_space;
-                self.after_change();
+                if self.batching {
+                    self.dirty = true;
+                    self.revision += 1;
+                } else {
+                    self.after_change();
+                }
                 self.tell_of_hdr(before, after);
                 view.created_id
             }
@@ -2501,6 +2511,22 @@ impl Studio {
                 None
             }
         }
+    }
+
+    /// Runs `lay` with each edit's bookkeeping - the mix handed to
+    /// playback, the monitor's frame, the art, the caches - held back, then
+    /// does it once. Done after every one of a generated cut's hundreds of
+    /// clips, it went each time over all the clips laid so far, on the
+    /// event loop, and could keep the window from answering long enough
+    /// for Android to offer to close it.
+    pub fn batch<R>(&mut self, lay: impl FnOnce(&mut Studio) -> R) -> R {
+        let was = std::mem::replace(&mut self.batching, true);
+        let laid = lay(self);
+        self.batching = was;
+        if !was {
+            self.after_change();
+        }
+        laid
     }
 
     /// [`Studio::apply_within`] for a caller outside the studio laying
@@ -7333,6 +7359,7 @@ impl Studio {
         if let Some(activity) = crate::panes::activity(&msg) {
             self.note_activity(activity);
         }
+        crate::watchdog::doing(&msg);
         match msg {
             crate::panes::Msg::Export(msg) => {
                 let mut pane = std::mem::take(&mut self.export);

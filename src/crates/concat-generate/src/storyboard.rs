@@ -117,6 +117,48 @@ pub struct Scene {
     pub seconds: f64,
     /// What the camera sees, one shot after another.
     pub shots: Vec<Shot>,
+    /// The narration as the voice is to read it, where the words shown
+    /// would be misread: in Arabic, every word with its vowel marks, which
+    /// the captions do without.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reading: Option<Reading>,
+}
+
+/// A scene's narration written out for the voice.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Reading {
+    /// The words to read.
+    pub text: String,
+    /// The narration they were made from: once the narration is edited,
+    /// they are not read.
+    pub of: String,
+}
+
+impl Scene {
+    /// What the voice reads: the reading made for the narration as it
+    /// stands, or the narration itself.
+    pub fn spoken(&self) -> &str {
+        match &self.reading {
+            Some(reading)
+                if reading.of.trim() == self.narration.trim()
+                    && !reading.text.trim().is_empty() =>
+            {
+                reading.text.trim()
+            }
+            _ => self.narration.trim(),
+        }
+    }
+}
+
+/// `text` without its Arabic vowel marks and the tatweel: the same letters
+/// a reading of it must keep.
+pub fn without_marks(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !matches!(c, '\u{064B}'..='\u{065F}' | '\u{0670}' | '\u{0640}' | '\u{06D6}'..='\u{06ED}')
+        })
+        .collect()
 }
 
 /// A data card: a figure in large type, and what it counts.

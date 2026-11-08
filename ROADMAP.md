@@ -278,7 +278,8 @@ from what science communicators and the models' own guides recommend.
   quote against those notes and corrects or removes what they do not
   support, and listens as a newcomer: unexplained terms, skipped steps,
   breathless sentences.
-- 🚧 **"The writer returned an outline with no chapters"** (owner, alpha.22).
+- ✅ **"The writer returned an outline with no chapters"** (owner, alpha.22;
+  fixed in alpha.23, #31).
   A tool answer can give a list as text - in a code fence, or after a
   line of words - and the outline then read as having no chapters. Such
   text is decoded into its list, and a list field given as anything else
@@ -289,6 +290,30 @@ from what science communicators and the models' own guides recommend.
   picture again - what moves, then one camera move at the end (the
   image-to-video guidance); an abstract idea shown through a physical
   thing that stands for it.
+
+## After alpha.23 (owner's test, 8 Nov)
+
+The owner liked the voice but heard words said wrongly in Arabic, and the
+window stopped answering ("LongCut is not responding") the first time a
+new video was played, the title saying unsaved changes until it did.
+
+- 🚧 **Arabic read with its vowels.** A voice reading unvowelled Arabic
+  guesses, and some words come out wrong. After each chapter's editor's
+  pass the writer marks every word with its vowels (tashkeel, case
+  endings, a sukun at the pause) for the voice, word for word; the
+  captions keep the words as written, and stay timed to the voice since
+  the words are the same. A marked reading that changed a word is not
+  used, nor one made for words edited since. A scene written again gets
+  its marks too. The narration itself is written unmarked.
+- 🚧 **The window stuck after a cut.** Laying a generated video on the
+  timeline ran the bookkeeping after every edit - the mix handed to
+  playback, the monitor's frame, the art - over all the clips laid so
+  far, hundreds of times, on the event loop; the autosave waited behind
+  it. The cut is now one batch, its bookkeeping done once at the end.
+- 🚧 **A log line when the window stops answering.** A watchdog thread
+  notes when the event loop has not beaten for two seconds, with what the
+  studio was handling, and how long the stall lasted: the next one, if
+  any, is found from the shared log.
 
 ## Done since alpha.14
 
