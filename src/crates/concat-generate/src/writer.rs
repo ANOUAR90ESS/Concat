@@ -24,7 +24,8 @@ use serde_json::{Value, json};
 
 use crate::budget::{self, ChapterPlan, Pacing, ScenePlan};
 use crate::storyboard::{
-    Chapter, Reading, Scene, ShotKind, Storyboard, Style, shot_stem, without_marks,
+    Chapter, Graphic, GraphicKind, Reading, Scene, ShotKind, Storyboard, Style, shot_stem,
+    without_marks,
 };
 
 /// The Messages API.
@@ -220,6 +221,8 @@ pub struct Brief {
     pub channel: String,
     /// Read up on the web before writing, and list the sources.
     pub research: bool,
+    /// Every shot an animated card the app draws, none made by a model.
+    pub cards_only: bool,
 }
 
 impl Brief {
@@ -380,7 +383,7 @@ pub fn write(
             )?;
             scenes = scenes_of(&got)?;
         }
-        board.chapters[i].scenes = conform(scenes, plan);
+        board.chapters[i].scenes = conform(scenes, plan, brief.cards_only);
         board.tidy()?;
         ending = text(&got["ending"]);
 
@@ -676,6 +679,7 @@ pub fn rewrite_scene(
             seconds: plan.seconds,
             scenes: vec![plan],
         },
+        brief.cards_only,
     )
     .pop()
     .ok_or_else(|| "the rewritten scene came back without a picture".to_owned())
@@ -1006,6 +1010,7 @@ fn suggest_prompt(
         .map(|(n, other)| format!("- shot {}: {}\n", n + 1, other.prompt.trim()))
         .collect();
     let kind = match the_shot.kind {
+        ShotKind::Motion => return Err("an animated card has no picture to suggest".to_owned()),
         ShotKind::Video => {
             "a video clip: give the picture and, as motion, how the camera and \
                             what is in the picture move"
@@ -1081,6 +1086,19 @@ fn chapter_prompt(
         brief.language,
         plan.scenes.len(),
     );
+    prompt += if brief.cards_only {
+        "\nThis video has no pictures: make every shot an animated card the app draws (kind \
+         \"motion\"), whatever kind is listed, and give each its graphic. Fit the card to what is \
+         said: number for a figure, compare for two to four things measured against each other, \
+         timeline for dates, list for steps or reasons, quote for a definition or something \
+         someone said, title for anything else - a scene's idea in a few strong words. Vary \
+         them; never the same kind three shots running. Leave the scene's data card null.\n"
+    } else {
+        "\nA shot listed as image or video may instead be an animated card the app draws (kind \
+         \"motion\", with its graphic and no prompt) where what is said is a figure, a comparison, \
+         dates, steps or a definition and a picture would only decorate it: at most one shot in \
+         four, never in two scenes running, and never the first shot of the chapter.\n"
+    };
     prompt + &avoid_list(board, None)
 }
 
@@ -1207,7 +1225,13 @@ fn misfit(scenes: &[Scene], plan: &ChapterPlan) -> Option<String> {
     for (n, (scene, want)) in scenes.iter().zip(&plan.scenes).enumerate() {
         let kinds: Vec<ShotKind> = scene.shots.iter().map(|shot| shot.kind).collect();
         let wanted: Vec<ShotKind> = want.shots.iter().map(|(kind, _)| *kind).collect();
-        if kinds != wanted {
+        // A card may stand where any picture was planned.
+        let fits = kinds.len() == wanted.len()
+            && kinds
+                .iter()
+                .zip(&wanted)
+                .all(|(kind, want)| kind == want || *kind == ShotKind::Motion);
+        if !fits {
             return Some(format!(
                 "scene {} has {} shots where {} were asked for, or not of the kinds listed",
                 n + 1,
@@ -1224,26 +1248,61 @@ fn misfit(scenes: &[Scene], plan: &ChapterPlan) -> Option<String> {
 /// scene's missing shots made from its last, a scene too many - or one with
 /// no picture at all - dropped. What still differs is the count the sheet
 /// shows against the budget.
-fn conform(scenes: Vec<Scene>, plan: &ChapterPlan) -> Vec<Scene> {
+fn conform(scenes: Vec<Scene>, plan: &ChapterPlan, cards_only: bool) -> Vec<Scene> {
     scenes
         .into_iter()
         .zip(&plan.scenes)
         .filter_map(|(mut scene, want)| {
             scene.seconds = want.seconds;
-            scene.shots.retain(|shot| !shot.prompt.trim().is_empty());
+            if cards_only {
+                // A video of cards alone: a shot that came back as a
+                // picture is shown as its scene's idea in words.
+                let idea = scene
+                    .on_screen_text
+                    .clone()
+                    .filter(|text| !text.trim().is_empty())
+                    .unwrap_or_else(|| short(&scene.narration, 6));
+                for shot in &mut scene.shots {
+                    shot.kind = ShotKind::Motion;
+                    if shot.graphic.as_ref().is_none_or(Graphic::is_empty) {
+                        shot.graphic = Some(Graphic {
+                            kind: GraphicKind::Title,
+                            title: idea.clone(),
+                            ..Graphic::default()
+                        });
+                    }
+                }
+                scene.card = None;
+            }
+            for shot in &mut scene.shots {
+                shot.settle();
+            }
+            scene.shots.retain(|shot| shot.is_whole());
             if scene.shots.is_empty() {
                 return None;
             }
             scene.shots.truncate(want.shots.len());
             while scene.shots.len() < want.shots.len() {
-                let mut again = scene.shots[scene.shots.len() - 1].clone();
+                // Made from the last picture rather than a card, where
+                // there is one: the same card twice says nothing new.
+                let from = scene
+                    .shots
+                    .iter()
+                    .rposition(|shot| shot.kind != ShotKind::Motion)
+                    .filter(|_| !cards_only)
+                    .unwrap_or(scene.shots.len() - 1);
+                let mut again = scene.shots[from].clone();
                 again.prompt = format!("{}, a different angle and framing", again.prompt.trim());
                 scene.shots.push(again);
             }
             for (shot, (kind, seconds)) in scene.shots.iter_mut().zip(&want.shots) {
-                shot.kind = *kind;
                 shot.seconds = *seconds;
-                if *kind == ShotKind::Image {
+                // A card stays a card where it stands; any other shot is
+                // the kind planned.
+                if shot.kind != ShotKind::Motion && *kind != ShotKind::Motion {
+                    shot.kind = *kind;
+                }
+                if shot.kind != ShotKind::Video {
                     shot.motion.clear();
                 }
             }
@@ -1620,11 +1679,36 @@ fn scene_schema() -> Value {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "kind": {"type": "string", "enum": ["image", "video"]},
-                        "prompt": {"type": "string", "description": "In English, the picture."},
+                        "kind": {"type": "string", "enum": ["image", "video", "motion"]},
+                        "prompt": {"type": "string", "description": "In English, the picture. Empty for a motion card."},
                         "motion": {
                             "type": "string",
                             "description": "For a video shot, in English, how the camera and the subject move. Empty for an image."
+                        },
+                        "graphic": {
+                            "type": ["object", "null"],
+                            "description": "For a motion shot only, the animated card the app draws; null otherwise. Words in the narration's language, short: a title under eight words, labels under five.",
+                            "properties": {
+                                "kind": {
+                                    "type": "string",
+                                    "enum": ["title", "number", "compare", "timeline", "list", "quote"],
+                                    "description": "title: a heading. number: one figure counting up (one item: label and value). compare: two to four items measured against each other, values as numbers. timeline: two to five items, value the date. list: two to five points (labels only). quote: the quote as title, who said it as one item's label."
+                                },
+                                "title": {"type": "string"},
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {"type": "string"},
+                                            "value": {"type": "string", "description": "'4,500', '38%', '1969'; empty for a point."}
+                                        },
+                                        "required": ["label"]
+                                    }
+                                },
+                                "accent": {"type": "string", "description": "The card's colour as #rrggbb, from the chapter's palette."}
+                            },
+                            "required": ["kind", "title", "items", "accent"]
                         }
                     },
                     "required": ["kind", "prompt"]
@@ -1852,6 +1936,7 @@ mod tests {
                     prompt: (*prompt).into(),
                     motion: "push in".into(),
                     seconds: 0.0,
+                    graphic: None,
                 })
                 .collect(),
             ..Scene::default()
@@ -2094,7 +2179,7 @@ mod tests {
             scene(&[]),
             scene(&[("image", "spare scene")]),
         ];
-        let kept = conform(came, &plan());
+        let kept = conform(came, &plan(), false);
         // The second came back without a picture and the third was not
         // asked for.
         assert_eq!(kept.len(), 1);
@@ -2106,9 +2191,52 @@ mod tests {
         assert!(first.shots[1].motion.is_empty(), "a still has no motion");
         assert_eq!(first.shots[0].seconds, 6.0);
 
-        let thin = conform(vec![scene(&[("video", "a")])], &plan());
+        let thin = conform(vec![scene(&[("video", "a")])], &plan(), false);
         assert_eq!(thin[0].shots.len(), 2);
         assert!(thin[0].shots[1].prompt.starts_with("a, a different angle"));
+    }
+
+    /// A card may stand where a picture was planned, and is kept there; a
+    /// card with nothing on it falls back to its prompt; with cards only,
+    /// every shot is a card, the scene's idea where it gave none.
+    #[test]
+    fn an_animated_card_stands_where_a_picture_was_planned() {
+        let card = Graphic {
+            kind: GraphicKind::Number,
+            title: "Stones".into(),
+            items: vec![crate::storyboard::GraphicItem {
+                label: "blocks".into(),
+                value: "2,300,000".into(),
+            }],
+            accent: "#C08A2E".into(),
+        };
+        let mut came = vec![
+            scene(&[("video", "a"), ("image", "b")]),
+            scene(&[("image", "c")]),
+        ];
+        came[0].shots[1].kind = ShotKind::Motion;
+        came[0].shots[1].graphic = Some(card.clone());
+        // A card with nothing to draw: a still of its prompt.
+        came[1].shots[0].kind = ShotKind::Motion;
+        came[1].shots[0].graphic = Some(Graphic::default());
+        assert_eq!(misfit(&came, &plan()), None);
+        let kept = conform(came.clone(), &plan(), false);
+        assert_eq!(kept[0].shots[1].kind, ShotKind::Motion);
+        assert_eq!(kept[0].shots[1].graphic, Some(card));
+        assert_eq!(kept[1].shots[0].kind, ShotKind::Image);
+        assert_eq!(kept[1].shots[0].graphic, None);
+
+        let mut cards = came;
+        cards[1].narration = "The pyramid rose over twenty years of work".into();
+        let kept = conform(cards, &plan(), true);
+        assert!(
+            kept.iter()
+                .flat_map(|scene| &scene.shots)
+                .all(|shot| shot.kind == ShotKind::Motion && shot.is_whole())
+        );
+        let idea = kept[1].shots[0].graphic.as_ref().unwrap();
+        assert_eq!(idea.kind, GraphicKind::Title);
+        assert!(idea.title.starts_with("The pyramid rose"));
     }
 
     #[test]
