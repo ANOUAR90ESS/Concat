@@ -152,6 +152,7 @@ pub fn render_clip(
     let mut next = 0;
     while next < frames {
         if stop() {
+            drop(encoder);
             let _ = std::fs::remove_file(&partial);
             return Err("cancelled".to_owned());
         }
@@ -185,5 +186,7 @@ pub fn render_clip(
     }
     concat_media::FrameSink::finish(&mut encoder)
         .map_err(|error| format!("{}: {error}", partial.display()))?;
+    // Closed before it is moved: Windows will not rename a file still open.
+    drop(encoder);
     std::fs::rename(&partial, out).map_err(|error| format!("{}: {error}", out.display()))
 }
