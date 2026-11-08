@@ -604,6 +604,12 @@ impl Figure {
     }
 }
 
+/// `text` with its number written as `value`, the way the number is
+/// written; `text` as it is where it holds none.
+pub(crate) fn count_in(text: &str, value: f64) -> String {
+    number_in(text).map_or_else(|| text.to_owned(), |figure| figure.with(value))
+}
+
 /// The first number in `text`, in Western or Arabic-Indic digits:
 /// "$1.2" , "2,300,000", "38%", "٤٥٠٠".
 fn number_in(text: &str) -> Option<Figure> {

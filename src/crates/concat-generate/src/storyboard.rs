@@ -189,6 +189,10 @@ pub struct Shot {
     /// made by a model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub graphic: Option<Graphic>,
+    /// For an explainer, the animation the writer directed. Until it is
+    /// directed, the prompt says what it is to show.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explainer: Option<crate::explainer::Explainer>,
 }
 
 impl Shot {
@@ -205,6 +209,18 @@ impl Shot {
         } else if self.kind != ShotKind::Motion {
             self.graphic = None;
         }
+        if self.kind != ShotKind::Explainer {
+            self.explainer = None;
+        }
+    }
+
+    /// What the shot is made as: an explainer not directed yet is made as
+    /// a still of its prompt.
+    pub fn made_as(&self) -> ShotKind {
+        match self.kind {
+            ShotKind::Explainer if self.explainer.is_none() => ShotKind::Image,
+            kind => kind,
+        }
     }
 
     /// Whether the shot has what it is made from: a prompt for a model, or
@@ -212,6 +228,7 @@ impl Shot {
     pub fn is_whole(&self) -> bool {
         match self.kind {
             ShotKind::Motion => self.graphic.as_ref().is_some_and(|g| !g.is_empty()),
+            ShotKind::Explainer => self.explainer.is_some() || !self.prompt.trim().is_empty(),
             _ => !self.prompt.trim().is_empty(),
         }
     }
@@ -298,6 +315,9 @@ pub enum ShotKind {
     Video,
     /// An animated card the app draws: no model, no cost.
     Motion,
+    /// An animated explainer the writer directs and the app draws: shapes,
+    /// icons, arrows and words moving with the narration.
+    Explainer,
 }
 
 impl Storyboard {
@@ -385,7 +405,7 @@ impl Storyboard {
         let count = |kind: ShotKind| {
             self.scenes()
                 .flat_map(|scene| scene.shots.iter())
-                .filter(|shot| shot.kind == kind)
+                .filter(|shot| shot.made_as() == kind)
                 .count()
         };
         (count(ShotKind::Video), count(ShotKind::Image))
@@ -441,8 +461,9 @@ impl Storyboard {
                     .shots
                     .iter()
                     .enumerate()
-                    // A card is drawn, not a picture a model could repeat.
-                    .filter(|(_, shot)| shot.kind != ShotKind::Motion)
+                    // A card or an explainer is drawn, not a picture a model
+                    // could repeat.
+                    .filter(|(_, shot)| matches!(shot.made_as(), ShotKind::Image | ShotKind::Video))
                     .map(|(n, shot)| (shot_stem(&scene.id, n), content_words(&shot.prompt)))
             })
             .collect();
@@ -487,6 +508,10 @@ impl Storyboard {
                         ShotKind::Motion => {
                             format!("- `{stem}` animated card, drawn by the app\n")
                         }
+                        ShotKind::Explainer => format!(
+                            "- `{stem}` animated explainer, drawn by the app: {}\n",
+                            shot.prompt.trim()
+                        ),
                     };
                 }
             }

@@ -12,6 +12,16 @@ description = "Long videos from an idea: the script, the prompts, the voice and 
 concat-project.workspace = true
 # Every generated file is probed the way an import is.
 concat-host.workspace = true
+# An explainer is drawn frame by frame and written as a clip: frames and
+# the encoder are the engine's own, the faces the titles' own.
+concat-core.workspace = true
+concat-media.workspace = true
+concat-text.workspace = true
+# Each frame of an explainer is SVG, rasterised on the CPU - the same on a
+# phone as on a desk. The version and features Slint already builds.
+resvg = { version = "0.48", default-features = false, features = ["text"] }
+# How long an outline is, so it can be drawn on along its length.
+kurbo = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 # The writer, the voice and the shot generators are web services. Blocking

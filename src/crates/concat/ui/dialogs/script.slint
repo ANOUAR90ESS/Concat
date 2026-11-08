@@ -39,6 +39,9 @@ export struct ScriptRow {
     /// A shot that is an animated card the app draws: its text is the
     /// card's heading, its detail the card's lines.
     card: bool,
+    /// A shot that is an animated explainer the writer designed: its text
+    /// says what it shows; Design again designs it anew from that.
+    explainer: bool,
     /// A shot whose picture reads as one already used.
     repeat: bool,
     /// A shot whose picture came out too like the shot's before it.
@@ -275,6 +278,13 @@ export component ScriptDialog inherits Modal {
                         font-size: Theme.fs-sm;
                         vertical-alignment: center;
                     }
+                    if row.explainer: Text {
+                        text: I18n.t("script.explainer");
+                        color: Theme.accent;
+                        font-size: Theme.fs-sm;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
                     if row.card: Text {
                         text: I18n.t("script.card");
                         color: Theme.accent;
@@ -282,7 +292,7 @@ export component ScriptDialog inherits Modal {
                         font-weight: 700;
                         vertical-alignment: center;
                     }
-                    if !row.card: SegmentedControl {
+                    if !row.card && !row.explainer: SegmentedControl {
                         width: 170px;
                         options: [I18n.t("script.image"), I18n.t("script.video")];
                         current: row.video ? 1 : 0;
@@ -318,7 +328,7 @@ export component ScriptDialog inherits Modal {
                 }
                 if row.kind == 2: Paragraph {
                     value: row.text;
-                    placeholder: row.card ? I18n.t("script.cardHeading") : I18n.t("script.picture");
+                    placeholder: row.card ? I18n.t("script.cardHeading") : row.explainer ? I18n.t("script.explainerIdea") : I18n.t("script.picture");
                     edited(text) => { root.edited(row.chapter, row.scene, row.shot, 0, text); }
                 }
                 if row.kind == 2 && row.card: Paragraph {
@@ -390,7 +400,9 @@ export component ScriptDialog inherits Modal {
                         // idea takes the prompt's place, to read and edit
                         // before anything is paid to make it.
                         Button {
-                            label: row.suggesting ? I18n.t("generate.suggesting") : I18n.t("generate.suggest");
+                            label: row.explainer
+                                ? (row.suggesting ? I18n.t("generate.designing") : I18n.t("generate.designAgain"))
+                                : (row.suggesting ? I18n.t("generate.suggesting") : I18n.t("generate.suggest"));
                             glyph: Glyph.sparkle;
                             ghost: true;
                             enabled: !row.suggesting && !row.remaking;
