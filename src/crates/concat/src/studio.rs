@@ -731,8 +731,8 @@ pub struct Studio {
     /// Unsaved changes, and the timer that writes them.
     dirty: bool,
     autosave: slint::Timer,
-    /// Edits are being laid down many at once - a generated cut's hundreds
-    /// - and the bookkeeping each needs waits for the last; see
+    /// Edits are being laid down many at once, as a generated cut's
+    /// hundreds are, and the bookkeeping each needs waits for the last; see
     /// [`Studio::batch`].
     batching: bool,
 
