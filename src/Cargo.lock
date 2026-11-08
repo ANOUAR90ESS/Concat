@@ -1241,10 +1241,15 @@ name = "concat-generate"
 version = "0.2.8"
 dependencies = [
  "base64 0.22.1",
+ "concat-core",
  "concat-host",
+ "concat-media",
  "concat-project",
+ "concat-text",
+ "kurbo",
  "log",
  "png 0.17.16",
+ "resvg",
  "serde",
  "serde_json",
  "ureq 2.12.1",

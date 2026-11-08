@@ -114,7 +114,7 @@ impl Level {
     pub const ALL: [Level; 3] = [Level::Beginner, Level::General, Level::Informed];
 
     /// What the writer is told of the viewer.
-    fn brief(self) -> &'static str {
+    pub(crate) fn brief(self) -> &'static str {
         match self {
             Level::Beginner => {
                 "complete beginners: no step skipped, every term in plain words, an everyday \
@@ -273,6 +273,18 @@ pub enum Writing {
         /// Its title, as the outline has it.
         title: String,
     },
+    /// Explainer `n` (from 1) of `of` in chapter `chapter` (from 1) of
+    /// `chapters` is being designed.
+    Explainer {
+        /// The chapter.
+        chapter: usize,
+        /// Of how many.
+        chapters: usize,
+        /// This explainer.
+        n: usize,
+        /// Of how many in the chapter.
+        of: usize,
+    },
 }
 
 /// Writes a storyboard for `brief`, reporting each call before it is made.
@@ -417,6 +429,17 @@ pub fn write(
                 Err(error) => log::warn!("chapter {}: the vowel marks failed: {error}", i + 1),
             }
         }
+
+        // The explainers designed, each in a call of its own, now that
+        // the words they move with are final.
+        crate::director::direct_chapter(&mut board, brief, i, key, model, &mut |n, of_these| {
+            progress(Writing::Explainer {
+                chapter: i + 1,
+                chapters: of,
+                n,
+                of: of_these,
+            })
+        });
     }
     board.tidy()?;
     Ok(board)
@@ -495,6 +518,14 @@ fn same_words(plain: &str, marked: &str) -> bool {
         .filter(|(a, b)| without_marks(a) == **b)
         .count();
     same * 10 >= plain.len() * 9
+}
+
+/// Strings in a list, joined by a semicolon.
+pub(crate) fn list_text(value: &Value) -> String {
+    value
+        .as_array()
+        .map(|items| items.iter().map(text).collect::<Vec<_>>().join("; "))
+        .unwrap_or_default()
 }
 
 /// What the writer read up on before writing: its notes, and the pages
@@ -673,7 +704,7 @@ pub fn rewrite_scene(
             Err(error) => log::warn!("the vowel marks failed: {error}"),
         }
     }
-    conform(
+    let mut new = conform(
         vec![new],
         &ChapterPlan {
             seconds: plan.seconds,
@@ -682,7 +713,19 @@ pub fn rewrite_scene(
         brief.cards_only,
     )
     .pop()
-    .ok_or_else(|| "the rewritten scene came back without a picture".to_owned())
+    .ok_or_else(|| "the rewritten scene came back without a picture".to_owned())?;
+    // Its explainers designed, in the scene's place in the video.
+    if new
+        .shots
+        .iter()
+        .any(|shot| shot.kind == ShotKind::Explainer && shot.explainer.is_none())
+    {
+        let mut placed = board.clone();
+        placed.chapters[chapter].scenes[scene] = new.clone();
+        crate::director::direct_chapter(&mut placed, brief, chapter, key, model, &mut |_, _| {});
+        new = placed.chapters[chapter].scenes[scene].clone();
+    }
+    Ok(new)
 }
 
 /// A new picture for one shot, from the writer: what it shows, and for a
@@ -1010,7 +1053,9 @@ fn suggest_prompt(
         .map(|(n, other)| format!("- shot {}: {}\n", n + 1, other.prompt.trim()))
         .collect();
     let kind = match the_shot.kind {
-        ShotKind::Motion => return Err("an animated card has no picture to suggest".to_owned()),
+        ShotKind::Motion | ShotKind::Explainer => {
+            return Err("a drawn shot has no picture to suggest".to_owned());
+        }
         ShotKind::Video => {
             "a video clip: give the picture and, as motion, how the camera and \
                             what is in the picture move"
@@ -1086,18 +1131,34 @@ fn chapter_prompt(
         brief.language,
         plan.scenes.len(),
     );
-    prompt += if brief.cards_only {
-        "\nThis video has no pictures: make every shot an animated card the app draws (kind \
-         \"motion\"), whatever kind is listed, and give each its graphic. Fit the card to what is \
-         said: number for a figure, compare for two to four things measured against each other, \
-         timeline for dates, list for steps or reasons, quote for a definition or something \
-         someone said, title for anything else - a scene's idea in a few strong words. Vary \
-         them; never the same kind three shots running. Leave the scene's data card null.\n"
+    let explainers = match brief.style {
+        ContentStyle::Educational | ContentStyle::Academic => "up to one shot in two",
+        ContentStyle::Documentary | ContentStyle::News => "up to one shot in four",
+        ContentStyle::Story => "up to one shot in six",
+    };
+    prompt += &if brief.cards_only {
+        "\nThis video has no pictures: every shot is drawn by the app, whatever kind is listed. \
+         Where the narration explains how something works, a process, a cause and its effect, a \
+         comparison of sizes or amounts, a route, a structure or a cycle, make it an animated \
+         explainer (kind \"explainer\"): its prompt says, in English, what the diagram shows \
+         and how it builds, beat by beat, in step with the words. Elsewhere make it an animated \
+         card (kind \"motion\") with its graphic: number for a figure, compare for two to four \
+         things measured against each other, timeline for dates, list for steps or reasons, quote \
+         for a definition or something someone said, title for anything else - a scene's idea in \
+         a few strong words. Vary them. Leave the scene's data card null.\n"
+            .to_owned()
     } else {
-        "\nA shot listed as image or video may instead be an animated card the app draws (kind \
-         \"motion\", with its graphic and no prompt) where what is said is a figure, a comparison, \
-         dates, steps or a definition and a picture would only decorate it: at most one shot in \
-         four, never in two scenes running, and never the first shot of the chapter.\n"
+        format!(
+            "\nA shot listed as image or video may instead be drawn by the app. Where the narration \
+             explains how something works, a process, a cause and its effect, a comparison of sizes \
+             or amounts, a route, a structure or a cycle - where a viewer understands by seeing it \
+             drawn - make it an animated explainer (kind \"explainer\"), {explainers}: its \
+             prompt says, in English, what the diagram shows and how it builds, beat by beat, in \
+             step with the words. Where what is said is a single figure, a list of points, a date \
+             or a quote, it may be an animated card (kind \"motion\", with its graphic and no \
+             prompt), at most one shot in four. Keep pictures for places, people, moments and \
+             atmosphere, and never draw the first shot of the video.\n"
+        )
     };
     prompt + &avoid_list(board, None)
 }
@@ -1230,7 +1291,7 @@ fn misfit(scenes: &[Scene], plan: &ChapterPlan) -> Option<String> {
             && kinds
                 .iter()
                 .zip(&wanted)
-                .all(|(kind, want)| kind == want || *kind == ShotKind::Motion);
+                .all(|(kind, want)| kind == want || drawn(*kind));
         if !fits {
             return Some(format!(
                 "scene {} has {} shots where {} were asked for, or not of the kinds listed",
@@ -1241,6 +1302,12 @@ fn misfit(scenes: &[Scene], plan: &ChapterPlan) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether shots of `kind` are drawn by the app rather than made by a
+/// model: a card, an explainer.
+fn drawn(kind: ShotKind) -> bool {
+    matches!(kind, ShotKind::Motion | ShotKind::Explainer)
 }
 
 /// Holds `scenes` to `plan` as near as they come: each scene its planned
@@ -1263,6 +1330,9 @@ fn conform(scenes: Vec<Scene>, plan: &ChapterPlan, cards_only: bool) -> Vec<Scen
                     .filter(|text| !text.trim().is_empty())
                     .unwrap_or_else(|| short(&scene.narration, 6));
                 for shot in &mut scene.shots {
+                    if shot.kind == ShotKind::Explainer && !shot.prompt.trim().is_empty() {
+                        continue;
+                    }
                     shot.kind = ShotKind::Motion;
                     if shot.graphic.as_ref().is_none_or(Graphic::is_empty) {
                         shot.graphic = Some(Graphic {
@@ -1288,7 +1358,7 @@ fn conform(scenes: Vec<Scene>, plan: &ChapterPlan, cards_only: bool) -> Vec<Scen
                 let from = scene
                     .shots
                     .iter()
-                    .rposition(|shot| shot.kind != ShotKind::Motion)
+                    .rposition(|shot| !drawn(shot.kind))
                     .filter(|_| !cards_only)
                     .unwrap_or(scene.shots.len() - 1);
                 let mut again = scene.shots[from].clone();
@@ -1297,9 +1367,9 @@ fn conform(scenes: Vec<Scene>, plan: &ChapterPlan, cards_only: bool) -> Vec<Scen
             }
             for (shot, (kind, seconds)) in scene.shots.iter_mut().zip(&want.shots) {
                 shot.seconds = *seconds;
-                // A card stays a card where it stands; any other shot is
-                // the kind planned.
-                if shot.kind != ShotKind::Motion && *kind != ShotKind::Motion {
+                // A drawn shot stays what it is where it stands; any other
+                // shot is the kind planned.
+                if !drawn(shot.kind) && !drawn(*kind) {
                     shot.kind = *kind;
                 }
                 if shot.kind != ShotKind::Video {
@@ -1406,6 +1476,21 @@ fn call_with(
     tool: &Value,
     prompt: &str,
 ) -> Result<Value, String> {
+    call_as(key, model, SYSTEM, server_tools, tool, prompt, &[])
+}
+
+/// [`call_with`] under another standing brief, with PNG pictures shown
+/// before the words.
+pub(crate) fn call_as(
+    key: &str,
+    model: &str,
+    system: &str,
+    server_tools: &[Value],
+    tool: &Value,
+    prompt: &str,
+    pictures: &[Vec<u8>],
+) -> Result<Value, String> {
+    use base64::Engine as _;
     let name = tool["name"].as_str().unwrap_or_default();
     let mut tools: Vec<Value> = server_tools.to_vec();
     tools.push(tool.clone());
@@ -1413,10 +1498,24 @@ fn call_with(
         .timeout_connect(std::time::Duration::from_secs(20))
         .timeout_read(std::time::Duration::from_secs(600))
         .build();
-    let mut messages = vec![json!({
-        "role": "user",
-        "content": format!("{prompt}\n\nAnswer by calling the {name} tool, once."),
-    })];
+    let mut content: Vec<Value> = pictures
+        .iter()
+        .map(|png| {
+            json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": base64::engine::general_purpose::STANDARD.encode(png),
+                }
+            })
+        })
+        .collect();
+    content.push(json!({
+        "type": "text",
+        "text": format!("{prompt}\n\nAnswer by calling the {name} tool, once."),
+    }));
+    let mut messages = vec![json!({"role": "user", "content": content})];
     let mut last = format!("Claude did not answer with the {name}");
     let mut paused = 0;
     let mut tries = 0;
@@ -1425,7 +1524,7 @@ fn call_with(
         let body = json!({
             "model": model,
             "max_tokens": 32000,
-            "system": SYSTEM,
+            "system": system,
             "tools": tools,
             "tool_choice": {"type": "auto"},
             "messages": messages,
@@ -1679,8 +1778,8 @@ fn scene_schema() -> Value {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "kind": {"type": "string", "enum": ["image", "video", "motion"]},
-                        "prompt": {"type": "string", "description": "In English, the picture. Empty for a motion card."},
+                        "kind": {"type": "string", "enum": ["image", "video", "motion", "explainer"]},
+                        "prompt": {"type": "string", "description": "In English: the picture; for an explainer, what the diagram shows and how it builds, beat by beat. Empty for a motion card."},
                         "motion": {
                             "type": "string",
                             "description": "For a video shot, in English, how the camera and the subject move. Empty for an image."
@@ -1937,6 +2036,7 @@ mod tests {
                     motion: "push in".into(),
                     seconds: 0.0,
                     graphic: None,
+                    explainer: None,
                 })
                 .collect(),
             ..Scene::default()
@@ -2194,6 +2294,27 @@ mod tests {
         let thin = conform(vec![scene(&[("video", "a")])], &plan(), false);
         assert_eq!(thin[0].shots.len(), 2);
         assert!(thin[0].shots[1].prompt.starts_with("a, a different angle"));
+    }
+
+    /// An explainer stands where a picture was planned and stays one, with
+    /// pictures and in a video drawn alone; a pending one is made as a
+    /// still until it is designed.
+    #[test]
+    fn an_explainer_keeps_its_place() {
+        let mut came = vec![
+            scene(&[("video", "a"), ("image", "b")]),
+            scene(&[("image", "c")]),
+        ];
+        came[0].shots[0].kind = ShotKind::Explainer;
+        came[0].shots[0].prompt = "salt dissolving, ions drifting apart".into();
+        assert_eq!(misfit(&came, &plan()), None);
+        let kept = conform(came.clone(), &plan(), false);
+        assert_eq!(kept[0].shots[0].kind, ShotKind::Explainer);
+        assert_eq!(kept[0].shots[0].made_as(), ShotKind::Image);
+        assert!(kept[0].shots[0].motion.is_empty());
+        let drawn_only = conform(came, &plan(), true);
+        assert_eq!(drawn_only[0].shots[0].kind, ShotKind::Explainer);
+        assert_eq!(drawn_only[0].shots[1].kind, ShotKind::Motion);
     }
 
     /// A card may stand where a picture was planned, and is kept there; a

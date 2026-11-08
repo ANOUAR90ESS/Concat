@@ -608,6 +608,11 @@ impl Job {
         {
             for (index, shot) in scene.shots.iter().enumerate() {
                 n += 1;
+                // Drawn last, to the slots the voice and the other shots
+                // decide; see `draw_explainers`.
+                if shot.made_as() == ShotKind::Explainer {
+                    continue;
+                }
                 let stem = shot_stem(&scene.id, index);
                 let again = stale.contains(&stem) && !matches!(shots, Shots::Folder);
                 if self.current(&stem).is_some() && !again {
@@ -730,6 +735,11 @@ impl Job {
             ));
         }
 
+        // The explainers once everything else is made: each is drawn to
+        // the place the voice and the shots beside it leave it, its steps
+        // on the words they belong to.
+        self.draw_explainers(board, total, &mut stale, progress, stop)?;
+
         // The music last, once the pictures are paid for: a run cut short
         // has spent nothing on a bed for a video it did not finish.
         if let (Some(prompt), Shots::Replicate { token, .. }) = (music, shots)
@@ -821,6 +831,170 @@ impl Job {
             .ok_or_else(|| "the video has no picture for a thumbnail yet".to_owned())
     }
 
+    /// Draws every explainer of `board` not drawn yet, or drawn to another
+    /// timing or design, or marked stale - the first time beside the
+    /// shots, then as a take. Taken off `stale` once drawn.
+    fn draw_explainers(
+        &self,
+        board: &Storyboard,
+        total: usize,
+        stale: &mut BTreeSet<String>,
+        progress: &mut dyn FnMut(Step),
+        stop: &dyn Fn() -> bool,
+    ) -> Result<(), String> {
+        let mut n = 0;
+        for scene in board.scenes() {
+            for (index, shot) in scene.shots.iter().enumerate() {
+                n += 1;
+                if shot.made_as() != ShotKind::Explainer {
+                    continue;
+                }
+                if stop() {
+                    return Err("cancelled".to_owned());
+                }
+                let stem = shot_stem(&scene.id, index);
+                let (cued, length) = self.explainer_cued(scene, index)?;
+                let key = drawn_key(&cued, length, board.frame());
+                let current = self.current(&stem);
+                let fresh = current.as_ref().is_some_and(|path| {
+                    std::fs::read_to_string(path.with_extension("drawn")).ok() == Some(key.clone())
+                });
+                if fresh && !stale.contains(&stem) {
+                    continue;
+                }
+                progress(Step::Shot {
+                    n,
+                    of: total,
+                    prompt: shot.prompt.clone(),
+                });
+                let out = match current {
+                    None => self.shots_dir().join(format!("{stem}.mp4")),
+                    Some(_) => {
+                        let dir = self.takes_dir();
+                        std::fs::create_dir_all(&dir)
+                            .map_err(|error| format!("{}: {error}", dir.display()))?;
+                        let number = self
+                            .takes(&stem)
+                            .last()
+                            .map(|(number, _)| number + 1)
+                            .unwrap_or(2);
+                        dir.join(format!("{stem}-{number}.mp4"))
+                    }
+                };
+                self.draw_explainer(board, scene, index, &out, stop)?;
+                if stale.remove(&stem) {
+                    self.set_stale(stale)?;
+                }
+                progress(Step::Made {
+                    n,
+                    of: total,
+                    picture: self.picture(&stem),
+                    spent: 0.0,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Draws shot `index` of `scene`, an explainer, as a clip at `out`, to
+    /// its slot and on its words; notes what it was drawn to beside it, and
+    /// a still of its end for the script editor.
+    fn draw_explainer(
+        &self,
+        board: &Storyboard,
+        scene: &crate::storyboard::Scene,
+        index: usize,
+        out: &Path,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<(), String> {
+        let (cued, length) = self.explainer_cued(scene, index)?;
+        let canvas = crate::explainer::canvas(&board.aspect);
+        crate::explainer::render_clip(&cued, canvas, board.frame(), length, out, stop)?;
+        let key = drawn_key(&cued, length, board.frame());
+        std::fs::write(out.with_extension("drawn"), key)
+            .map_err(|error| format!("{}: {error}", out.display()))?;
+        let frames = self.frames_dir();
+        std::fs::create_dir_all(&frames)
+            .map_err(|error| format!("{}: {error}", frames.display()))?;
+        if let Some(name) = out.file_stem().and_then(|name| name.to_str()) {
+            let (width, height) = board.frame();
+            let still = frames.join(format!("{name}.png"));
+            let at = (length * 0.85).max(0.0);
+            if let Err(error) =
+                crate::explainer::render_still(&cued, canvas, (width / 3, height / 3), at, &still)
+            {
+                log::warn!("{}: its still: {error}", out.display());
+            }
+        }
+        Ok(())
+    }
+
+    /// Shot `index` of `scene`'s explainer with its steps on the words they
+    /// belong to, and how long its slot is.
+    fn explainer_cued(
+        &self,
+        scene: &crate::storyboard::Scene,
+        index: usize,
+    ) -> Result<(crate::explainer::Explainer, f64), String> {
+        let shot = scene
+            .shots
+            .get(index)
+            .ok_or_else(|| format!("{} has no shot {}", scene.id, index + 1))?;
+        let mut explainer = shot
+            .explainer
+            .clone()
+            .ok_or_else(|| format!("{} is not directed yet", shot_stem(&scene.id, index)))?;
+        explainer.settle();
+        let made = self.scene_files(scene);
+        let timing = crate::plan::timing(scene, &made, &crate::plan::Options::default());
+        let (start, length) = timing
+            .slots
+            .get(index)
+            .copied()
+            .unwrap_or((0.0, scene.seconds));
+        let length = length.max(1.0);
+        let heard = timing.spoken.unwrap_or(timing.length);
+        let cued = explainer.cued(&|cue| {
+            cue_time(cue, &scene.narration, &made.words, timing.from, heard)
+                .map(|at| (at - start).clamp(0.0, (length - 0.8).max(0.0)))
+        });
+        Ok((cued, length))
+    }
+
+    /// What the cut will lay `scene` with, as far as the job holds it: its
+    /// narration with its words, and each shot's length - a drawn shot as
+    /// none, it being made to its share.
+    fn scene_files(&self, scene: &crate::storyboard::Scene) -> SceneFiles {
+        let mut files = SceneFiles::default();
+        let length_of = |path: &Path| {
+            concat_host::media::probe(&path.to_string_lossy())
+                .ok()
+                .map(|summary| summary.to_new_media())
+                .filter(|item| item.kind != MediaKind::Image)
+                .and_then(|item| item.duration)
+        };
+        if let Some(path) = providers::existing(&self.voice_dir(), &scene.id, &VOICE_EXTENSIONS) {
+            files.words = self.words(&scene.id);
+            if files.words.is_empty() {
+                files.sounding = sounding(&path.to_string_lossy());
+            }
+            files.voice = Some((
+                path.to_string_lossy().into_owned(),
+                length_of(&path).unwrap_or(0.0),
+            ));
+        }
+        for (index, shot) in scene.shots.iter().enumerate() {
+            let length = match shot.made_as() {
+                ShotKind::Motion | ShotKind::Explainer => None,
+                _ => self
+                    .current(&shot_stem(&scene.id, index))
+                    .and_then(|path| length_of(&providers::true_name(&path))),
+            };
+            files.shots.push((String::new(), length));
+        }
+        files
+    }
+
     /// Probes what the job holds for `board` - each scene's narration, when
     /// `voiced`, and the take each shot is now - for a cut: what a run ends
     /// with, and what a Short is cut from without making anything again.
@@ -866,6 +1040,69 @@ impl Job {
         }
         Ok(made)
     }
+}
+
+/// What an explainer was drawn to, written beside its clip: its steps as
+/// placed, its length and its frame. A clip whose note differs is drawn
+/// again.
+fn drawn_key(explainer: &crate::explainer::Explainer, length: f64, frame: (u32, u32)) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(explainer)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    format!(
+        "{:016x} {length:.3} {}x{}",
+        hasher.finish(),
+        frame.0,
+        frame.1
+    )
+}
+
+/// When `cue` is said, in seconds from the scene's start: at the first of
+/// the scene's timed words it matches, or - for a voice whose words are
+/// not timed - at its place among the narration's letters over the time
+/// the narration is heard. `from` is where the narration starts in its
+/// file. None where the narration does not hold it.
+pub fn cue_time(cue: &str, narration: &str, words: &[Word], from: f64, heard: f64) -> Option<f64> {
+    let wanted: Vec<String> = cue
+        .split_whitespace()
+        .map(plain)
+        .filter(|w| !w.is_empty())
+        .collect();
+    let first = wanted.first()?;
+    if !words.is_empty() {
+        let said: Vec<String> = words.iter().map(|word| plain(&word.text)).collect();
+        let matches = |at: usize| {
+            wanted.iter().enumerate().all(|(k, want)| {
+                said.get(at + k)
+                    .is_some_and(|word| word == want || word.ends_with(want.as_str()))
+            })
+        };
+        let at = (0..said.len())
+            .find(|&at| matches(at))
+            .or_else(|| said.iter().position(|word| word.contains(first.as_str())))?;
+        return Some((words[at].start - from).max(0.0));
+    }
+    let letters: Vec<String> = narration.split_whitespace().map(plain).collect();
+    let total: usize = letters.iter().map(|w| w.chars().count() + 1).sum();
+    let mut before = 0;
+    for word in &letters {
+        if word == first || word.ends_with(first.as_str()) || word.contains(first.as_str()) {
+            return Some(heard * before as f64 / total.max(1) as f64);
+        }
+        before += word.chars().count() + 1;
+    }
+    None
+}
+
+/// A word as it is matched: lower case, no punctuation, no Arabic marks.
+fn plain(word: &str) -> String {
+    crate::storyboard::without_marks(word)
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// Where in a narration's file there is sound, first to last, in seconds:
@@ -1278,6 +1515,11 @@ impl Job {
             providers::backdrop(&dir.join(format!("{take}.png")), width, height, accent)?;
             return Ok(providers::existing(&dir, &take, &SHOT_EXTENSIONS)
                 .ok_or_else(|| format!("{take} was not saved")));
+        }
+        if shot.made_as() == ShotKind::Explainer {
+            let out = dir.join(format!("{take}.mp4"));
+            self.draw_explainer(board, scene, index, &out, &|| false)?;
+            return Ok(Ok(out));
         }
         match shots {
             Shots::Folder => {
@@ -1702,6 +1944,31 @@ mod tests {
     }
 
     #[test]
+    fn a_cue_is_found_among_the_words_said() {
+        let word = |text: &str, start: f64| Word {
+            text: text.into(),
+            start,
+            end: start + 0.3,
+        };
+        let words = vec![
+            word("The", 0.4),
+            word("sun's", 0.7),
+            word("light,", 1.1),
+            word("travels", 1.6),
+            word("فوتونات", 2.2),
+        ];
+        // The narration starts 0.35 s into its file.
+        assert_eq!(cue_time("light", "", &words, 0.35, 5.0), Some(1.1 - 0.35));
+        assert_eq!(cue_time("light travels", "", &words, 0.0, 5.0), Some(1.1));
+        // Arabic marks and attached letters do not hide a word.
+        assert_eq!(cue_time("فُوتونات", "", &words, 0.0, 5.0), Some(2.2));
+        assert_eq!(cue_time("moon", "", &words, 0.0, 5.0), None);
+        // Untimed: by the letters before it, over the time it is heard.
+        let at = cue_time("travels", "The light travels", &[], 0.0, 9.0).unwrap();
+        assert!((at - 9.0 * 10.0 / 18.0).abs() < 1e-9, "{at}");
+    }
+
+    #[test]
     fn a_narrations_silence_is_read_from_its_waveform() {
         // Half a second of silence, a second of tone, 0.8 s of silence:
         // 16-bit mono at 8 kHz, written by hand.
@@ -1750,6 +2017,73 @@ mod tests {
         assert_eq!(job.publishing(), Some(publishing));
         let text = std::fs::read_to_string(job.dir.join("publishing.txt")).unwrap();
         assert_eq!(text, "Title\n\nAbout.\n\na\n");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A draft run draws an explainer once everything else is made, to the
+    /// slot the scene gives it, with a still for the script editor; a run
+    /// again leaves it as it is, and a changed design draws a new take.
+    #[test]
+    fn an_explainer_is_drawn_once_to_its_slot() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-explainer-{}", std::process::id()));
+        let job = Job::new(&root, "explainer");
+        let mut board: Storyboard = serde_json::from_value(serde_json::json!({
+            "title": "T", "aspect": "16:9",
+            "chapters": [{"title": "A", "scenes": [{
+                "narration": "", "seconds": 4,
+                "shots": [
+                    {"prompt": "a dune"},
+                    {"kind": "explainer", "prompt": "the sun over the dune",
+                     "explainer": {
+                        "elements": [{"id": "sun", "kind": "icon", "icon": "sun", "x": 960, "y": 540}],
+                        "steps": [{"target": "sun", "effect": "draw", "at": 0.2}]}}
+                ]}]}]
+        }))
+        .unwrap();
+        board.tidy().unwrap();
+        let run = |board: &Storyboard| {
+            let mut drawn = 0;
+            job.make(
+                board,
+                &Voice::None,
+                &Shots::Draft,
+                &Costs::default(),
+                None,
+                &mut |_| Err("no voice".to_owned()),
+                &mut |step| {
+                    if matches!(step, Step::Shot { n: 2, .. }) {
+                        drawn += 1;
+                    }
+                },
+                &|| false,
+            )
+            .unwrap();
+            drawn
+        };
+        assert_eq!(run(&board), 1);
+        let clip = job.current("c01s01_2").unwrap();
+        assert_eq!(clip, job.shots_dir().join("c01s01_2.mp4"));
+        let length = concat_host::media::probe(&clip.to_string_lossy())
+            .unwrap()
+            .to_new_media()
+            .duration
+            .unwrap();
+        // Half of a four-second scene.
+        assert!((length - 2.0).abs() < 0.1, "{length}");
+        assert!(job.picture("c01s01_2").is_some());
+        assert_eq!(run(&board), 0);
+        board.chapters[0].scenes[0].shots[1]
+            .explainer
+            .as_mut()
+            .unwrap()
+            .steps[0]
+            .at = 0.5;
+        assert_eq!(run(&board), 1);
+        assert_eq!(
+            job.current("c01s01_2").unwrap(),
+            job.takes_dir().join("c01s01_2-2.mp4")
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

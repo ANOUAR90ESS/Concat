@@ -115,6 +115,13 @@ pub enum GenerateMsg {
     Suggest(i32, i32, i32),
     /// The writer's other picture, or why there is none.
     Suggested(usize, usize, usize, Box<Result<Suggestion, String>>),
+    /// An explainer designed again: chapter, scene, shot, and the design.
+    Designed(
+        usize,
+        usize,
+        usize,
+        Box<Result<concat_generate::explainer::Explainer, String>>,
+    ),
     /// A shot is made again, or why not: its stem and its job's folder.
     Remade(String, PathBuf, Box<Result<(Remade, NewMedia), String>>),
     /// Small pictures of shots, by stem: width, height and RGBA.
@@ -542,6 +549,22 @@ impl GeneratePane {
                     Err(error) => self.script_message = error,
                 }
             }
+            GenerateMsg::Designed(chapter, scene, shot, result) => {
+                self.suggesting.remove(&(chapter, scene, shot));
+                match *result {
+                    Ok(design) => {
+                        let (c, s, n) = (chapter as i32, scene as i32, shot as i32);
+                        if let Some((_, found)) = self.shot_mut(c, s, n) {
+                            // Drawn again by the next run, or by Make again:
+                            // a design that differs is a clip that differs.
+                            found.explainer = Some(design);
+                            self.dirty = true;
+                            self.changed();
+                        }
+                    }
+                    Err(error) => self.script_message = error,
+                }
+            }
             GenerateMsg::Remade(stem, dir, result) => {
                 self.remaking.remove(&stem);
                 self.remade(studio, &stem, &Job { dir }, *result);
@@ -883,6 +906,15 @@ impl GeneratePane {
             let Some((stem, found)) = self.shot_mut(chapter, scene, shot) else {
                 return;
             };
+            // An explainer's prompt is what Design again designs from:
+            // the clip changes when its design does.
+            if found.kind == ShotKind::Explainer && found.explainer.is_some() {
+                if field == 0 {
+                    found.prompt = text;
+                    self.dirty = true;
+                }
+                return;
+            }
             // A card's words are drawn by the cut from the script as it
             // stands: nothing to make again.
             if let (ShotKind::Motion, Some(graphic)) = (found.kind, found.graphic.as_mut()) {
@@ -1114,6 +1146,39 @@ impl GeneratePane {
         }
         self.script_message.clear();
         let brief = self.brief(studio);
+        // An explainer is designed again, as the director would, from what
+        // its prompt says it shows.
+        let explainer = board
+            .chapters
+            .get(chapter)
+            .and_then(|c| c.scenes.get(scene))
+            .and_then(|s| s.shots.get(shot))
+            .is_some_and(|found| found.kind == ShotKind::Explainer);
+        if explainer {
+            spawn_in_project(
+                move || {
+                    concat_generate::director::direct(
+                        &board,
+                        &brief,
+                        chapter,
+                        scene,
+                        shot,
+                        "",
+                        &key,
+                        writer::DEFAULT_MODEL,
+                    )
+                },
+                move |studio, _, _, result| {
+                    studio.handle(Msg::Generate(GenerateMsg::Designed(
+                        chapter,
+                        scene,
+                        shot,
+                        Box::new(result),
+                    )))
+                },
+            );
+            return;
+        }
         spawn_in_project(
             move || {
                 writer::suggest_shot(
@@ -1166,6 +1231,16 @@ impl GeneratePane {
                                 n as f32 / (of + 1) as f32,
                                 tf("generate.writingChapter", &[&n, &of]),
                                 title,
+                            ),
+                            Writing::Explainer {
+                                chapter,
+                                chapters,
+                                n,
+                                of,
+                            } => (
+                                chapter as f32 / (chapters + 1) as f32,
+                                tf("generate.designingExplainer", &[&n, &of]),
+                                String::new(),
                             ),
                         };
                         on_ui_in_project(epoch, move |studio, _, _| {
@@ -1927,6 +2002,7 @@ impl GeneratePane {
                         },
                         video: shot.kind == ShotKind::Video,
                         card: shot.kind == ShotKind::Motion,
+                        explainer: shot.kind == ShotKind::Explainer,
                         repeat: self.repeats.contains(&stem),
                         lookalike: self.lookalikes.contains(&stem),
                         has_thumb: self.thumbs.contains_key(&stem),
@@ -1937,7 +2013,7 @@ impl GeneratePane {
                             let cost = match shot.kind {
                                 ShotKind::Video => prices.clip + prices.still,
                                 ShotKind::Image => prices.still,
-                                ShotKind::Motion => 0.0,
+                                ShotKind::Motion | ShotKind::Explainer => 0.0,
                             };
                             format!("~${}", dollars(cost)).into()
                         } else {

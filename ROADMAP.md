@@ -324,7 +324,7 @@ writes, it does not paint: Replicate keeps making the pictures, and some
 content needs none - a figure, a comparison, dates, steps, a definition -
 where an animated card says it better, for nothing.
 
-- 🚧 **Stage 1: cards among the pictures.** A shot may be an animated card
+- ✅ **Stage 1: cards among the pictures** (alpha.25, #33). A shot may be an animated card
   (`ShotKind::Motion`, with a `Graphic`): a heading; a figure counting up;
   two to four bars to their values; dates along a line; points one by
   one; a quote and who said it - in the chapter's colour, in the
@@ -336,12 +336,64 @@ where an animated card says it better, for nothing.
   own; nothing is asked of a model. In the script editor a card shows its
   heading and its lines to edit. A scene with a card has no data card
   over it.
-- 🚧 **Stage 5: cards only.** A Pictures choice in the Long video sheet:
+- ✅ **Stage 5: cards only** (alpha.25, #33; now "drawn only", below). A Pictures choice in the Long video sheet:
   pictures and cards, or cards only - every shot a card, a video for the
   cost of its script and voice.
 - Later: more cards (a map with a route, a percentage ring, a before and
   after), a card's colour and layout chosen in the script editor, and a
   card turned into a picture or back from there.
+
+## Animated explainers (owner, 8 Nov)
+
+The owner showed an explainer made by Claude Code as a motion designer: a
+diagram that builds itself in step with the narration, the way the best
+educational channels explain. Claude writes, it does not paint - so it
+designs the animation as data and the app draws it, frame by frame, on
+the phone as on the desk, for nothing. All four stages are built and
+shipped together, each whole.
+
+- 🚧 **Stage 1: the engine** (`explainer/`). An explainer is a canvas in
+  pixels (1920x1080 for a wide video) of elements - text, rect, circle,
+  line, arrow (bowed, its head arriving last), path, icon, group - and
+  steps: fade, pop, grow from an edge, draw an outline on along its
+  length, type word by word, move, scale, rotate, recolour, count a
+  number up, pulse, shake, and a camera that pans and zooms; six easings.
+  Each frame is written as SVG and rasterised by resvg on the CPU, a few
+  frames at a time on as many threads, and encoded as an H.264 clip (an
+  8 s 1080p clip draws in about 3.5 s on a desk). Arabic is embedded right
+  to left, so a line opening on a figure reads right, and thickened for a
+  heavy weight, its bundled face having one. The bundled faces only, so a
+  frame is the same everywhere. A validator names every fault - ids twice
+  or missing, steps on nothing, unknown icons, colours that are not,
+  words too small or off the canvas.
+- 🚧 **Stage 2: the writer as motion director.** A shot may be an
+  explainer (`ShotKind::Explainer`): the chapter call marks it where the
+  narration explains a mechanism, a process, a cause and effect, a
+  comparison of sizes, a route, a structure or a cycle (up to one shot in
+  two for educational and academic videos, one in four for documentary
+  and news, one in six for a story), its prompt saying what the diagram
+  shows beat by beat. Then a call of its own designs each one under a
+  designer's brief and a design system - safe area and the captions'
+  fifth kept clear, hierarchy, palette from the chapter's, grid, diagram
+  patterns, every element entering on the word that names it (`cue`),
+  right-to-left layout for Arabic. Its faults are sent back once to be
+  mended; then two frames are drawn and shown to it as pictures, and it
+  mends what it sees - overlaps, cut words, crowding, imbalance. One that
+  cannot be designed is made as a still of its prompt.
+- 🚧 **Stage 3: the icon library.** 191 Lucide icons (ISC), as paths so
+  each can be drawn on stroke by stroke, named in the designer's brief.
+- 🚧 **Stage 4: in the run.** Explainers are drawn last, each to the slot
+  the voice and the shots beside it leave (`plan::timing`, the one sum the
+  cut and the job share), its steps on the times their cue words are said
+  - from ElevenLabs' word timings, or by the letters for an untimed voice.
+  A note beside the clip says what it was drawn to; a new timing or a new
+  design draws it again as a take, and Make again draws one. A still of
+  its end is the script editor's thumbnail. In the script editor an
+  explainer shows what it shows, and Design again designs it anew. The
+  Pictures choice is now pictures and drawn shots, or drawn only.
+- Later: an explainer in a Short drawn for the tall frame (it is cropped
+  from the wide one now); the designer's palette and pace chosen in the
+  sheet; pictures from Replicate placed inside an explainer.
 
 ## Done since alpha.14
 

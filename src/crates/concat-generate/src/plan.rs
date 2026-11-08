@@ -24,7 +24,7 @@ use concat_project::Command;
 use concat_project::commands::{ClipMove, ClipPatch, NewMedia, TrimEdge};
 use concat_project::model::{KeyEase, KeyProperty, TextStyle, Transition, VideoSettings};
 
-use crate::storyboard::{Graphic, ShotKind, Storyboard};
+use crate::storyboard::{Graphic, Scene, ShotKind, Storyboard};
 
 /// The house style of the cut.
 #[derive(Clone, Debug, PartialEq)]
@@ -253,6 +253,92 @@ fn timed(cards: &[String], words: &[Word], from: f64, over: f64) -> Option<Vec<(
     Some(spans)
 }
 
+/// How a scene's time falls: where its narration starts in its file, how
+/// long it is heard, how long the scene lasts, and each shot's place in
+/// it, as seconds from the scene's start and a length. The cut lays the
+/// scene by it, and the job draws an explainer to its slot by the same
+/// sums, so the clip fits its place exactly.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Timing {
+    /// Where in the voice's file the scene's narration starts.
+    pub from: f64,
+    /// How long the narration is heard, when there is one.
+    pub spoken: Option<f64>,
+    /// How long the scene lasts.
+    pub length: f64,
+    /// Each shot's start in the scene and its length.
+    pub slots: Vec<(f64, f64)>,
+}
+
+/// The scene's [`Timing`], from what was made for it.
+pub fn timing(scene: &Scene, made: &SceneFiles, options: &Options) -> Timing {
+    let file_length = made
+        .voice
+        .as_ref()
+        .map(|(_, seconds)| *seconds)
+        .filter(|s| *s > 0.0);
+    // The silence a voice file opens and closes with is left out: the
+    // pause between paragraphs is the pad alone, the same every time.
+    let heard = match (made.words.first(), made.words.last()) {
+        (Some(first), Some(last)) => Some((first.start, last.end)),
+        _ => made.sounding,
+    };
+    let (from, spoken) = match (file_length, heard) {
+        (Some(file), Some((first, last))) if last > first => {
+            let from = (first - LEAD_IN).clamp(0.0, file);
+            let to = (last + TAIL).min(file);
+            (from, Some(to - from).filter(|s| *s > 0.0).or(Some(file)))
+        }
+        (file, _) => (0.0, file),
+    };
+    let length = match spoken {
+        Some(spoken) => (spoken + options.scene_pad).max(options.min_scene),
+        None => scene.seconds.max(options.min_scene),
+    };
+    let count = made.shots.len().max(1);
+    // The scene's time shared over its shots in proportion to their own
+    // lengths, so a ten-second clip is not squeezed to match a four.
+    let even = length / count as f64;
+    // A length the probe could not read - none, nought, not a number -
+    // counts as an even share, so one odd file cannot leave every later
+    // shot without a place (#16's phone run: a clip probed at no length
+    // made the shares 0/0). A drawn shot - a card, an explainer - is made
+    // to its share, so it counts as one too, whatever its file's length.
+    let weights: Vec<f64> =
+        made.shots
+            .iter()
+            .enumerate()
+            .map(|(i, (_, source))| {
+                let drawn = scene.shots.get(i).is_some_and(|shot| {
+                    matches!(shot.kind, ShotKind::Motion | ShotKind::Explainer)
+                });
+                if drawn {
+                    even
+                } else {
+                    source.filter(|s| s.is_finite() && *s > 0.1).unwrap_or(even)
+                }
+            })
+            .collect();
+    let total: f64 = weights.iter().sum::<f64>().max(1e-9);
+    let mut slots = Vec::with_capacity(made.shots.len());
+    let mut at = 0.0;
+    for (i, weight) in weights.iter().enumerate() {
+        let slot = if i + 1 == weights.len() {
+            length - at
+        } else {
+            length * weight / total
+        };
+        slots.push((at, slot));
+        at += slot;
+    }
+    Timing {
+        from,
+        spoken,
+        length,
+        slots,
+    }
+}
+
 /// Every placement, in timeline order. `files` maps a scene id to what was
 /// made for it; `music` is a bed and its length.
 pub fn plan(
@@ -268,50 +354,16 @@ pub fn plan(
         if made.shots.is_empty() {
             return Err(format!("scene {} has no shots", scene.id));
         }
+        let timing = timing(scene, &made, options);
+        let (from, spoken, length) = (timing.from, timing.spoken, timing.length);
         let file_length = made
             .voice
             .as_ref()
             .map(|(_, seconds)| *seconds)
             .filter(|s| *s > 0.0);
-        // The silence a voice file opens and closes with is left out: the
-        // pause between paragraphs is the pad alone, the same every time.
-        let heard = match (made.words.first(), made.words.last()) {
-            (Some(first), Some(last)) => Some((first.start, last.end)),
-            _ => made.sounding,
-        };
-        let (from, spoken) = match (file_length, heard) {
-            (Some(file), Some((first, last))) if last > first => {
-                let from = (first - LEAD_IN).clamp(0.0, file);
-                let to = (last + TAIL).min(file);
-                (from, Some(to - from).filter(|s| *s > 0.0).or(Some(file)))
-            }
-            (file, _) => (0.0, file),
-        };
-        let length = match spoken {
-            Some(spoken) => (spoken + options.scene_pad).max(options.min_scene),
-            None => scene.seconds.max(options.min_scene),
-        };
-
-        // The scene's time shared over its shots in proportion to their own
-        // lengths, so a ten-second clip is not squeezed to match a four.
-        let even = length / made.shots.len() as f64;
-        // A length the probe could not read - none, nought, not a number
-        // - counts as an even share, so one odd file cannot leave every
-        // later shot without a place (#16's phone run: a clip probed at no
-        // length made the shares 0/0).
-        let weights: Vec<f64> = made
-            .shots
-            .iter()
-            .map(|(_, source)| source.filter(|s| s.is_finite() && *s > 0.1).unwrap_or(even))
-            .collect();
-        let total: f64 = weights.iter().sum();
         let mut at = t;
         for (i, (path, source)) in made.shots.iter().enumerate() {
-            let slot = if i + 1 == made.shots.len() {
-                t + length - at
-            } else {
-                length * weights[i] / total
-            };
+            let slot = timing.slots[i].1;
             out.push(Placement {
                 kind: Kind::Shot,
                 start: at,
