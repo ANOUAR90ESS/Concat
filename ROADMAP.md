@@ -297,7 +297,7 @@ The owner liked the voice but heard words said wrongly in Arabic, and the
 window stopped answering ("LongCut is not responding") the first time a
 new video was played, the title saying unsaved changes until it did.
 
-- 🚧 **Arabic read with its vowels.** A voice reading unvowelled Arabic
+- ✅ **Arabic read with its vowels.** A voice reading unvowelled Arabic
   guesses, and some words come out wrong. After each chapter's editor's
   pass the writer marks every word with its vowels (tashkeel, case
   endings, a sukun at the pause) for the voice, word for word; the
@@ -305,15 +305,43 @@ new video was played, the title saying unsaved changes until it did.
   the words are the same. A marked reading that changed a word is not
   used, nor one made for words edited since. A scene written again gets
   its marks too. The narration itself is written unmarked.
-- 🚧 **The window stuck after a cut.** Laying a generated video on the
+- ✅ **The window stuck after a cut.** Laying a generated video on the
   timeline ran the bookkeeping after every edit - the mix handed to
   playback, the monitor's frame, the art - over all the clips laid so
   far, hundreds of times, on the event loop; the autosave waited behind
   it. The cut is now one batch, its bookkeeping done once at the end.
-- 🚧 **A log line when the window stops answering.** A watchdog thread
+- ✅ **A log line when the window stops answering.** A watchdog thread
   notes when the event loop has not beaten for two seconds, with what the
   studio was handling, and how long the stall lasted: the next one, if
   any, is found from the shared log.
+
+All three shipped in alpha.24 (#32).
+
+## Animated cards (owner, 8 Nov)
+
+The owner asked whether Claude could make scenes and motion too. It
+writes, it does not paint: Replicate keeps making the pictures, and some
+content needs none - a figure, a comparison, dates, steps, a definition -
+where an animated card says it better, for nothing.
+
+- 🚧 **Stage 1: cards among the pictures.** A shot may be an animated card
+  (`ShotKind::Motion`, with a `Graphic`): a heading; a figure counting up;
+  two to four bars to their values; dates along a line; points one by
+  one; a quote and who said it - in the chapter's colour, in the
+  narration's language and script, laid out from the right for Arabic.
+  The writer chooses one where a picture would only decorate, at most one
+  shot in four, never the chapter's first. The job draws the card's
+  backdrop, a deep shade of its colour, and the cut lays its words and
+  plates as the edit's own text clips with keyframes, on lanes of their
+  own; nothing is asked of a model. In the script editor a card shows its
+  heading and its lines to edit. A scene with a card has no data card
+  over it.
+- 🚧 **Stage 5: cards only.** A Pictures choice in the Long video sheet:
+  pictures and cards, or cards only - every shot a card, a video for the
+  cost of its script and voice.
+- Later: more cards (a map with a route, a percentage ring, a before and
+  after), a card's colour and layout chosen in the script editor, and a
+  card turned into a picture or back from there.
 
 ## Done since alpha.14
 

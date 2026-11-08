@@ -230,6 +230,39 @@ pub fn draft(out: &Path, width: u32, height: u32, n: usize) -> Result<(), String
         .map_err(|error| format!("{}: {error}", out.display()))
 }
 
+/// An animated card's backdrop: a deep shade of `accent`, lighter at the
+/// middle where the words sit and darker to the corners, with a faint
+/// diagonal sheen - written as a PNG of the frame's size.
+pub fn backdrop(out: &Path, width: u32, height: u32, accent: [u8; 3]) -> Result<(), String> {
+    let accent = accent.map(f32::from);
+    let shade = |amount: f32| accent.map(|c| c * amount);
+    let (middle, edge) = (shade(0.42), shade(0.10));
+    let (cx, cy) = (width as f32 / 2.0, height as f32 / 2.0);
+    let reach = (cx * cx + cy * cy).sqrt();
+    let span = (width + height) as f32;
+    let mut pixels = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let (dx, dy) = (x as f32 - cx, y as f32 - cy);
+            let t = ((dx * dx + dy * dy).sqrt() / reach).min(1.0);
+            let t = t * t * (3.0 - 2.0 * t);
+            let sheen = 1.0 + 0.08 * (1.0 - (x + y) as f32 / span);
+            for channel in 0..3 {
+                let value = (middle[channel] + (edge[channel] - middle[channel]) * t) * sheen;
+                pixels.push(value.round().clamp(0.0, 255.0) as u8);
+            }
+        }
+    }
+    let file = std::fs::File::create(out).map_err(|error| format!("{}: {error}", out.display()))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .and_then(|mut writer| writer.write_image_data(&pixels))
+        .map_err(|error| format!("{}: {error}", out.display()))
+}
+
 /// HSL to 0..=255 channels.
 fn rgb(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
     let c = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;

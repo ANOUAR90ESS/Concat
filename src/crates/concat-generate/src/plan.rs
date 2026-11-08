@@ -24,7 +24,7 @@ use concat_project::Command;
 use concat_project::commands::{ClipMove, ClipPatch, NewMedia, TrimEdge};
 use concat_project::model::{KeyEase, KeyProperty, TextStyle, Transition, VideoSettings};
 
-use crate::storyboard::Storyboard;
+use crate::storyboard::{Graphic, ShotKind, Storyboard};
 
 /// The house style of the cut.
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +119,8 @@ pub enum Kind {
     Caption,
     /// A data card: a figure the scene turns on, drawn large.
     Card,
+    /// An animated card's words and plates, over its backdrop.
+    Graphic,
 }
 
 /// One clip to lay down.
@@ -139,6 +141,8 @@ pub struct Placement {
     pub from: f64,
     /// The words, for a title or a caption.
     pub text: Option<String>,
+    /// What an animated card shows.
+    pub graphic: Option<Graphic>,
 }
 
 /// A word of a narration, and when it is said in its file.
@@ -316,7 +320,27 @@ pub fn plan(
                 source: *source,
                 from: 0.0,
                 text: None,
+                graphic: None,
             });
+            // An animated card's words over its backdrop, for the shot's
+            // whole slot.
+            if let Some(graphic) = scene
+                .shots
+                .get(i)
+                .filter(|shot| shot.kind == ShotKind::Motion)
+                .and_then(|shot| shot.graphic.clone())
+            {
+                out.push(Placement {
+                    kind: Kind::Graphic,
+                    start: at,
+                    length: slot,
+                    file: None,
+                    source: None,
+                    from: 0.0,
+                    text: None,
+                    graphic: Some(graphic),
+                });
+            }
             at += slot;
         }
 
@@ -329,6 +353,7 @@ pub fn plan(
                 source: file_length,
                 from,
                 text: None,
+                graphic: None,
             });
         }
         // The captions run with the voice when there is one, and over the
@@ -353,6 +378,7 @@ pub fn plan(
                     source: None,
                     from: 0.0,
                     text: Some(card),
+                    graphic: None,
                 });
             }
         }
@@ -370,14 +396,17 @@ pub fn plan(
                 source: None,
                 from: 0.0,
                 text: Some(text.trim().to_owned()),
+                graphic: None,
             });
         }
         // A data card a moment into the scene, held while the point is
         // made: four seconds and a half at most, never past the scene.
+        // Not over a scene that has animated cards: they say it already.
+        let carded = scene.shots.iter().any(|shot| shot.kind == ShotKind::Motion);
         if let Some(card) = scene
             .card
             .as_ref()
-            .filter(|card| !card.figure.trim().is_empty())
+            .filter(|card| !carded && !card.figure.trim().is_empty())
         {
             let at = CARD_LEAD.min(length / 4.0);
             let text = match card.label.trim() {
@@ -392,6 +421,7 @@ pub fn plan(
                 source: None,
                 from: 0.0,
                 text: Some(text),
+                graphic: None,
             });
         }
         t += length;
@@ -408,6 +438,7 @@ pub fn plan(
                 source: Some(source),
                 from: 0.0,
                 text: None,
+                graphic: None,
             });
             at += source;
         }
@@ -513,6 +544,7 @@ pub fn thumbnail(
         source: None,
         from: 0.0,
         text: None,
+        graphic: None,
     };
     fit(editor, &clip, &media, &lane, &place, cover(picture, frame));
     if !words.trim().is_empty() {
@@ -582,7 +614,7 @@ pub fn cut(
             Kind::Shot => lanes[0].clone(),
             Kind::Voice => lanes[1].clone(),
             Kind::Music => lanes[2].clone(),
-            Kind::Title | Kind::Caption | Kind::Card => lanes[3].clone(),
+            Kind::Title | Kind::Caption | Kind::Card | Kind::Graphic => lanes[3].clone(),
         }
     };
 
@@ -611,6 +643,7 @@ pub fn cut(
         Kind::Voice,
         Kind::Music,
         Kind::Title,
+        Kind::Graphic,
         Kind::Card,
         Kind::Caption,
     ];
@@ -618,6 +651,7 @@ pub fn cut(
     let last_music = placements.iter().rposition(|p| p.kind == Kind::Music);
     let mut captions: Option<String> = None;
     let mut figures: Option<String> = None;
+    let mut graphic_lanes = crate::motion::Lanes::default();
     let mut cards = 0usize;
     let mut left_out = Vec::new();
     for kind in order {
@@ -712,6 +746,20 @@ pub fn cut(
                         duration: Some(p.length),
                         offset_y: Some(-0.3),
                     });
+                }
+                // On lanes of their own over the pictures, under the
+                // captions, which are laid after.
+                Kind::Graphic => {
+                    if let Some(graphic) = &p.graphic {
+                        crate::motion::lay(
+                            editor,
+                            &mut graphic_lanes,
+                            graphic,
+                            p.start,
+                            p.length,
+                            (width, height),
+                        );
+                    }
                 }
                 // On a lane of their own, under the captions: a card and
                 // the words being said can be on screen together.
@@ -1163,6 +1211,75 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+        }
+    }
+
+    /// An animated card is laid over its backdrop on lanes of its own,
+    /// which survive the lanes the cut takes away; a scene with one has no
+    /// data card over it.
+    #[test]
+    fn an_animated_card_is_laid_over_its_backdrop() {
+        use crate::storyboard::{Graphic, GraphicItem, GraphicKind};
+        let mut board = board();
+        let scene = &mut board.chapters[0].scenes[0];
+        scene.card = Some(crate::storyboard::Card {
+            figure: "1969".into(),
+            label: "the landing".into(),
+        });
+        scene.shots[1].kind = ShotKind::Motion;
+        scene.shots[1].graphic = Some(Graphic {
+            kind: GraphicKind::Number,
+            title: "Stones".into(),
+            items: vec![GraphicItem {
+                label: "blocks".into(),
+                value: "2,300,000".into(),
+            }],
+            accent: "#C08A2E".into(),
+        });
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().voice = None;
+        let options = Options {
+            titles: false,
+            captions: false,
+            ..Options::default()
+        };
+        let placements = plan(&board, &files, &options, None).unwrap();
+        let graphics = of(&placements, Kind::Graphic);
+        assert_eq!(graphics.len(), 1);
+        let backdrop = of(&placements, Kind::Shot)[1];
+        assert_eq!(
+            (graphics[0].start, graphics[0].length),
+            (backdrop.start, backdrop.length)
+        );
+        assert!(of(&placements, Kind::Card).is_empty());
+
+        let media = HashMap::from([
+            (
+                "/a.mp4".to_owned(),
+                probed("/a.mp4", MediaKind::Video, Some(4.0)),
+            ),
+            (
+                "/b.mp4".to_owned(),
+                probed("/b.mp4", MediaKind::Video, Some(6.0)),
+            ),
+            (
+                "/c.png".to_owned(),
+                probed("/c.png", MediaKind::Image, None),
+            ),
+        ]);
+        let mut editor = Bare(Editor::default());
+        cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        let active = editor.0.project().active();
+        let words: Vec<_> = active
+            .clips
+            .iter()
+            .filter_map(|clip| clip.text.as_ref().map(|text| text.content.clone()))
+            .collect();
+        assert!(words.iter().any(|w| w == "2,300,000"), "{words:?}");
+        assert!(words.iter().any(|w| w == "blocks"));
+        // Every lane holds something: none the cut emptied had a card on it.
+        for track in &active.tracks {
+            assert!(active.clips.iter().any(|c| c.track_id == track.id));
         }
     }
 

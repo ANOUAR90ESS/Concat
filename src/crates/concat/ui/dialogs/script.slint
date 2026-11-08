@@ -36,6 +36,9 @@ export struct ScriptRow {
     extra: string,
     /// A shot made as a clip.
     video: bool,
+    /// A shot that is an animated card the app draws: its text is the
+    /// card's heading, its detail the card's lines.
+    card: bool,
     /// A shot whose picture reads as one already used.
     repeat: bool,
     /// A shot whose picture came out too like the shot's before it.
@@ -272,7 +275,14 @@ export component ScriptDialog inherits Modal {
                         font-size: Theme.fs-sm;
                         vertical-alignment: center;
                     }
-                    SegmentedControl {
+                    if row.card: Text {
+                        text: I18n.t("script.card");
+                        color: Theme.accent;
+                        font-size: Theme.fs-sm;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    if !row.card: SegmentedControl {
                         width: 170px;
                         options: [I18n.t("script.image"), I18n.t("script.video")];
                         current: row.video ? 1 : 0;
@@ -308,8 +318,13 @@ export component ScriptDialog inherits Modal {
                 }
                 if row.kind == 2: Paragraph {
                     value: row.text;
-                    placeholder: I18n.t("script.picture");
+                    placeholder: row.card ? I18n.t("script.cardHeading") : I18n.t("script.picture");
                     edited(text) => { root.edited(row.chapter, row.scene, row.shot, 0, text); }
+                }
+                if row.kind == 2 && row.card: Paragraph {
+                    value: row.detail;
+                    placeholder: I18n.t("script.cardLines");
+                    edited(text) => { root.edited(row.chapter, row.scene, row.shot, 1, text); }
                 }
                 if row.kind == 2 && row.video: HorizontalLayout {
                     spacing: 8px;

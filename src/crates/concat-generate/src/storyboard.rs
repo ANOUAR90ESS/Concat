@@ -185,6 +185,106 @@ pub struct Shot {
     pub motion: String,
     /// How long the shot was planned to hold; 0 shares the scene evenly.
     pub seconds: f64,
+    /// For a motion card, what it shows: drawn and moved by the app, not
+    /// made by a model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graphic: Option<Graphic>,
+}
+
+impl Shot {
+    /// A card with nothing to draw made a still of its prompt, and a still
+    /// or clip given a card keeps it only as a card.
+    pub fn settle(&mut self) {
+        let card = self
+            .graphic
+            .as_ref()
+            .is_some_and(|graphic| !graphic.is_empty());
+        if self.kind == ShotKind::Motion && !card {
+            self.kind = ShotKind::Image;
+            self.graphic = None;
+        } else if self.kind != ShotKind::Motion {
+            self.graphic = None;
+        }
+    }
+
+    /// Whether the shot has what it is made from: a prompt for a model, or
+    /// a card to draw.
+    pub fn is_whole(&self) -> bool {
+        match self.kind {
+            ShotKind::Motion => self.graphic.as_ref().is_some_and(|g| !g.is_empty()),
+            _ => !self.prompt.trim().is_empty(),
+        }
+    }
+}
+
+/// An animated card: words, figures and bars the app draws over a backdrop
+/// in the chapter's colour, for what needs no picture - a number, a
+/// comparison, dates, a list, a definition.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Graphic {
+    /// Which card.
+    pub kind: GraphicKind,
+    /// Its heading, in the narration's language; for a quote, the quote.
+    pub title: String,
+    /// What it lists: one figure, two to four things compared, dates, or
+    /// points, each a label with a value.
+    pub items: Vec<GraphicItem>,
+    /// The card's colour, `#rrggbb`; the backdrop is a deep shade of it.
+    pub accent: String,
+}
+
+/// A card's colour when it names none: a calm blue.
+pub const DEFAULT_ACCENT: [u8; 3] = [0x3B, 0x82, 0xF6];
+
+/// One line of a card: what it is, and its figure or date.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GraphicItem {
+    /// In the narration's language.
+    pub label: String,
+    /// "4,500", "1969", "38%"; empty for a point in a list.
+    pub value: String,
+}
+
+/// The cards there are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GraphicKind {
+    /// A heading, large, with a line under it.
+    #[default]
+    Title,
+    /// One figure counting up to its value, its label under it.
+    Number,
+    /// Two to four things side by side, as bars to their values.
+    Compare,
+    /// Dates along a line, one after another.
+    Timeline,
+    /// Points that come up one by one.
+    List,
+    /// A quote or a definition, and who said it.
+    Quote,
+}
+
+impl Graphic {
+    /// The accent as channels, or [`DEFAULT_ACCENT`] for one that is not a
+    /// colour.
+    pub fn rgb(&self) -> [u8; 3] {
+        let hex = self.accent.trim().trim_start_matches('#');
+        let channel = |i: usize| {
+            hex.get(i..i + 2)
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+        };
+        match (hex.len(), channel(0), channel(2), channel(4)) {
+            (6, Some(r), Some(g), Some(b)) => [r, g, b],
+            _ => DEFAULT_ACCENT,
+        }
+    }
+
+    /// Whether there is something to draw.
+    pub fn is_empty(&self) -> bool {
+        self.title.trim().is_empty() && self.items.iter().all(|item| item.label.trim().is_empty())
+    }
 }
 
 /// What a shot is made as.
@@ -196,6 +296,8 @@ pub enum ShotKind {
     Image,
     /// A clip.
     Video,
+    /// An animated card the app draws: no model, no cost.
+    Motion,
 }
 
 impl Storyboard {
@@ -233,7 +335,10 @@ impl Storyboard {
                 if !seen.insert(scene.id.clone()) {
                     return Err(format!("scene {} is named twice", scene.id));
                 }
-                scene.shots.retain(|shot| !shot.prompt.trim().is_empty());
+                for shot in &mut scene.shots {
+                    shot.settle();
+                }
+                scene.shots.retain(Shot::is_whole);
                 if scene.shots.is_empty() {
                     return Err(format!("scene {} has no shots", scene.id));
                 }
@@ -274,14 +379,24 @@ impl Storyboard {
             .unwrap_or((1920, 1080))
     }
 
-    /// How many shots are clips, and how many stills.
+    /// How many shots are clips, and how many stills; animated cards are
+    /// neither.
     pub fn kinds(&self) -> (usize, usize) {
-        let clips = self
-            .scenes()
+        let count = |kind: ShotKind| {
+            self.scenes()
+                .flat_map(|scene| scene.shots.iter())
+                .filter(|shot| shot.kind == kind)
+                .count()
+        };
+        (count(ShotKind::Video), count(ShotKind::Image))
+    }
+
+    /// How many shots are animated cards.
+    pub fn motion_count(&self) -> usize {
+        self.scenes()
             .flat_map(|scene| scene.shots.iter())
-            .filter(|shot| shot.kind == ShotKind::Video)
-            .count();
-        (clips, self.shot_count() - clips)
+            .filter(|shot| shot.kind == ShotKind::Motion)
+            .count()
     }
 
     /// How many words the narration has, all told.
@@ -326,6 +441,8 @@ impl Storyboard {
                     .shots
                     .iter()
                     .enumerate()
+                    // A card is drawn, not a picture a model could repeat.
+                    .filter(|(_, shot)| shot.kind != ShotKind::Motion)
                     .map(|(n, shot)| (shot_stem(&scene.id, n), content_words(&shot.prompt)))
             })
             .collect();
@@ -366,6 +483,9 @@ impl Storyboard {
                         }
                         ShotKind::Video => {
                             format!("- `{stem}` video: {}\n", self.video_prompt(chapter, shot))
+                        }
+                        ShotKind::Motion => {
+                            format!("- `{stem}` animated card, drawn by the app\n")
                         }
                     };
                 }

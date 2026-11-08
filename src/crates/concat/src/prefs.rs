@@ -154,6 +154,9 @@ pub struct GeneratePrefs {
     pub level: Option<usize>,
     /// Read up on the web before writing; on unless turned off.
     pub research: Option<bool>,
+    /// What the pictures are: 0 pictures and animated cards, 1 animated
+    /// cards only, none made by a model.
+    pub visuals: usize,
     /// The channel the videos are for, told once and given to the writer
     /// every time: its name, who watches it, how it sounds, the line it
     /// opens with and the one it closes with, and a script it likes.

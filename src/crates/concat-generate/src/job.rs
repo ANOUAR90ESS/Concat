@@ -26,7 +26,7 @@ use concat_project::model::MediaKind;
 use crate::cost::{Prices, Spend};
 use crate::plan::{SceneFiles, Word};
 use crate::providers::{self, ModelInputs, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
-use crate::storyboard::{Chapter, Shot, ShotKind, Storyboard, shot_stem};
+use crate::storyboard::{Chapter, DEFAULT_ACCENT, Graphic, Shot, ShotKind, Storyboard, shot_stem};
 use crate::writer::Publishing;
 
 /// One video's folder.
@@ -652,6 +652,24 @@ impl Job {
                     });
                     continue;
                 }
+                // An animated card: its backdrop drawn here, whatever makes
+                // the pictures - no model, no cost; the cut draws the rest.
+                if shot.kind == ShotKind::Motion {
+                    let accent = shot.graphic.as_ref().map_or(DEFAULT_ACCENT, Graphic::rgb);
+                    providers::backdrop(
+                        &shots_dir.join(format!("{stem}.png")),
+                        width,
+                        height,
+                        accent,
+                    )?;
+                    progress(Step::Made {
+                        n,
+                        of: total,
+                        picture: self.picture(&stem),
+                        spent: spend.spent(),
+                    });
+                    continue;
+                }
                 let seconds = shot_seconds(scene, shot);
                 match shots {
                     Shots::Folder => missing.push(stem.clone()),
@@ -1254,6 +1272,13 @@ impl Job {
         let take = format!("{stem}-{number}");
         let dir = self.takes_dir();
         std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        if shot.kind == ShotKind::Motion {
+            let (width, height) = board.frame();
+            let accent = shot.graphic.as_ref().map_or(DEFAULT_ACCENT, Graphic::rgb);
+            providers::backdrop(&dir.join(format!("{take}.png")), width, height, accent)?;
+            return Ok(providers::existing(&dir, &take, &SHOT_EXTENSIONS)
+                .ok_or_else(|| format!("{take} was not saved")));
+        }
         match shots {
             Shots::Folder => {
                 return Ok(Err(format!(

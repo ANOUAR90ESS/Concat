@@ -140,7 +140,7 @@ pub fn budget(pacing: &Pacing) -> Budget {
                     // is: a clip its clip's length, a still its hold.
                     let weight = |kind: &ShotKind| match kind {
                         ShotKind::Video => pacing.clip_seconds,
-                        ShotKind::Image => pacing.still_seconds,
+                        ShotKind::Image | ShotKind::Motion => pacing.still_seconds,
                     };
                     let weights: f64 = kinds.iter().map(weight).sum();
                     ScenePlan {
@@ -176,7 +176,7 @@ impl Budget {
             for (kind, _) in &scene.shots {
                 match kind {
                     ShotKind::Video => totals.clips += 1,
-                    ShotKind::Image => totals.stills += 1,
+                    ShotKind::Image | ShotKind::Motion => totals.stills += 1,
                 }
             }
         }
@@ -195,6 +195,7 @@ impl ScenePlan {
                 let kind = match kind {
                     ShotKind::Video => "video",
                     ShotKind::Image => "image",
+                    ShotKind::Motion => "card",
                 };
                 format!("{kind} {seconds:.1} s")
             })

@@ -31,6 +31,7 @@
 pub mod budget;
 pub mod cost;
 pub mod job;
+pub mod motion;
 pub mod plan;
 pub mod providers;
 pub mod shorts;

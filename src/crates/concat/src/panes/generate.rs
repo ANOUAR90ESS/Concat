@@ -362,6 +362,12 @@ impl GeneratePane {
                     7 => prefs.caption_look = index.min(1),
                     8 => prefs.content_style = index.min(ContentStyle::ALL.len() - 1),
                     10 => prefs.level = Some(index.min(Level::ALL.len() - 1)),
+                    11 => {
+                        prefs.visuals = index.min(1);
+                        studio.prefs.save(&studio.host.dirs);
+                        self.tally(studio);
+                        return;
+                    }
                     9 => {
                         let professional = index == 1;
                         prefs.replicate_image_model = if professional {
@@ -877,6 +883,17 @@ impl GeneratePane {
             let Some((stem, found)) = self.shot_mut(chapter, scene, shot) else {
                 return;
             };
+            // A card's words are drawn by the cut from the script as it
+            // stands: nothing to make again.
+            if let (ShotKind::Motion, Some(graphic)) = (found.kind, found.graphic.as_mut()) {
+                match field {
+                    0 => graphic.title = text,
+                    1 => graphic.items = read_card_lines(&text),
+                    _ => return,
+                }
+                self.dirty = true;
+                return;
+            }
             match field {
                 0 => found.prompt = text,
                 1 => found.motion = text,
@@ -953,6 +970,7 @@ impl GeneratePane {
             level: Level::ALL[level_row(prefs)],
             channel: channel_profile(prefs),
             research: prefs.research.unwrap_or(true),
+            cards_only: prefs.visuals == 1,
         }
     }
 
@@ -983,9 +1001,9 @@ impl GeneratePane {
             true,
             self.voice_row(studio) == 2,
         );
-        // Shots from Replicate are paid for; draft cards and shots made by
-        // hand are not.
-        if prefs.shots != 1 {
+        // Shots from Replicate are paid for; draft cards, shots made by
+        // hand and animated cards are not.
+        if prefs.shots != 1 || (self.board.is_none() && prefs.visuals == 1) {
             estimate.stills = 0.0;
             estimate.clips = 0.0;
         }
@@ -1737,6 +1755,7 @@ impl GeneratePane {
             content_style: prefs.content_style as i32,
             level: level_row(prefs) as i32,
             research: prefs.research.unwrap_or(true),
+            visuals: prefs.visuals.min(1) as i32,
             picture_quality: i32::from(
                 prefs.replicate_image_model.trim() == PROFESSIONAL_IMAGE_MODEL,
             ),
@@ -1894,9 +1913,20 @@ impl GeneratePane {
                             shot.seconds
                         )
                         .into(),
-                        text: shot.prompt.as_str().into(),
-                        detail: shot.motion.as_str().into(),
+                        text: match &shot.graphic {
+                            Some(graphic) if shot.kind == ShotKind::Motion => {
+                                graphic.title.as_str().into()
+                            }
+                            _ => shot.prompt.as_str().into(),
+                        },
+                        detail: match &shot.graphic {
+                            Some(graphic) if shot.kind == ShotKind::Motion => {
+                                card_lines(graphic).into()
+                            }
+                            _ => shot.motion.as_str().into(),
+                        },
                         video: shot.kind == ShotKind::Video,
+                        card: shot.kind == ShotKind::Motion,
                         repeat: self.repeats.contains(&stem),
                         lookalike: self.lookalikes.contains(&stem),
                         has_thumb: self.thumbs.contains_key(&stem),
@@ -1907,6 +1937,7 @@ impl GeneratePane {
                             let cost = match shot.kind {
                                 ShotKind::Video => prices.clip + prices.still,
                                 ShotKind::Image => prices.still,
+                                ShotKind::Motion => 0.0,
                             };
                             format!("~${}", dollars(cost)).into()
                         } else {
@@ -2222,6 +2253,38 @@ fn channel_profile(prefs: &crate::prefs::GeneratePrefs) -> String {
     .map(|(label, value)| format!("{label}: {}", value.trim()))
     .collect::<Vec<_>>()
     .join("\n")
+}
+
+/// A card's lines as the script editor shows them: one a line, what it
+/// is and its figure after a dash.
+fn card_lines(graphic: &concat_generate::storyboard::Graphic) -> String {
+    graphic
+        .items
+        .iter()
+        .map(|item| match item.value.trim() {
+            "" => item.label.trim().to_owned(),
+            value => format!("{} — {value}", item.label.trim()),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The card's lines read back from the script editor.
+fn read_card_lines(text: &str) -> Vec<concat_generate::storyboard::GraphicItem> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let (label, value) = line
+                .rsplit_once('—')
+                .or_else(|| line.rsplit_once(" - "))
+                .unwrap_or((line, ""));
+            concat_generate::storyboard::GraphicItem {
+                label: label.trim().to_owned(),
+                value: value.trim().to_owned(),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

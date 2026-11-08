@@ -52,6 +52,8 @@ export struct GenerateSheetData {
     level: int,
     /// Read up on the web before writing.
     research: bool,
+    /// 0 pictures and animated cards, 1 animated cards only.
+    visuals: int,
     /// 0 economical pictures, 1 professional.
     picture-quality: int,
     channel-name: string,
@@ -220,7 +222,7 @@ export component GenerateDialog inherits Modal {
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
     /// 5 music, 6 clips, 7 caption look, 8 content style, 9 picture quality,
-    /// 10 audience level.
+    /// 10 audience level, 11 visuals (pictures and cards, or cards only).
     callback choice-changed(field: int, index: int);
     /// Which switch: 0 captions, 1 titles, 2 export when done, 3 research
     /// on the web.
@@ -514,6 +516,25 @@ export component GenerateDialog inherits Modal {
 
                     DialogSection {
                         title: I18n.t("generate.shots");
+
+                        // Animated cards - figures, comparisons, dates,
+                        // points - drawn by the app, among the pictures
+                        // or instead of them.
+                        DialogRow {
+                            label: I18n.t("generate.visuals");
+                            SegmentedControl {
+                                options: [I18n.t("generate.visualsMixed"), I18n.t("generate.visualsCards")];
+                                current: root.data.visuals;
+                                changed(index) => { root.choice-changed(11, index); }
+                            }
+                        }
+
+                        Text {
+                            text: root.data.visuals == 1 ? I18n.t("generate.visualsCardsHint") : I18n.t("generate.visualsMixedHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
 
                         DialogRow {
                             label: I18n.t("generate.source");
