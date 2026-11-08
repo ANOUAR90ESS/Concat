@@ -23,7 +23,9 @@
 use serde_json::{Value, json};
 
 use crate::budget::{self, ChapterPlan, Pacing, ScenePlan};
-use crate::storyboard::{Chapter, Scene, ShotKind, Storyboard, Style, shot_stem};
+use crate::storyboard::{
+    Chapter, Reading, Scene, ShotKind, Storyboard, Style, shot_stem, without_marks,
+};
 
 /// The Messages API.
 const API: &str = "https://api.anthropic.com/v1/messages";
@@ -67,8 +69,8 @@ say again what an earlier chapter said. Facts are exact or not given: no invente
 quotes or names.
 
 In Arabic, write clear Modern Standard Arabic as a good narrator speaks it - natural, never \
-stiff - unless the producer asks for a dialect; put the vowel marks only on words a voice \
-would otherwise misread. In every language, write numbers the way they are said, and keep a \
+stiff - unless the producer asks for a dialect; write it without vowel marks, which are added \
+for the voice afterwards. In every language, write numbers the way they are said, and keep a \
 sentence under twenty words so it can be said in one breath.
 
 Every scene has three parts. The narration, in the video's language. The voice: one short line \
@@ -402,9 +404,94 @@ pub fn write(
                 apply_revisions(&mut board, &revised);
             }
         }
+
+        // The words as the voice is to read them, last, once they are
+        // final: a voice reading Arabic without its vowels guesses, and
+        // guesses some words wrong.
+        if needs_marks(&brief.language) {
+            match ask(&reading_tool(), reading_prompt(&board.chapters[i].scenes)) {
+                Ok(read) => apply_readings(&mut board.chapters[i].scenes, &read),
+                Err(error) => log::warn!("chapter {}: the vowel marks failed: {error}", i + 1),
+            }
+        }
     }
     board.tidy()?;
     Ok(board)
+}
+
+/// Whether a voice reads `language` better with its words marked: Arabic,
+/// whose short vowels are not written.
+pub fn needs_marks(language: &str) -> bool {
+    let language = language.trim().to_lowercase();
+    language == "ar" || language.starts_with("ar-") || language.contains("arab")
+}
+
+/// Asks for each scene's narration back, word for word, with its marks.
+fn reading_prompt(scenes: &[Scene]) -> String {
+    let lines: String = scenes
+        .iter()
+        .enumerate()
+        .map(|(n, scene)| format!("{}. {}\n", n + 1, scene.narration.trim()))
+        .collect();
+    format!(
+        "This is narration a voice will read aloud, scene by scene:\n{lines}\n\
+         Write each scene back with full Arabic vowel marks (tashkeel) on every word, as a \
+         careful narrator of Modern Standard Arabic says it: the right short vowels, shadda, \
+         sukun, tanwin and hamza, and the case endings a narrator voices, with a sukun where \
+         the voice pauses at the end of a sentence. Mark names and borrowed words the way \
+         they are said in Arabic. Keep every word and every punctuation mark as it is, in \
+         order: change no letter, add, drop, join or split no word, and leave numbers in \
+         digits as they are. Return all {} scenes, in order.",
+        scenes.len()
+    )
+}
+
+/// The marked narration put in place, scene for scene, where it is the
+/// same words: a reading that changed them would say what the captions
+/// do not, and they are timed to it word for word.
+fn apply_readings(scenes: &mut [Scene], read: &Value) {
+    let Some(lines) = read["readings"].as_array() else {
+        return;
+    };
+    if lines.len() != scenes.len() {
+        log::warn!(
+            "the vowel marks came back for {} scenes of {}; the words are read as written",
+            lines.len(),
+            scenes.len()
+        );
+        return;
+    }
+    for (scene, line) in scenes.iter_mut().zip(lines) {
+        let line = text(line);
+        if same_words(&scene.narration, &line) {
+            scene.reading = Some(Reading {
+                text: line.trim().to_owned(),
+                of: scene.narration.trim().to_owned(),
+            });
+        } else {
+            log::warn!(
+                "scene {}: its marked words differ; read as written",
+                scene.id
+            );
+        }
+    }
+}
+
+/// Whether `marked` is `plain` with marks: as many words, nearly all the
+/// same letters once the marks are taken off (a hamza seated differently
+/// is not worth losing a scene's marks over).
+fn same_words(plain: &str, marked: &str) -> bool {
+    let plain: Vec<&str> = plain.split_whitespace().collect();
+    let marked: Vec<String> = marked.split_whitespace().map(without_marks).collect();
+    if plain.is_empty() || plain.len() != marked.len() {
+        return false;
+    }
+    let same = plain
+        .iter()
+        .zip(&marked)
+        .filter(|(a, b)| without_marks(a) == **b)
+        .count();
+    same * 10 >= plain.len() * 9
 }
 
 /// What the writer read up on before writing: its notes, and the pages
@@ -571,8 +658,17 @@ pub fn rewrite_scene(
     let mut new: Scene = serde_json::from_value(got.clone())
         .map_err(|error| format!("the rewritten scene: {error}"))?;
     new.id = old.id.clone();
+    new.reading = None;
     if keep_narration {
         new.narration = old.narration.clone();
+        new.reading = old.reading.clone();
+    } else if needs_marks(&brief.language) {
+        let scenes = std::slice::from_mut(&mut new);
+        match crate::providers::retry(|| call(key, model, &reading_tool(), &reading_prompt(scenes)))
+        {
+            Ok(read) => apply_readings(scenes, &read),
+            Err(error) => log::warn!("the vowel marks failed: {error}"),
+        }
     }
     conform(
         vec![new],
@@ -1578,6 +1674,20 @@ fn edit_tool() -> Value {
     })
 }
 
+fn reading_tool() -> Value {
+    json!({
+        "name": "reading",
+        "description": "Each scene's narration with its vowel marks, one entry per scene in order.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "readings": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["readings"]
+        }
+    })
+}
+
 fn scenes_tool() -> Value {
     json!({
         "name": "scenes",
@@ -1842,6 +1952,39 @@ mod tests {
             "chapters": [{"title": "One"}]
         });
         assert!(missing(&tool, &good).is_empty());
+    }
+
+    /// Arabic narration is given its marks for the voice where the marked
+    /// words are the same words; a reading that changed them is not used.
+    #[test]
+    fn arabic_is_read_with_its_marks_when_the_words_are_kept() {
+        assert!(needs_marks("Arabic"));
+        assert!(needs_marks("ar"));
+        assert!(!needs_marks("English"));
+        let mut scenes = vec![
+            Scene {
+                id: "c01s01".into(),
+                narration: "ذهب الولد إلى المدرسة".into(),
+                ..Scene::default()
+            },
+            Scene {
+                id: "c01s02".into(),
+                narration: "كتب الدرس".into(),
+                ..Scene::default()
+            },
+        ];
+        let read = json!({"readings": [
+            "ذَهَبَ الوَلَدُ إِلَى المَدْرَسَةِ",
+            "كَتَبَ الطالبُ الدَّرْسَ"
+        ]});
+        apply_readings(&mut scenes, &read);
+        assert_eq!(scenes[0].spoken(), "ذَهَبَ الوَلَدُ إِلَى المَدْرَسَةِ");
+        // A word added: read as written.
+        assert_eq!(scenes[1].reading, None);
+        assert_eq!(scenes[1].spoken(), "كتب الدرس");
+        // Edited after: the old marks are not read.
+        scenes[0].narration = "ذهب الولد".into();
+        assert_eq!(scenes[0].spoken(), "ذهب الولد");
     }
 
     /// Every call is told what kind of video it writes.

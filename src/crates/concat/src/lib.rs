@@ -58,6 +58,7 @@ mod runs;
 mod source;
 mod studio;
 mod sysinfo;
+mod watchdog;
 /// Native Wayland file drops, which winit does not report; see the module.
 #[cfg(target_os = "linux")]
 mod wayland_drop;
@@ -286,6 +287,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         models: Models::new(),
     });
     Shell::install(shell.clone());
+    // Kept for the window's life: when the event loop stops answering,
+    // the log says so and what it was doing.
+    let _watchdog = watchdog::start();
 
     // The machine's fonts, for the Text inspector's picker. Read on a
     // worker: on a machine with a few thousand faces it is a moment, and

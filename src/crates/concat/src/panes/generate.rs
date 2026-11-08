@@ -1591,8 +1591,11 @@ impl GeneratePane {
                 return;
             }
         };
-        let mut editing = Session(studio);
-        match plan::cut(&mut editing, board, &placements, &media, &options) {
+        // One batch: the bookkeeping after each of the cut's clips is done
+        // once, at the end.
+        let laid = studio
+            .batch(|studio| plan::cut(&mut Session(studio), board, &placements, &media, &options));
+        match laid {
             Ok((_, left_out)) => {
                 self.open = false;
                 let minutes = plan::total_length(&placements) / 60.0;

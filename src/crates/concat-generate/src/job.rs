@@ -508,7 +508,7 @@ impl Job {
                 .collect();
             let around = |n: Option<usize>| {
                 n.and_then(|n| spoken.get(n))
-                    .map_or("", |scene| scene.narration.trim())
+                    .map_or("", |scene| scene.spoken())
             };
             for lines in todo.chunks(VOICES_AT_ONCE) {
                 if stop() {
@@ -529,7 +529,9 @@ impl Job {
                                 (&spend, &voice_dir, &around, &spoken);
                             scope.spawn(move || {
                                 let scene = spoken[i];
-                                let text = scene.narration.trim();
+                                // Marked for the voice where it was: the
+                                // captions keep the words as written.
+                                let text = scene.spoken();
                                 let cost =
                                     text.chars().count() as f64 / 1000.0 * prices.voice_per_1k;
                                 let words = spend.take(cost).and_then(|()| {
@@ -576,7 +578,7 @@ impl Job {
                     of: spoken.len(),
                     text: scene.narration.trim().to_owned(),
                 });
-                let made = speak(scene.narration.trim())?;
+                let made = speak(scene.spoken())?;
                 let extension = made.extension().and_then(|e| e.to_str()).unwrap_or("wav");
                 let out = voice_dir.join(format!("{}.{extension}", scene.id));
                 std::fs::copy(&made, &out)
