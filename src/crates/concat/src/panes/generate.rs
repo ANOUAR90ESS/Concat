@@ -28,7 +28,7 @@ use concat_generate::review;
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{
-    self, Brief, ContentStyle, Level, PictureStyle, Publishing, Suggestion, Writing,
+    self, Brief, ContentStyle, Level, PictureStyle, Publishing, Suggestion, VideoIdea, Writing,
 };
 use concat_project::Command;
 use concat_project::commands::NewMedia;
@@ -136,6 +136,19 @@ pub enum GenerateMsg {
     Short,
     /// The Short's storyboard and the files it is cut from, or why not.
     ShortReady(Box<Result<(Storyboard, Made), String>>),
+    /// One of the sheet's buttons: 0 suggest ideas, 1 make every idea,
+    /// 2 make the video again in another language, 3 save the choices as
+    /// a series, 4 cut several Shorts.
+    Act(i32),
+    /// The writer's ideas, or why there are none.
+    Ideas(Box<Result<Vec<VideoIdea>, String>>),
+    /// The next idea of a batch is due, once nothing is running.
+    Next,
+    /// The video translated: its new idea, its storyboard and its
+    /// language's row, or why not.
+    Translated(Box<Result<(String, Storyboard, usize), String>>),
+    /// Several Shorts' storyboards and files, or why not.
+    ShortsReady(Box<Result<Vec<(Storyboard, Made)>, String>>),
     /// The writer is done; and whether making follows.
     Written(Box<Result<Storyboard, String>>, bool),
     /// The providers are done, and the files probed.
@@ -177,6 +190,21 @@ pub struct GeneratePane {
     /// The shots that failed have been made again once this run: a second
     /// failure is said, not tried a third time.
     mended: bool,
+    /// What the video is made from, when it is made from something: a
+    /// page's address or a file's path.
+    source: String,
+    /// The writer's ideas for the next videos.
+    ideas: Vec<VideoIdea>,
+    /// The ideas still to make, in a batch; the one being made is not
+    /// among them.
+    queue: Vec<String>,
+    /// When the last run ended: the next of a batch waits a moment after
+    /// it, for its export to start.
+    ended: Option<std::time::Instant>,
+    /// Row of the language the video is made again in.
+    also_language: usize,
+    /// Cuts are not exported one after another: several Shorts at once.
+    hold_export: bool,
     /// What the step under way is making, in the script's words.
     detail: String,
     /// The last shot made, to show while the next is.
@@ -248,6 +276,12 @@ impl Default for GeneratePane {
             phase: 0,
             voiced: false,
             mended: false,
+            source: String::new(),
+            ideas: Vec::new(),
+            queue: Vec::new(),
+            ended: None,
+            also_language: 1,
+            hold_export: false,
             detail: String::new(),
             preview: None,
             counts: String::new(),
@@ -349,6 +383,10 @@ impl GeneratePane {
                     16 => prefs.channel_example = text,
                     17 => prefs.pronunciation = text,
                     18 => prefs.brand_color = text,
+                    19 => {
+                        self.source = text;
+                        return;
+                    }
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -379,6 +417,28 @@ impl GeneratePane {
                     8 => prefs.content_style = index.min(ContentStyle::ALL.len() - 1),
                     12 => prefs.pictures = index.min(PictureStyle::ALL.len() - 1),
                     13 => prefs.elevenlabs_model = index.min(1),
+                    16 => {
+                        // The idea picked becomes the video's.
+                        if let Some(idea) = index.checked_sub(1).and_then(|row| self.ideas.get(row))
+                        {
+                            self.topic = idea.title.clone();
+                            self.look(studio);
+                        }
+                        return;
+                    }
+                    17 => {
+                        self.also_language = index.min(LANGUAGES.len() - 1);
+                        return;
+                    }
+                    18 => {
+                        if let Some(row) = index.checked_sub(1)
+                            && studio.prefs.generate.apply_template(row)
+                        {
+                            studio.prefs.save(&studio.host.dirs);
+                            self.tally(studio);
+                        }
+                        return;
+                    }
                     14 => {
                         let picked = index
                             .checked_sub(1)
@@ -550,6 +610,68 @@ impl GeneratePane {
                     Err(error) => self.failed(error),
                 }
             }
+            GenerateMsg::Act(kind) => match kind {
+                0 => self.suggest_ideas(studio),
+                1 => {
+                    self.queue = self.ideas.iter().map(|idea| idea.title.clone()).collect();
+                    self.next(studio);
+                }
+                2 => self.translate(studio),
+                3 => {
+                    let prefs = &mut studio.prefs.generate;
+                    let name = match (prefs.channel_name.trim(), self.topic.trim()) {
+                        ("", "") => format!("{}", prefs.templates.len() + 1),
+                        ("", topic) => topic.to_owned(),
+                        (channel, _) => channel.to_owned(),
+                    };
+                    let template = prefs.as_template(&name);
+                    prefs.keep_template(template);
+                    studio.prefs.save(&studio.host.dirs);
+                    studio.notify(&tf("generate.seriesSaved", &[&name]), false);
+                }
+                4 => self.shorts(studio),
+                _ => {}
+            },
+            GenerateMsg::Ideas(result) => {
+                self.running = false;
+                match *result {
+                    Ok(ideas) => self.ideas = ideas,
+                    Err(error) => self.failed(error),
+                }
+            }
+            GenerateMsg::Next => self.next(studio),
+            GenerateMsg::Translated(result) => {
+                self.running = false;
+                match *result {
+                    Ok((topic, board, language)) => {
+                        // The new video is the sheet's now, in its language.
+                        self.topic = topic;
+                        studio.prefs.generate.language = language;
+                        studio.prefs.save(&studio.host.dirs);
+                        self.board = Some(board.clone());
+                        self.dirty = false;
+                        self.changed();
+                        self.mended = false;
+                        self.make(studio, board);
+                    }
+                    Err(error) => self.failed(error),
+                }
+            }
+            GenerateMsg::ShortsReady(result) => {
+                self.running = false;
+                match *result {
+                    Ok(shorts) => {
+                        // Each on a timeline of its own; exported by hand,
+                        // one at a time.
+                        self.hold_export = true;
+                        for (board, made) in &shorts {
+                            self.cut(studio, board, made, true);
+                        }
+                        self.hold_export = false;
+                    }
+                    Err(error) => self.failed(error),
+                }
+            }
             GenerateMsg::ShortReady(result) => {
                 self.running = false;
                 match *result {
@@ -709,6 +831,7 @@ impl GeneratePane {
             }
             GenerateMsg::Made(result) => {
                 self.running = false;
+                self.ended = Some(std::time::Instant::now());
                 match *result {
                     Ok((board, made)) => {
                         // Before the cut: a shot a model could not make is
@@ -1045,6 +1168,7 @@ impl GeneratePane {
             research: prefs.research.unwrap_or(true),
             cards_only: prefs.visuals == 1,
             pictures: PictureStyle::ALL[prefs.pictures.min(PictureStyle::ALL.len() - 1)],
+            source: self.source.trim().to_owned(),
         }
     }
 
@@ -1666,6 +1790,175 @@ impl GeneratePane {
         );
     }
 
+    /// Asks the writer for videos worth making next: about what is typed,
+    /// or whatever suits the channel when nothing is.
+    fn suggest_ideas(&mut self, studio: &mut Studio) {
+        let key = studio.prefs.generate.anthropic_key.clone();
+        if key.trim().is_empty() {
+            self.message = t("generate.needAnthropicKey");
+            return;
+        }
+        let brief = self.brief(studio);
+        let field = self.topic.trim().to_owned();
+        let made: Vec<String> = self.ideas.iter().map(|idea| idea.title.clone()).collect();
+        self.begin(t("generate.ideasBusy"));
+        self.phase = 0;
+        spawn_in_project(
+            move || writer::ideas(&field, &brief, &made, 5, &key, writer::DEFAULT_MODEL),
+            |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::Ideas(Box::new(result))))
+            },
+        );
+    }
+
+    /// The ideas list's rows: what to do, then each idea and why.
+    pub fn idea_rows(&self) -> Vec<SharedString> {
+        std::iter::once(t("generate.ideasPick"))
+            .chain(self.ideas.iter().map(|idea| match idea.angle.trim() {
+                "" => idea.title.clone(),
+                angle => format!("{} — {angle}", idea.title),
+            }))
+            .map(SharedString::from)
+            .collect()
+    }
+
+    /// The series list's rows: what to do, then each series saved.
+    pub fn template_rows(&self, studio: &Studio) -> Vec<SharedString> {
+        std::iter::once(t("generate.noTemplate"))
+            .chain(
+                studio
+                    .prefs
+                    .generate
+                    .templates
+                    .iter()
+                    .map(|template| template.name.clone()),
+            )
+            .map(SharedString::from)
+            .collect()
+    }
+
+    /// Starts the next idea of a batch, once the run before it is over and
+    /// its export is; looks again in a moment while it is not.
+    fn next(&mut self, studio: &mut Studio) {
+        if self.queue.is_empty() {
+            return;
+        }
+        let settling = self
+            .ended
+            .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(8));
+        if self.running || settling || studio.export.phase == crate::ui::ExportPhase::Running {
+            spawn_in_project(
+                || std::thread::sleep(std::time::Duration::from_secs(3)),
+                |studio, _, _, ()| studio.handle(Msg::Generate(GenerateMsg::Next)),
+            );
+            return;
+        }
+        let topic = self.queue.remove(0);
+        studio.notify(
+            &tf("generate.batchNext", &[&topic, &self.queue.len()]),
+            false,
+        );
+        self.topic = topic;
+        self.source.clear();
+        self.look(studio);
+        // Made as Create makes it; the one after it is looked for once
+        // this one is under way.
+        on_ui(|studio, _, _| {
+            studio.handle(Msg::Generate(GenerateMsg::Create));
+            studio.handle(Msg::Generate(GenerateMsg::Next));
+        });
+    }
+
+    /// Makes the video again in another language: its script translated,
+    /// its pictures taken over as they are, then its voice read and its
+    /// drawn shots drawn again, as a video of its own.
+    fn translate(&mut self, studio: &mut Studio) {
+        let (Some(board), Some(from)) = (self.board.clone(), self.job(studio)) else {
+            return;
+        };
+        let row = self.also_language.min(LANGUAGES.len() - 1);
+        let language = LANGUAGES[row];
+        if board.language.trim().eq_ignore_ascii_case(language) {
+            self.message = t("generate.translateSame");
+            return;
+        }
+        let key = studio.prefs.generate.anthropic_key.clone();
+        if key.trim().is_empty() {
+            self.message = t("generate.needAnthropicKey");
+            return;
+        }
+        let Some(project) = studio
+            .session
+            .as_ref()
+            .map(|session| session.path().to_owned())
+        else {
+            return;
+        };
+        let topic = format!("{} ({language})", self.topic.trim());
+        self.begin(tf("generate.translating", &[&1, &board.chapters.len()]));
+        self.phase = 0;
+        spawn_in_project(
+            move || {
+                let translated = writer::translate(
+                    &board,
+                    language,
+                    &key,
+                    writer::DEFAULT_MODEL,
+                    &mut |n, of| {
+                        let stage = tf("generate.translating", &[&n, &of]);
+                        let fraction = n as f32 / (of + 1) as f32;
+                        on_ui(move |studio, _, _| {
+                            studio.handle(Msg::Generate(GenerateMsg::Progress(
+                                fraction,
+                                stage,
+                                String::new(),
+                            )));
+                        });
+                    },
+                )?;
+                let job = Job::new(Path::new(&project), &topic);
+                job.adopt(&from)?;
+                job.keep(&translated)?;
+                Ok((topic, translated, row))
+            },
+            |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::Translated(Box::new(result))))
+            },
+        );
+    }
+
+    /// Cuts several Shorts from the video, each a stretch of its own, each
+    /// on a timeline of its own.
+    fn shorts(&mut self, studio: &mut Studio) {
+        let (Some(board), Some(job)) = (self.board.clone(), self.job(studio)) else {
+            return;
+        };
+        let key = studio.prefs.generate.anthropic_key.clone();
+        let brief = self.brief(studio);
+        self.begin(t("generate.pickingShort"));
+        self.phase = 3;
+        spawn_in_project(
+            move || {
+                let picks = writer::pick_shorts(&board, &brief, 3, &key, writer::DEFAULT_MODEL)
+                    .unwrap_or_else(|error| {
+                        log::warn!("generate: the Shorts' stretches: {error}");
+                        vec![shorts::opening(&board)]
+                    });
+                picks
+                    .iter()
+                    .map(|pick| {
+                        let short = shorts::board(&board, pick);
+                        let made = job.gather(&short, true)?;
+                        Ok((short, made))
+                    })
+                    .collect::<Result<Vec<_>, String>>()
+            },
+            |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::ShortsReady(Box::new(result))))
+            },
+        );
+    }
+
     /// Lays the cut on a new timeline, as one undo step, and closes.
     /// Picks a minute of the video for a Short - the writer's pick, or the
     /// opening when there is no key or the pick does not fit - and gathers
@@ -1858,6 +2151,7 @@ impl GeneratePane {
                     }
                 }
                 if studio.prefs.generate.auto_export.unwrap_or(true)
+                    && !self.hold_export
                     && let Some(job) = self.job(studio)
                 {
                     export(job.dir, &board.title);
@@ -2001,6 +2295,10 @@ impl GeneratePane {
             replicate_image_model: prefs.replicate_image_model.as_str().into(),
             auto_export: prefs.auto_export.unwrap_or(true),
             sounds: prefs.sounds.unwrap_or(true),
+            source: self.source.as_str().into(),
+            also_language: self.also_language as i32,
+            has_ideas: !self.ideas.is_empty(),
+            queued: self.queue.len() as i32,
             brand_color: prefs.brand_color.as_str().into(),
             logo: logo_items(studio)
                 .iter()

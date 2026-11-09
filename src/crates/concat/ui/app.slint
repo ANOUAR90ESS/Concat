@@ -337,6 +337,8 @@ export component App inherits Window {
     in property <GenerateSheetData> generate;
     in property <[string]> generate-music;
     in property <[string]> generate-logos;
+    in property <[string]> generate-ideas;
+    in property <[string]> generate-templates;
     callback generate-closed();
     callback generate-text-edited(field: int, text: string);
     callback generate-choice-changed(field: int, index: int);
@@ -346,6 +348,7 @@ export component App inherits Window {
     callback generate-open-folder();
     callback generate-edit-script();
     callback generate-make-short();
+    callback generate-act(kind: int);
     callback generate-publish();
     callback generate-cancel();
     in property <ScriptSheetData> script;
@@ -1050,6 +1053,8 @@ export component App inherits Window {
         data: root.generate;
         music-options: root.generate-music;
         logo-options: root.generate-logos;
+        idea-options: root.generate-ideas;
+        template-options: root.generate-templates;
 
         closed => { root.generate-closed(); }
         text-edited(field, text) => { root.generate-text-edited(field, text); }
@@ -1060,6 +1065,7 @@ export component App inherits Window {
         open-folder => { root.generate-open-folder(); }
         edit-script => { root.generate-edit-script(); }
         make-short => { root.generate-make-short(); }
+        act(kind) => { root.generate-act(kind); }
         publish => { root.generate-publish(); }
         cancel => { root.generate-cancel(); }
     }

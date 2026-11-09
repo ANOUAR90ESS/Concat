@@ -937,6 +937,355 @@ pub fn pick_short(
     })
 }
 
+/// Up to `count` stretches of the video each worth a Short, none sharing
+/// a scene with another: several Shorts from one long video. A pick that
+/// is not a run of scenes that fits is passed over; none at all is an
+/// error, and the caller falls back to [`crate::shorts::opening`].
+pub fn pick_shorts(
+    board: &Storyboard,
+    brief: &Brief,
+    count: usize,
+    key: &str,
+    model: &str,
+) -> Result<Vec<crate::shorts::Pick>, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to write the script".to_owned());
+    }
+    let count = count.clamp(1, 5);
+    let prompt = format!(
+        "{}\nPick {count} such stretches, the {count} best, no scene in more than one of them, \
+         each with its own hook; fewer where the video does not hold that many.",
+        short_prompt(board, brief)
+    );
+    let got = crate::providers::retry(|| call(key, model, &shorts_tool(), &prompt))?;
+    let picks = picks_of(board, &got["shorts"], count);
+    if picks.is_empty() {
+        return Err("the writer picked no stretch that is a minute in a row".to_owned());
+    }
+    Ok(picks)
+}
+
+/// The picks a `shorts` answer holds that are runs of `board`'s scenes
+/// that fit, none sharing a scene with one before it, `count` at most.
+fn picks_of(board: &Storyboard, shorts: &Value, count: usize) -> Vec<crate::shorts::Pick> {
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut picks = Vec::new();
+    for short in shorts.as_array().into_iter().flatten() {
+        let scenes: Vec<String> = short["scenes"]
+            .as_array()
+            .map(|ids| ids.iter().map(text).filter(|id| !id.is_empty()).collect())
+            .unwrap_or_default();
+        if picks.len() == count
+            || !crate::shorts::fits(board, &scenes)
+            || scenes.iter().any(|id| taken.contains(id))
+        {
+            continue;
+        }
+        taken.extend(scenes.iter().cloned());
+        picks.push(crate::shorts::Pick {
+            scenes,
+            hook: text(&short["hook"]),
+        });
+    }
+    picks
+}
+
+/// A video worth making, as [`ideas`] proposes it.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct VideoIdea {
+    /// The video's working title, in the narration's language: what goes
+    /// in the topic box.
+    pub title: String,
+    /// Why a viewer would click, in a sentence, in the same language.
+    pub angle: String,
+}
+
+/// `count` videos worth making for the channel the brief describes, about
+/// `field` - a subject, or nothing for whatever suits the channel - none
+/// of them one of `made`, the titles made already.
+pub fn ideas(
+    field: &str,
+    brief: &Brief,
+    made: &[String],
+    count: usize,
+    key: &str,
+    model: &str,
+) -> Result<Vec<VideoIdea>, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to suggest ideas".to_owned());
+    }
+    let count = count.clamp(1, 10);
+    let mut prompt = format!(
+        "Narration language: {}\nWhat the videos are: {}\nWho they are for: {}\n",
+        brief.language,
+        brief.style.brief(),
+        brief.level.brief()
+    );
+    if !brief.channel.trim().is_empty() {
+        prompt += &format!(
+            "The channel, as its owner describes it:\n{}\n",
+            brief.channel.trim()
+        );
+    }
+    if !field.trim().is_empty() {
+        prompt += &format!("The subject to stay within: {}\n", field.trim());
+    }
+    if !made.is_empty() {
+        prompt += &format!("Already made - nothing like these: {}\n", made.join("; "));
+    }
+    prompt += &format!(
+        "\nPropose {count} videos worth making next, each one a viewer would click on and watch \
+         to the end: a specific question, story or claim, never a broad subject ('The history of \
+         Rome' is a subject; 'The day Rome ran out of water' is a video). Each unlike the others \
+         in angle. Give each a title of at most ten words and, in one sentence, why a viewer \
+         clicks. Both in the narration's language."
+    );
+    let got = crate::providers::retry(|| call(key, model, &ideas_tool(), &prompt))?;
+    let ideas: Vec<VideoIdea> = got["ideas"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|idea| VideoIdea {
+            title: text(&idea["title"]),
+            angle: text(&idea["angle"]),
+        })
+        .filter(|idea| !idea.title.is_empty())
+        .take(count)
+        .collect();
+    if ideas.is_empty() {
+        return Err("the writer proposed no ideas".to_owned());
+    }
+    Ok(ideas)
+}
+
+/// `board` again in `language`: every word a viewer hears or reads - the
+/// narration, titles, stickers, key words, cards, and the words drawn in
+/// its animated cards and explainers - translated a chapter at a time,
+/// its shape untouched, so the pictures made for it serve the new video
+/// as they are. `progress` is told each chapter, from 1, and how many.
+pub fn translate(
+    board: &Storyboard,
+    language: &str,
+    key: &str,
+    model: &str,
+    progress: &mut dyn FnMut(usize, usize),
+) -> Result<Storyboard, String> {
+    if key.trim().is_empty() {
+        return Err("an Anthropic API key is needed to translate the script".to_owned());
+    }
+    let mut out = board.clone();
+    out.language = language.trim().to_owned();
+    let of = board.chapters.len();
+    for (n, chapter) in board.chapters.iter().enumerate() {
+        progress(n + 1, of);
+        let words = chapter_words(&board.title, chapter);
+        let prompt = format!(
+            "This is one chapter of a narrated video, as the words a viewer hears and reads, \
+             written in {}:\n{}\n\nTranslate it into {language} for a voice to read aloud: \
+             natural, idiomatic, spoken {language} - not word for word - saying the same things \
+             in about the same time. Keep the structure exactly: the same scenes in order, and \
+             in each the same number of shots, texts, cues and keywords, an empty string where \
+             one is empty. Names stay names; figures stay figures, written as {language} writes \
+             them. 'keywords' and 'cues' are words of the scene's narration: give each as the \
+             word or words of your translated narration that say the same thing, copied exactly \
+             from it. 'texts' are words drawn on screen: short, as short as the originals.",
+            board.language,
+            serde_json::to_string_pretty(&words).unwrap_or_default()
+        );
+        let got = crate::providers::retry(|| {
+            let got = call(key, model, &translation_tool(), &prompt)?;
+            // Shaped as it was sent, or asked for again: a scene dropped
+            // would leave pictures with the wrong words under them.
+            let mut trial = out.chapters[n].clone();
+            apply_words(&mut trial, &got).map(|()| (got, trial))
+        })?;
+        if n == 0 {
+            let title = text(&got.0["title"]);
+            if !title.is_empty() {
+                out.title = title;
+            }
+        }
+        out.chapters[n] = got.1;
+        if needs_marks(language) {
+            match crate::providers::retry(|| {
+                call(
+                    key,
+                    model,
+                    &reading_tool(),
+                    &reading_prompt(&out.chapters[n].scenes),
+                )
+            }) {
+                Ok(read) => apply_readings(&mut out.chapters[n].scenes, &read),
+                Err(error) => log::warn!("the vowel marks: {error}; read as written"),
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The words of `chapter` a viewer hears or reads, as the translator is
+/// shown them.
+fn chapter_words(title: &str, chapter: &Chapter) -> Value {
+    let scenes: Vec<Value> = chapter
+        .scenes
+        .iter()
+        .map(|scene| {
+            let shots: Vec<Value> = scene
+                .shots
+                .iter()
+                .map(|shot| {
+                    let (texts, cues) = shot_words(shot);
+                    json!({"texts": texts, "cues": cues})
+                })
+                .collect();
+            json!({
+                "narration": scene.narration,
+                "onScreenText": scene.on_screen_text.clone().unwrap_or_default(),
+                "sticker": scene.sticker.clone().unwrap_or_default(),
+                "keywords": scene.keywords,
+                "cardFigure": scene.card.as_ref().map(|card| card.figure.clone()).unwrap_or_default(),
+                "cardLabel": scene.card.as_ref().map(|card| card.label.clone()).unwrap_or_default(),
+                "shots": shots,
+            })
+        })
+        .collect();
+    json!({
+        "title": title,
+        "chapterTitle": chapter.title,
+        "scenes": scenes,
+    })
+}
+
+/// The words drawn in a shot - an animated card's heading and lines, an
+/// explainer's texts - and the words of the narration its steps wait for.
+fn shot_words(shot: &crate::storyboard::Shot) -> (Vec<String>, Vec<String>) {
+    let mut texts = Vec::new();
+    let mut cues = Vec::new();
+    if let Some(graphic) = &shot.graphic {
+        texts.push(graphic.title.clone());
+        for item in &graphic.items {
+            texts.push(item.label.clone());
+            texts.push(item.value.clone());
+        }
+    }
+    if let Some(explainer) = &shot.explainer {
+        for element in explainer.all() {
+            if element.kind == crate::explainer::ElementKind::Text {
+                texts.push(element.text.clone());
+            }
+        }
+        cues.extend(explainer.steps.iter().map(|step| step.cue.clone()));
+    }
+    (texts, cues)
+}
+
+/// Puts `texts` and `cues` where [`shot_words`] read them from; false
+/// when there are not as many as the shot holds.
+fn set_shot_words(shot: &mut crate::storyboard::Shot, texts: &[String], cues: &[String]) -> bool {
+    let (had_texts, had_cues) = shot_words(shot);
+    if had_texts.len() != texts.len() || had_cues.len() != cues.len() {
+        return false;
+    }
+    let mut texts = texts.iter();
+    let mut next = || texts.next().cloned().unwrap_or_default();
+    if let Some(graphic) = &mut shot.graphic {
+        graphic.title = next();
+        for item in &mut graphic.items {
+            item.label = next();
+            item.value = next();
+        }
+    }
+    if let Some(explainer) = &mut shot.explainer {
+        fn set(elements: &mut [crate::explainer::Element], next: &mut dyn FnMut() -> String) {
+            for element in elements {
+                if element.kind == crate::explainer::ElementKind::Text {
+                    element.text = next();
+                }
+                set(&mut element.children, next);
+            }
+        }
+        set(&mut explainer.elements, &mut next);
+        for (step, cue) in explainer.steps.iter_mut().zip(cues) {
+            step.cue = cue.clone();
+        }
+    }
+    true
+}
+
+/// A chapter's translated words put in place, or why they cannot be: a
+/// scene, shot, text or cue too many or too few.
+fn apply_words(chapter: &mut Chapter, got: &Value) -> Result<(), String> {
+    let list = |value: &Value| -> Vec<String> {
+        value
+            .as_array()
+            .map(|items| items.iter().map(text).collect())
+            .unwrap_or_default()
+    };
+    let scenes = got["scenes"].as_array().cloned().unwrap_or_default();
+    if scenes.len() != chapter.scenes.len() {
+        return Err(format!(
+            "the translation came back with {} scenes of {}",
+            scenes.len(),
+            chapter.scenes.len()
+        ));
+    }
+    let title = text(&got["chapterTitle"]);
+    if !title.is_empty() {
+        chapter.title = title;
+    }
+    for (scene, words) in chapter.scenes.iter_mut().zip(&scenes) {
+        let narration = text(&words["narration"]);
+        if narration.is_empty() != scene.narration.trim().is_empty() {
+            return Err(format!(
+                "scene {} came back without its narration",
+                scene.id
+            ));
+        }
+        scene.narration = narration;
+        // Marked for the old words: the new ones are read as written until
+        // they are marked again.
+        scene.reading = None;
+        if scene.on_screen_text.is_some() {
+            scene.on_screen_text = Some(text(&words["onScreenText"])).filter(|t| !t.is_empty());
+        }
+        if scene.sticker.is_some() {
+            scene.sticker = Some(text(&words["sticker"])).filter(|t| !t.is_empty());
+        }
+        if !scene.keywords.is_empty() {
+            scene.keywords = list(&words["keywords"])
+                .into_iter()
+                .filter(|word| !word.is_empty())
+                .collect();
+        }
+        if let Some(card) = &mut scene.card {
+            let (figure, label) = (text(&words["cardFigure"]), text(&words["cardLabel"]));
+            if !figure.is_empty() {
+                card.figure = figure;
+            }
+            card.label = label;
+        }
+        let shots = words["shots"].as_array().cloned().unwrap_or_default();
+        if shots.len() != scene.shots.len() {
+            return Err(format!(
+                "scene {} came back with {} shots of {}",
+                scene.id,
+                shots.len(),
+                scene.shots.len()
+            ));
+        }
+        for (n, (shot, words)) in scene.shots.iter_mut().zip(&shots).enumerate() {
+            if !set_shot_words(shot, &list(&words["texts"]), &list(&words["cues"])) {
+                return Err(format!(
+                    "scene {} shot {} came back with other texts than it has",
+                    scene.id,
+                    n + 1
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A music bed's description for MusicGen, in English, the words it plays
 /// best from: the writer's, from the video's title, moods and narration.
 pub fn music_prompt(board: &Storyboard, key: &str, model: &str) -> Result<String, String> {
@@ -2142,6 +2491,94 @@ fn short_tool() -> Value {
     })
 }
 
+fn translation_tool() -> Value {
+    let strings = json!({"type": "array", "items": {"type": "string"}});
+    json!({
+        "name": "translation",
+        "description": "The chapter's words, translated, in the shape they were given.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "The video's title, translated."},
+                "chapterTitle": {"type": "string"},
+                "scenes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "narration": {"type": "string"},
+                            "onScreenText": {"type": "string"},
+                            "sticker": {"type": "string"},
+                            "keywords": strings,
+                            "cardFigure": {"type": "string"},
+                            "cardLabel": {"type": "string"},
+                            "shots": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {"texts": strings, "cues": strings},
+                                    "required": ["texts", "cues"]
+                                }
+                            }
+                        },
+                        "required": ["narration", "shots"]
+                    }
+                }
+            },
+            "required": ["title", "chapterTitle", "scenes"]
+        }
+    })
+}
+
+fn shorts_tool() -> Value {
+    json!({
+        "name": "shorts",
+        "description": "The stretches picked for Shorts, best first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "shorts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "scenes": {"type": "array", "items": {"type": "string"},
+                                       "description": "The scenes' ids, in order, in a row."},
+                            "hook": {"type": "string", "description": "At most six words."}
+                        },
+                        "required": ["scenes", "hook"]
+                    }
+                }
+            },
+            "required": ["shorts"]
+        }
+    })
+}
+
+fn ideas_tool() -> Value {
+    json!({
+        "name": "ideas",
+        "description": "Videos worth making next.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ideas": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "angle": {"type": "string"}
+                        },
+                        "required": ["title", "angle"]
+                    }
+                }
+            },
+            "required": ["ideas"]
+        }
+    })
+}
+
 fn suggest_tool() -> Value {
     json!({
         "name": "suggested_shot",
@@ -2301,6 +2738,101 @@ mod tests {
         };
         assert!(brief.text().contains("Name: Tarikh. Opens with: Ahlan."));
         assert!(!Brief::default().text().contains("The channel"));
+    }
+
+    /// Several Shorts are picked from one video, each a run that fits and
+    /// none sharing a scene; a pick that is neither is passed over.
+    #[test]
+    fn several_shorts_share_no_scene() {
+        let mut board: Storyboard = serde_json::from_str(
+            r#"{"title":"T","chapters":[{"title":"A","scenes":[
+                {"narration":"a","seconds":20,"shots":[{"prompt":"p1"}]},
+                {"narration":"b","seconds":20,"shots":[{"prompt":"p2"}]},
+                {"narration":"c","seconds":20,"shots":[{"prompt":"p3"}]},
+                {"narration":"d","seconds":20,"shots":[{"prompt":"p4"}]}]}]}"#,
+        )
+        .unwrap();
+        board.tidy().unwrap();
+        let answer = json!([
+            {"scenes": ["c01s01", "c01s02"], "hook": "One"},
+            {"scenes": ["c01s02", "c01s03"], "hook": "Shares a scene"},
+            {"scenes": ["c01s04", "c01s01"], "hook": "Not in a row"},
+            {"scenes": ["c01s03", "c01s04"], "hook": "Two"},
+            {"scenes": ["c01s04"], "hook": "Taken"}
+        ]);
+        let picks = picks_of(&board, &answer, 3);
+        let hooks: Vec<&str> = picks.iter().map(|pick| pick.hook.as_str()).collect();
+        assert_eq!(hooks, ["One", "Two"]);
+        assert_eq!(picks_of(&board, &answer, 1).len(), 1);
+        assert!(picks_of(&board, &Value::Null, 3).is_empty());
+    }
+
+    /// A chapter's words go out and come back in one shape: the narration,
+    /// what is written on screen, a card's lines and an explainer's texts
+    /// and cues are each put back where they were read; an answer of
+    /// another shape is refused and changes nothing it should not.
+    #[test]
+    fn a_translation_is_put_back_where_its_words_were() {
+        let mut board: Storyboard = serde_json::from_str(
+            r##"{"title":"Stars","language":"English","chapters":[{"title":"One","scenes":[
+                {"narration":"The sun is a star.","onScreenText":"Our star","sticker":"So close!",
+                 "keywords":["star"],"card":{"figure":"150 million km","label":"from Earth"},
+                 "seconds":6,"shots":[
+                   {"prompt":"the sun"},
+                   {"kind":"motion","graphic":{"kind":"number","title":"Distance",
+                     "items":[{"label":"kilometres","value":"150,000,000"}]}},
+                   {"kind":"explainer","prompt":"orbit","explainer":{"elements":[
+                     {"id":"g","kind":"group","children":[{"id":"t","kind":"text","text":"Sun","size":60,"x":900,"y":400,"fill":"#FFFFFF"}]},
+                     {"id":"c","kind":"circle","x":900,"y":500,"r":50,"fill":"#FFCC00"}],
+                     "steps":[{"target":"t","effect":"fade_in","cue":"star"}]}}]}]}]}"##,
+        )
+        .unwrap();
+        board.tidy().unwrap();
+        let chapter = &board.chapters[0];
+        let words = chapter_words(&board.title, chapter);
+        assert_eq!(
+            words["scenes"][0]["shots"][1]["texts"],
+            json!(["Distance", "kilometres", "150,000,000"])
+        );
+        assert_eq!(words["scenes"][0]["shots"][2]["texts"], json!(["Sun"]));
+        assert_eq!(words["scenes"][0]["shots"][2]["cues"], json!(["star"]));
+
+        let answer = json!({
+            "title": "النجوم", "chapterTitle": "واحد",
+            "scenes": [{
+                "narration": "الشمس نجم.", "onScreenText": "نجمنا", "sticker": "قريبة جدًا!",
+                "keywords": ["نجم"], "cardFigure": "150 مليون كم", "cardLabel": "عن الأرض",
+                "shots": [
+                    {"texts": [], "cues": []},
+                    {"texts": ["المسافة", "كيلومتر", "150,000,000"], "cues": []},
+                    {"texts": ["الشمس"], "cues": ["نجم"]}
+                ]
+            }]
+        });
+        let mut translated = chapter.clone();
+        apply_words(&mut translated, &answer).unwrap();
+        let scene = &translated.scenes[0];
+        assert_eq!(translated.title, "واحد");
+        assert_eq!(scene.narration, "الشمس نجم.");
+        assert_eq!(scene.on_screen_text.as_deref(), Some("نجمنا"));
+        assert_eq!(scene.sticker.as_deref(), Some("قريبة جدًا!"));
+        assert_eq!(scene.keywords, ["نجم"]);
+        assert_eq!(scene.card.as_ref().unwrap().label, "عن الأرض");
+        assert_eq!(
+            scene.shots[1].graphic.as_ref().unwrap().items[0].label,
+            "كيلومتر"
+        );
+        let explainer = scene.shots[2].explainer.as_ref().unwrap();
+        assert_eq!(explainer.elements[0].children[0].text, "الشمس");
+        assert_eq!(explainer.steps[0].cue, "نجم");
+        // The pictures are the ones already made.
+        assert_eq!(scene.shots[0].prompt, chapter.scenes[0].shots[0].prompt);
+
+        let mut short = answer.clone();
+        short["scenes"][0]["shots"][2]["texts"] = json!([]);
+        assert!(apply_words(&mut chapter.clone(), &short).is_err());
+        short["scenes"] = json!([]);
+        assert!(apply_words(&mut chapter.clone(), &short).is_err());
     }
 
     /// A fixed picture style is in every call's brief; Auto leaves the

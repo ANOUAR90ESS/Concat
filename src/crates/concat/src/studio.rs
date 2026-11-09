@@ -609,6 +609,10 @@ pub struct Models {
     pub generate_music: Rc<VecModel<SharedString>>,
     /// The pictures a channel's logo is picked from.
     pub generate_logos: Rc<VecModel<SharedString>>,
+    /// The writer's ideas for the next videos.
+    pub generate_ideas: Rc<VecModel<SharedString>>,
+    /// The series saved.
+    pub generate_templates: Rc<VecModel<SharedString>>,
     pub script_rows: Rc<VecModel<crate::ui::ScriptRow>>,
     pub transcribers: Rc<VecModel<ModelData>>,
     pub voices: Rc<VecModel<ModelData>>,
@@ -679,6 +683,8 @@ impl Models {
             speech_sample_details: Rc::new(VecModel::default()),
             generate_music: Rc::new(VecModel::default()),
             generate_logos: Rc::new(VecModel::default()),
+            generate_ideas: Rc::new(VecModel::default()),
+            generate_templates: Rc::new(VecModel::default()),
             script_rows: Rc::new(VecModel::default()),
             transcribers: Rc::new(VecModel::default()),
             voices: Rc::new(VecModel::default()),
@@ -9559,6 +9565,11 @@ impl Studio {
         app.set_speech(self.speech.data(self));
         sync(&models.generate_music, self.generate.music_rows(self));
         sync(&models.generate_logos, self.generate.logo_rows(self));
+        sync(&models.generate_ideas, self.generate.idea_rows());
+        sync(
+            &models.generate_templates,
+            self.generate.template_rows(self),
+        );
         app.set_generate(self.generate.data(self));
         // A file being written, or a video being made, with its sheet put
         // away: a pill over the window says how far, and opens it again.

@@ -448,21 +448,46 @@ LongCut is close. Six stages, each done whole. Publishing straight to a
 platform was weighed and left out by the owner: the system's share sheet
 does it.
 
-- 🚧 **Stage A: sound design.** Short sounds made by the app itself - a
-  whoosh on a cut, a pop under a sticker, a tick under a figure - and
-  the music lowered under the voice.
-- ⏳ **Stage B: one tap, and a check before export.** Idea in, exported
-  video out, no steps by hand; before the export the app looks over its
-  own cut - a shot that failed, a caption over a drawing, a long silence,
-  a picture twice - and mends it or says so.
-- ⏳ **Stage C: the channel's identity.** Logo, colours, face, an opening
-  and a closing laid on every video; a saved template per series.
-- ⏳ **Stage D: ideas, and a week at once.** Ideas for the channel's
-  field with titles; several videos made in one run.
-- ⏳ **Stage E: from a source.** An article's address or a PDF made into
-  a video; a long video cut into several Shorts, not one.
-- ⏳ **Stage F: other languages.** The same video again in another
-  language - script, voice and captions - on the same pictures.
+- 🚧 **Stage A: sound design.** Three sounds the app makes itself, sample
+  by sample (`sfx.rs`): a whoosh into every scene but the first, a pop
+  under a sticker, a chime under a figure or an animated card - on lanes
+  of their own under the pictures, each at its own level. The music is
+  lifted where nobody speaks for more than a moment and brought back
+  under the voice (`plan::music_keys`). A switch in the sheet.
+- 🚧 **Stage B: a check before export.** One tap already ran from idea
+  to export; what was missing was the look-over. Shots a model could not
+  make are asked for once more before the cut. The cut is then reviewed
+  (`review.rs`): cards standing in for shots, scenes unread and files
+  left out hold the export and are said on the sheet; explainers not
+  designed, pictures alike and a long silence are said and let through.
+- 🚧 **Stage C: the channel's identity.** A colour - captions' key words
+  and stickers take it; a logo, a picture kept small in a top corner
+  over the scenes; an opening and a closing drawn in the colour with the
+  channel's name and its opening and closing lines
+  (`explainer::bumper`), before the first scene and after the last. The
+  sheet's choices are saved under a name as a series and brought back
+  with one pick, the keys left where they are.
+- 🚧 **Stage D: ideas, and several at once.** Suggest ideas proposes
+  five videos for the channel, about what is typed or whatever suits it
+  (`writer::ideas`); one picked becomes the idea; Make them all makes
+  each in turn, the next starting once the one before is cut and its
+  export is over.
+- 🚧 **Stage E: from a source.** Made from takes a page's address - it
+  is fetched and read in full - or a PDF's path, attached, or a text
+  file's, quoted whole; the research then says what the source says and
+  searches only to check. Make 3 Shorts cuts up to three stretches of a
+  finished video, none sharing a scene, each on a timeline of its own
+  (`writer::pick_shorts`).
+- 🚧 **Stage F: other languages.** Make it in this language translates
+  the script a chapter at a time - narration, titles, stickers, key
+  words, cards, and the words drawn in animated cards and explainers,
+  with the cues their steps wait for (`writer::translate`) - as a video
+  of its own that takes over the pictures and the music as they are
+  (`Job::adopt`); its voice is read and its drawn shots drawn again.
+  Arabic is marked with its vowels as any Arabic script is.
+- Known limits: several Shorts are not exported by themselves - one
+  export runs at a time; a logo must be a picture in the project; a
+  batch runs in the open project and stops with the app.
 
 ## Done since alpha.14
 

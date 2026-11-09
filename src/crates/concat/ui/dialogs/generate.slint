@@ -76,6 +76,14 @@ export struct GenerateSheetData {
     titles: bool,
     /// The cut's own sounds, and the music lifted where nobody speaks.
     sounds: bool,
+    /// What the video is made from: a page's address or a file's path.
+    source: string,
+    /// Row of the language the video is made again in.
+    also-language: int,
+    /// The writer has proposed videos to make.
+    has-ideas: bool,
+    /// How many ideas of a batch are still to make.
+    queued: int,
     /// The channel's colour, as typed.
     brand-color: string,
     /// Row of the logo list; 0 is none.
@@ -228,6 +236,8 @@ export component GenerateDialog inherits Modal {
     /// "None", then every recording in the bin.
     in property <[string]> music-options;
     in property <[string]> logo-options;
+    in property <[string]> idea-options;
+    in property <[string]> template-options;
 
     /// Which text: 0 topic, 1 notes, 2 Anthropic key, 3 Replicate token,
     /// 4 Replicate video model, 5 ElevenLabs key, 6 ElevenLabs voice,
@@ -248,6 +258,10 @@ export component GenerateDialog inherits Modal {
     callback edit-script();
     /// Cut a Short: a minute of the video, 9:16.
     callback make-short();
+    /// One of the sheet's buttons: 0 suggest ideas, 1 make every idea,
+    /// 2 make the video in another language, 3 save the choices as a
+    /// series, 4 cut several Shorts.
+    callback act(kind: int);
     callback publish();
     callback cancel();
 
@@ -328,12 +342,57 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
+                        // Videos worth making, proposed for the channel:
+                        // one picked becomes the idea above; all of them
+                        // are made one after another.
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 8px;
+
+                            Button {
+                                label: I18n.t("generate.suggestIdeas");
+                                glyph: Glyph.sparkle;
+                                clicked => { root.act(0); }
+                            }
+
+                            if root.data.has-ideas: Button {
+                                label: I18n.t("generate.makeAllIdeas");
+                                glyph: Glyph.film;
+                                clicked => { root.act(1); }
+                            }
+                        }
+
+                        if root.data.has-ideas: Select {
+                            options: root.idea-options;
+                            current: 0;
+                            changed(index) => { root.choice-changed(16, index); }
+                        }
+
+                        if root.data.has-ideas || root.data.queued > 0: Text {
+                            text: I18n.t("generate.makeAllHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
                         DialogRow {
                             label: I18n.t("generate.notes");
                             Field {
                                 value: root.data.notes;
                                 placeholder: I18n.t("generate.notesPlaceholder");
                                 edited(text) => { root.text-edited(1, text); }
+                            }
+                        }
+
+                        // An article's address, or a PDF or text file's
+                        // path: the video says what it says.
+                        DialogRow {
+                            label: I18n.t("generate.madeFrom");
+                            Field {
+                                value: root.data.source;
+                                technical: true;
+                                placeholder: I18n.t("generate.madeFromPlaceholder");
+                                edited(text) => { root.text-edited(19, text); }
                             }
                         }
 
@@ -473,11 +532,39 @@ export component GenerateDialog inherits Modal {
                         // no width at all.
                         if root.data.can-short: HorizontalLayout {
                             alignment: start;
+                            spacing: 8px;
 
                             Button {
                                 label: I18n.t("generate.makeShort");
                                 glyph: Glyph.film;
                                 clicked => { root.make-short(); }
+                            }
+
+                            Button {
+                                label: I18n.t("generate.makeShorts");
+                                glyph: Glyph.film;
+                                clicked => { root.act(4); }
+                            }
+                        }
+
+                        // The same video again in another language: the
+                        // pictures as they are, the words and the voice new.
+                        if root.data.can-short: DialogRow {
+                            label: I18n.t("generate.alsoIn");
+                            Select {
+                                options: ["العربية", "English", "Français", "Español", "Deutsch", "Türkçe", "Português", "Bahasa Indonesia", "हिन्दी", "اردو"];
+                                current: root.data.also-language;
+                                changed(index) => { root.choice-changed(17, index); }
+                            }
+                        }
+
+                        if root.data.can-short: HorizontalLayout {
+                            alignment: start;
+
+                            Button {
+                                label: I18n.t("generate.translate");
+                                glyph: Glyph.text-mark;
+                                clicked => { root.act(2); }
                             }
                         }
 
@@ -758,6 +845,26 @@ export component GenerateDialog inherits Modal {
                                 value: root.data.channel-example;
                                 placeholder: I18n.t("generate.channelExampleHint");
                                 edited(text) => { root.text-edited(16, text); }
+                            }
+                        }
+
+                        // The choices saved under the channel's name, and
+                        // brought back with one pick: a series.
+                        DialogRow {
+                            label: I18n.t("generate.series");
+                            Select {
+                                options: root.template-options;
+                                current: 0;
+                                changed(index) => { root.choice-changed(18, index); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            alignment: start;
+
+                            Button {
+                                label: I18n.t("generate.saveSeries");
+                                clicked => { root.act(3); }
                             }
                         }
 
