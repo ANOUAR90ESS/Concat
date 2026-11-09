@@ -1231,7 +1231,12 @@ mod tests {
         shared.stamp(5.0);
         std::thread::sleep(std::time::Duration::from_millis(20));
         let now = shared.position_now();
-        assert!(now > 5.015 && now < 5.0 + COAST.as_secs_f64(), "{now}");
+        // Never past the coast, however late a busy machine wakes the
+        // sleeper: the cap is what holds, not the sleep's length.
+        assert!(
+            now > 5.015 && now <= 5.0 + COAST.as_secs_f64() + 1e-9,
+            "{now}"
+        );
         assert_eq!(shared.position(), 5.0, "the device's own word is unchanged");
 
         std::thread::sleep(COAST + std::time::Duration::from_millis(20));

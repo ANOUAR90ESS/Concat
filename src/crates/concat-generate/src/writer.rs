@@ -276,6 +276,10 @@ pub struct Brief {
     pub cards_only: bool,
     /// What the pictures look like.
     pub pictures: PictureStyle,
+    /// What the video is made from, when it is made from something: a
+    /// page's address, or a PDF or text file's path. Empty for a video
+    /// written from the topic alone.
+    pub source: String,
 }
 
 impl Brief {
@@ -360,7 +364,7 @@ pub fn write(
         |tool: &Value, prompt: String| crate::providers::retry(|| call(key, model, tool, &prompt));
     let mut brief_text = brief.text();
     let mut sources = Vec::new();
-    if brief.research {
+    if brief.research || !brief.source.trim().is_empty() {
         progress(Writing::Research);
         match research(brief, key, model) {
             Ok(found) => {
@@ -620,8 +624,9 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
     if key.trim().is_empty() {
         return Err("an Anthropic API key is needed to read up on the topic".to_owned());
     }
+    let (from_source, attached) = source_of(&brief.source)?;
     let prompt = format!(
-        "{}\nBefore anything is written, research this topic on the web for the video \
+        "{}\n{from_source}Before anything is written, research this topic on the web for the video \
          described. Find what a specialist would put in it: the key facts and how they connect, \
          numbers with their dates and units, the people, places and events, what is surprising \
          or little known, where experts disagree, and the latest developments; and how the \
@@ -638,28 +643,25 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
     // The newer search, with pages read in full, on the models that take
     // them; the first search alone on the others - a model the person
     // named themselves may be older.
-    let got = crate::providers::retry(|| {
-        call_with(
+    let ask = |tools: &[Value]| {
+        call_blocks(
             key,
             model,
-            &[search("web_search_20260209"), fetch.clone()],
+            SYSTEM,
+            tools,
             &research_tool(),
             &prompt,
+            attached.clone(),
         )
-    })
-    .or_else(|error| {
-        if error.contains("web_search") || error.contains("web_fetch") {
-            call_with(
-                key,
-                model,
-                &[search("web_search_20250305")],
-                &research_tool(),
-                &prompt,
-            )
-        } else {
-            Err(error)
-        }
-    })?;
+    };
+    let got = crate::providers::retry(|| ask(&[search("web_search_20260209"), fetch.clone()]))
+        .or_else(|error| {
+            if error.contains("web_search") || error.contains("web_fetch") {
+                ask(&[search("web_search_20250305")])
+            } else {
+                Err(error)
+            }
+        })?;
     let sources = got["sources"]
         .as_array()
         .map(|sources| {
@@ -678,6 +680,67 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
         return Err("the research came back empty".to_owned());
     }
     Ok(Research { notes, sources })
+}
+
+/// The most of a text file a video is made from: more is refused, not cut
+/// short without saying.
+const SOURCE_CHARS: usize = 400_000;
+
+/// What the research is told of the video's `source`, and what goes with
+/// the request: a page is named, to be fetched and read in full; a PDF is
+/// attached; a text file is quoted whole. Nothing for no source.
+fn source_of(source: &str) -> Result<(String, Vec<Value>), String> {
+    use base64::Engine as _;
+    let source = source.trim();
+    let made_from = "This video is made from one source, given here. Read it in full first: \
+                     the video says what the source says, in its order of importance, and adds \
+                     nothing the source does not hold. Search the web only to check a figure or \
+                     a name, or to explain a term the source takes as known. List the source \
+                     first among the sources.";
+    if source.is_empty() {
+        return Ok((String::new(), Vec::new()));
+    }
+    if source.starts_with("http://") || source.starts_with("https://") {
+        return Ok((
+            format!("{made_from}\nThe source's address - fetch it: {source}\n\n"),
+            Vec::new(),
+        ));
+    }
+    let path = std::path::Path::new(source);
+    let bytes = std::fs::read(path).map_err(|error| format!("{source}: {error}"))?;
+    if bytes.starts_with(b"%PDF") {
+        // What one request takes of a PDF.
+        if bytes.len() > 30 * 1024 * 1024 {
+            return Err(format!(
+                "{source} is too large a PDF to read at once (30 MB at most)"
+            ));
+        }
+        return Ok((
+            format!("{made_from}\nThe source is the document attached.\n\n"),
+            vec![json!({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": base64::engine::general_purpose::STANDARD.encode(&bytes),
+                }
+            })],
+        ));
+    }
+    let words = String::from_utf8(bytes)
+        .map_err(|_| format!("{source} is neither a PDF nor a text file"))?;
+    if words.chars().count() > SOURCE_CHARS {
+        return Err(format!(
+            "{source} is too long to make one video from: split it, or give the part to use"
+        ));
+    }
+    Ok((
+        format!(
+            "{made_from}\nThe source, whole:\n<source>\n{}\n</source>\n\n",
+            words.trim()
+        ),
+        Vec::new(),
+    ))
 }
 
 /// The sources, as a YouTube description lists them.
@@ -1574,14 +1637,7 @@ pub(crate) fn call_as(
     pictures: &[Vec<u8>],
 ) -> Result<Value, String> {
     use base64::Engine as _;
-    let name = tool["name"].as_str().unwrap_or_default();
-    let mut tools: Vec<Value> = server_tools.to_vec();
-    tools.push(tool.clone());
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(20))
-        .timeout_read(std::time::Duration::from_secs(600))
-        .build();
-    let mut content: Vec<Value> = pictures
+    let blocks = pictures
         .iter()
         .map(|png| {
             json!({
@@ -1594,6 +1650,28 @@ pub(crate) fn call_as(
             })
         })
         .collect();
+    call_blocks(key, model, system, server_tools, tool, prompt, blocks)
+}
+
+/// [`call_as`], with whatever content blocks go before the words: pictures,
+/// or a document to read.
+fn call_blocks(
+    key: &str,
+    model: &str,
+    system: &str,
+    server_tools: &[Value],
+    tool: &Value,
+    prompt: &str,
+    before: Vec<Value>,
+) -> Result<Value, String> {
+    let name = tool["name"].as_str().unwrap_or_default();
+    let mut tools: Vec<Value> = server_tools.to_vec();
+    tools.push(tool.clone());
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(20))
+        .timeout_read(std::time::Duration::from_secs(600))
+        .build();
+    let mut content: Vec<Value> = before;
     content.push(json!({
         "type": "text",
         "text": format!("{prompt}\n\nAnswer by calling the {name} tool, once."),
