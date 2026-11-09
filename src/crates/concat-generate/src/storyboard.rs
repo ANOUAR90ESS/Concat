@@ -76,6 +76,20 @@ pub struct Style {
     pub visual: String,
     /// How the narrator sounds.
     pub voice: String,
+    /// The recurring characters, each drawn the same wherever a shot's
+    /// prompt names them.
+    pub cast: Vec<Character>,
+}
+
+/// A recurring character: the name shot prompts call them by, and how they
+/// look, held to in every picture of them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Character {
+    /// One word, in English.
+    pub name: String,
+    /// Age, build, face, hair, clothes and their colours.
+    pub look: String,
 }
 
 /// One chapter: a title over its first scene, and its scenes.
@@ -117,6 +131,13 @@ pub struct Scene {
     pub seconds: f64,
     /// What the camera sees, one shot after another.
     pub shots: Vec<Shot>,
+    /// The words of the narration the eye should land on, as written in
+    /// it: each caption that holds one shows it in colour.
+    pub keywords: Vec<String>,
+    /// A short punchy phrase of the narration's - "Fined on the spot!" -
+    /// stuck over the pictures as a tilted label while it is said; None
+    /// for most scenes.
+    pub sticker: Option<String>,
     /// The narration as the voice is to read it, where the words shown
     /// would be misread: in Arabic, every word with its vowel marks, which
     /// the captions do without.
@@ -430,6 +451,16 @@ impl Storyboard {
     /// chapter's mood.
     pub fn prompt(&self, chapter: &Chapter, shot: &Shot) -> String {
         let mut parts = vec![shot.prompt.trim().trim_end_matches('.').to_owned()];
+        // Each recurring character the shot names, as they always look.
+        for one in &self.style.cast {
+            if names(&shot.prompt, &one.name) {
+                parts.push(format!(
+                    "{}: {}",
+                    one.name,
+                    one.look.trim().trim_end_matches('.')
+                ));
+            }
+        }
         for extra in [self.style.visual.trim(), chapter.mood.trim()] {
             if !extra.is_empty() {
                 parts.push(extra.trim_end_matches('.').to_owned());
@@ -552,9 +583,40 @@ pub fn shot_stem(scene: &str, n: usize) -> String {
     format!("{scene}_{}", n + 1)
 }
 
+/// Whether `prompt` names `name` as a word of its own, in any case.
+fn names(prompt: &str, name: &str) -> bool {
+    let name = name.trim().to_lowercase();
+    !name.is_empty()
+        && prompt
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| word == name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A recurring character a shot names is described in its prompt as
+    /// they always look; one it does not name is not.
+    #[test]
+    fn a_named_character_is_drawn_as_they_always_look() {
+        let mut board = board();
+        board.style.cast = vec![Character {
+            name: "Omar".into(),
+            look: "a boy of ten in a red cap.".into(),
+        }];
+        let chapter = board.chapters[0].clone();
+        let mut shot = chapter.scenes[0].shots[0].clone();
+        shot.prompt = "omar looks up at the night sky".into();
+        assert!(
+            board
+                .prompt(&chapter, &shot)
+                .contains("Omar: a boy of ten in a red cap")
+        );
+        shot.prompt = "Omaria street at dusk".into();
+        assert!(!board.prompt(&chapter, &shot).contains("red cap"));
+    }
 
     fn board() -> Storyboard {
         serde_json::from_str(

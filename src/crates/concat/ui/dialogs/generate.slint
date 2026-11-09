@@ -56,6 +56,8 @@ export struct GenerateSheetData {
     visuals: int,
     /// 0 economical pictures, 1 professional.
     picture-quality: int,
+    /// 0 auto, 1 photo, 2 flat illustration, 3 3D cartoon.
+    picture-style: int,
     channel-name: string,
     channel-audience: string,
     channel-voice: string,
@@ -82,6 +84,10 @@ export struct GenerateSheetData {
     auto-export: bool,
     elevenlabs-key: string,
     elevenlabs-voice: string,
+    /// 0 multilingual v2, 1 v3.
+    voice-model: int,
+    /// word = reading; word = reading
+    pronunciation: string,
     /// A storyboard is in the project folder for this idea.
     has-script: bool,
     /// What that storyboard holds, in words.
@@ -512,6 +518,35 @@ export component GenerateDialog inherits Modal {
                                 edited(text) => { root.text-edited(6, text); }
                             }
                         }
+
+                        // v2 reads each line in the light of its
+                        // neighbours; v3 is the more expressive.
+                        if root.data.voice == 2: DialogRow {
+                            label: I18n.t("generate.voiceModel");
+                            SegmentedControl {
+                                options: [I18n.t("generate.voiceModelStandard"), I18n.t("generate.voiceModelExpressive")];
+                                current: root.data.voice-model;
+                                changed(index) => { root.choice-changed(13, index); }
+                            }
+                        }
+
+                        // Words the voice says wrong, written as they are
+                        // to be said.
+                        if root.data.voice == 2: DialogRow {
+                            label: I18n.t("generate.pronunciation");
+                            Field {
+                                value: root.data.pronunciation;
+                                placeholder: I18n.t("generate.pronunciationPlaceholder");
+                                edited(text) => { root.text-edited(17, text); }
+                            }
+                        }
+
+                        if root.data.voice == 2: Text {
+                            text: I18n.t("generate.pronunciationHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
                     }
 
                     DialogSection {
@@ -576,6 +611,29 @@ export component GenerateDialog inherits Modal {
                                 current: root.data.picture-quality;
                                 changed(index) => { root.choice-changed(9, index); }
                             }
+                        }
+
+                        // One look for every picture; illustration and
+                        // cartoon bring back the same characters.
+                        if root.data.shots == 1 && root.data.visuals == 0: DialogRow {
+                            label: I18n.t("generate.pictureStyle");
+                            Select {
+                                options: [
+                                    I18n.t("generate.picturesAuto"),
+                                    I18n.t("generate.picturesPhoto"),
+                                    I18n.t("generate.picturesFlat"),
+                                    I18n.t("generate.picturesCartoon"),
+                                ];
+                                current: root.data.picture-style;
+                                changed(index) => { root.choice-changed(12, index); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.visuals == 0: Text {
+                            text: I18n.t("generate.picturesHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
                         }
 
                         if root.data.shots == 1: DialogRow {

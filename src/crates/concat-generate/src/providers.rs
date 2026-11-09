@@ -85,6 +85,9 @@ pub fn retry<T>(mut work: impl FnMut() -> Result<T, String>) -> Result<T, String
             // credit, an input it does not take - fails the same way
             // again: only a busy or broken moment is worth waiting out.
             Err(error) if refused_for_good(&error) => return Err(error),
+            // A picture its safety filter refused is refused again for the
+            // same words, and every try is paid for.
+            Err(error) if refused_for_content(&error) => return Err(error),
             Err(error) => {
                 log::warn!("attempt {} of {ATTEMPTS} failed: {error}", attempt + 1);
                 last = error;
@@ -107,7 +110,87 @@ pub enum Voice {
         key: String,
         /// The voice to read with.
         voice_id: String,
+        /// The model to read with; empty for [`VOICE_MODEL`].
+        model: String,
+        /// Words the voice says wrong, each with how to write it so it is
+        /// said right: as [`lexicon`] reads them.
+        lexicon: Vec<(String, String)>,
     },
+}
+
+/// The ElevenLabs model narration is read with unless another is chosen:
+/// it reads a line in the light of the lines either side.
+pub const VOICE_MODEL: &str = "eleven_multilingual_v2";
+
+/// ElevenLabs' most expressive model, offered as a choice: it does not
+/// take the lines either side, and a request it refuses is read again
+/// with [`VOICE_MODEL`].
+pub const EXPRESSIVE_VOICE_MODEL: &str = "eleven_v3";
+
+/// A pronunciation list as typed: entries separated by new lines or
+/// semicolons (Arabic's too), each a word, `=`, and how to write it so it
+/// is said right. Entries without both halves are passed over.
+pub fn lexicon(typed: &str) -> Vec<(String, String)> {
+    typed
+        .split(['\n', ';', '؛'])
+        .filter_map(|entry| {
+            let (word, said) = entry.split_once('=')?;
+            let (word, said) = (word.trim(), said.trim());
+            (!word.is_empty() && !said.is_empty()).then(|| (word.to_owned(), said.to_owned()))
+        })
+        .collect()
+}
+
+/// `text` with each word the `lexicon` lists written as it is to be said.
+/// A word matches whole, whatever its vowel marks and whatever punctuation
+/// is round it, which stays.
+pub fn pronounced(text: &str, lexicon: &[(String, String)]) -> String {
+    if lexicon.is_empty() {
+        return text.to_owned();
+    }
+    let plain = |word: &str| crate::storyboard::without_marks(word).to_lowercase();
+    let wanted: Vec<(String, &str)> = lexicon
+        .iter()
+        .map(|(word, said)| (plain(word), said.as_str()))
+        .collect();
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        let space = rest.len() - rest.trim_start().len();
+        out.push_str(&rest[..space]);
+        rest = &rest[space..];
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let token = &rest[..end];
+        rest = &rest[end..];
+        let start = token
+            .find(|c: char| c.is_alphanumeric())
+            .unwrap_or(token.len());
+        let stop = token
+            .rfind(|c: char| c.is_alphanumeric())
+            .map_or(start, |at| {
+                at + token[at..].chars().next().map_or(0, char::len_utf8)
+            });
+        // Vowel marks after the last letter belong to the word.
+        let stop = stop
+            + token[stop..]
+                .chars()
+                .take_while(|c| crate::storyboard::without_marks(&c.to_string()).is_empty())
+                .map(char::len_utf8)
+                .sum::<usize>();
+        let word = &token[start..stop.max(start)];
+        match wanted
+            .iter()
+            .find(|(key, _)| !word.is_empty() && *key == plain(word))
+        {
+            Some((_, said)) => {
+                out.push_str(&token[..start]);
+                out.push_str(said);
+                out.push_str(&token[stop.max(start)..]);
+            }
+            None => out.push_str(token),
+        }
+    }
+    out
 }
 
 /// The file `stem` already has in `dir` under one of `extensions`.
@@ -292,6 +375,31 @@ pub fn refused_for_good(error: &str) -> bool {
             .and_then(|rest| rest.get(..3))
             .and_then(|code| code.parse::<u16>().ok())
             .is_some_and(|code| (400..500).contains(&code) && code != 408 && code != 429)
+}
+
+/// Whether a model's safety filter refused what it was asked to make: the
+/// same words are refused again, other words may not be.
+pub fn refused_for_content(error: &str) -> bool {
+    let error = error.to_lowercase();
+    [
+        "nsfw",
+        "safety",
+        "sensitive",
+        "flagged",
+        "content policy",
+        "moderation",
+    ]
+    .iter()
+    .any(|word| error.contains(word))
+}
+
+/// `prompt` asked for again more gently, after a safety filter refused it:
+/// the same subject, shown calmly and without anything graphic.
+pub fn softened(prompt: &str) -> String {
+    format!(
+        "A calm, tasteful documentary illustration, suitable for all ages, nothing graphic: {}",
+        prompt.trim()
+    )
 }
 
 /// What a Replicate model takes, read from the model's own description,
@@ -776,6 +884,7 @@ fn fill(value: &Value, prompt: &str, seconds: f64, aspect: &str) -> Value {
 pub fn elevenlabs(
     key: &str,
     voice_id: &str,
+    model: &str,
     text: &str,
     before: &str,
     after: &str,
@@ -784,12 +893,19 @@ pub fn elevenlabs(
     if key.trim().is_empty() || voice_id.trim().is_empty() {
         return Err("ElevenLabs needs an API key and a voice id".to_owned());
     }
-    let mut body = json!({"text": text, "model_id": "eleven_multilingual_v2"});
-    if !before.trim().is_empty() {
-        body["previous_text"] = json!(before.trim());
-    }
-    if !after.trim().is_empty() {
-        body["next_text"] = json!(after.trim());
+    let model = match model.trim() {
+        "" => VOICE_MODEL,
+        model => model,
+    };
+    let mut body = json!({"text": text, "model_id": model});
+    // The expressive model reads each line on its own.
+    if model != EXPRESSIVE_VOICE_MODEL {
+        if !before.trim().is_empty() {
+            body["previous_text"] = json!(before.trim());
+        }
+        if !after.trim().is_empty() {
+            body["next_text"] = json!(after.trim());
+        }
     }
     let answer: Value = agent()
         .post(&format!(
@@ -877,6 +993,45 @@ fn save(response: ureq::Response, out: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pronunciation list is read from what was typed, and a listed word
+    /// is written as it is said wherever it stands whole - vowel marks,
+    /// case and punctuation aside, punctuation kept.
+    #[test]
+    fn listed_words_are_written_as_they_are_said() {
+        let list = lexicon("هاتفك = هاتِفَك ؛ GIF=jif\n bad entry ; =x;");
+        assert_eq!(
+            list,
+            [
+                ("هاتفك".to_owned(), "هاتِفَك".to_owned()),
+                ("GIF".to_owned(), "jif".to_owned())
+            ]
+        );
+        assert_eq!(
+            pronounced("سلّم هاتِفك، الآن. A gif! gifted", &list),
+            "سلّم هاتِفَك، الآن. A jif! gifted"
+        );
+        assert_eq!(pronounced("  two  spaces ", &list), "  two  spaces ");
+        assert_eq!(pronounced("هاتفك", &[]), "هاتفك");
+    }
+
+    /// A picture a safety filter refused is not asked for again in the
+    /// same words, each try being paid for; it is asked for gently.
+    #[test]
+    fn a_picture_refused_for_its_content_is_not_tried_again_as_it_stood() {
+        let mut calls = 0;
+        let refused: Result<(), String> = retry(|| {
+            calls += 1;
+            Err("Replicate could not make c01s02_1: NSFW content detected".to_owned())
+        });
+        assert!(refused.is_err());
+        assert_eq!(calls, 1);
+        assert!(refused_for_content(
+            "Replicate could not make x: Flagged by safety filter"
+        ));
+        assert!(!refused_for_content("Replicate took too long to make x"));
+        assert!(softened(" a mushroom cloud ").ends_with(": a mushroom cloud"));
+    }
 
     #[test]
     fn only_a_passing_failure_is_tried_again() {

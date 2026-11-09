@@ -123,6 +123,12 @@ pub struct GeneratePrefs {
     pub elevenlabs_key: String,
     /// The ElevenLabs voice.
     pub elevenlabs_voice: String,
+    /// Which ElevenLabs model reads: 0 multilingual v2, 1 v3, the more
+    /// expressive.
+    pub elevenlabs_model: usize,
+    /// Words the voice says wrong and how to write them so they are said
+    /// right, as typed: `word = reading`, separated by semicolons.
+    pub pronunciation: String,
     /// Row of the language list.
     pub language: usize,
     /// Row of the minutes list.
@@ -157,6 +163,9 @@ pub struct GeneratePrefs {
     /// What the pictures are: 0 pictures and animated cards, 1 animated
     /// cards only, none made by a model.
     pub visuals: usize,
+    /// Row of the picture style list: auto, photo, flat illustration, 3D
+    /// cartoon.
+    pub pictures: usize,
     /// The channel the videos are for, told once and given to the writer
     /// every time: its name, who watches it, how it sounds, the line it
     /// opens with and the one it closes with, and a script it likes.

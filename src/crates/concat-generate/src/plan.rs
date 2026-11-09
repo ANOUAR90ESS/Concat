@@ -57,6 +57,11 @@ pub struct Options {
     /// Every picture enlarged to fill the frame, cropping what spills over,
     /// rather than fitted inside it: a wide shot on a tall Short.
     pub fill_frame: bool,
+    /// The longest a still is held before the cut punches in on it - the
+    /// same picture again, framed tighter or wider - so the eye gets
+    /// something new every few seconds, as short-form video does; 0 holds
+    /// a still for its whole slot.
+    pub hold: f64,
 }
 
 impl Default for Options {
@@ -75,6 +80,7 @@ impl Default for Options {
             music_volume: 0.12,
             fade_seconds: 1.0,
             fill_frame: false,
+            hold: 0.0,
         }
     }
 }
@@ -121,6 +127,8 @@ pub enum Kind {
     Card,
     /// An animated card's words and plates, over its backdrop.
     Graphic,
+    /// A punchy phrase stuck over the pictures as a tilted label.
+    Sticker,
 }
 
 /// One clip to lay down.
@@ -146,6 +154,8 @@ pub struct Placement {
     /// A caption over a drawn shot - an explainer or an animated card -
     /// kept low, under the drawing, rather than over what it draws.
     pub low: bool,
+    /// For a caption, the word of it shown in colour; empty for none.
+    pub emphasis: String,
 }
 
 /// A word of a narration, and when it is said in its file.
@@ -374,17 +384,33 @@ pub fn plan(
             }) {
                 drawings.push((at, at + slot));
             }
-            out.push(Placement {
-                kind: Kind::Shot,
-                start: at,
-                length: slot,
-                file: Some(path.clone()),
-                source: *source,
-                from: 0.0,
-                text: None,
-                graphic: None,
-                low: false,
-            });
+            // A picture held longer than the cut's hold is shown in pieces,
+            // each a punch in on the last; a drawn shot is whole.
+            let still = source.is_none()
+                && scene
+                    .shots
+                    .get(i)
+                    .is_some_and(|shot| shot.made_as() == ShotKind::Image);
+            let pieces = if still && options.hold > 0.0 && slot > options.hold * 1.4 {
+                (slot / options.hold).ceil() as usize
+            } else {
+                1
+            };
+            for piece in 0..pieces {
+                let length = slot / pieces as f64;
+                out.push(Placement {
+                    kind: Kind::Shot,
+                    start: at + length * piece as f64,
+                    length,
+                    file: Some(path.clone()),
+                    source: *source,
+                    from: 0.0,
+                    text: None,
+                    graphic: None,
+                    low: false,
+                    emphasis: String::new(),
+                });
+            }
             // An animated card's words over its backdrop, for the shot's
             // whole slot.
             if let Some(graphic) = scene
@@ -403,6 +429,7 @@ pub fn plan(
                     text: None,
                     graphic: Some(graphic),
                     low: false,
+                    emphasis: String::new(),
                 });
             }
             at += slot;
@@ -419,6 +446,7 @@ pub fn plan(
                 text: None,
                 graphic: None,
                 low: false,
+                emphasis: String::new(),
             });
         }
         // The captions run with the voice when there is one, and over the
@@ -436,6 +464,7 @@ pub fn plan(
             };
             for (card, (at, span)) in cards.into_iter().zip(spans) {
                 let (from, to) = (t + at, t + at + span);
+                let emphasis = emphasis_of(&card, &scene.keywords);
                 let drawn: f64 = drawings
                     .iter()
                     .map(|&(a, b)| (to.min(b) - from.max(a)).max(0.0))
@@ -450,6 +479,7 @@ pub fn plan(
                     text: Some(card),
                     graphic: None,
                     low: span > 0.0 && drawn * 2.0 >= span,
+                    emphasis,
                 });
             }
         }
@@ -469,6 +499,29 @@ pub fn plan(
                 text: Some(text.trim().to_owned()),
                 graphic: None,
                 low: false,
+                emphasis: String::new(),
+            });
+        }
+        // A sticker a moment into the scene, for as long as it takes to
+        // read twice.
+        if let Some(text) = scene
+            .sticker
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            let at = STICKER_LEAD.min(length / 4.0);
+            out.push(Placement {
+                kind: Kind::Sticker,
+                start: t + at,
+                length: STICKER_SECONDS.min(length - at),
+                file: None,
+                source: None,
+                from: 0.0,
+                text: Some(text.to_owned()),
+                graphic: None,
+                low: false,
+                emphasis: String::new(),
             });
         }
         // A data card a moment into the scene, held while the point is
@@ -495,6 +548,7 @@ pub fn plan(
                 text: Some(text),
                 graphic: None,
                 low: false,
+                emphasis: String::new(),
             });
         }
         t += length;
@@ -513,6 +567,7 @@ pub fn plan(
                 text: None,
                 graphic: None,
                 low: false,
+                emphasis: String::new(),
             });
             at += source;
         }
@@ -523,6 +578,32 @@ pub fn plan(
 /// Where an animated caption over a drawn shot sits, down from the middle
 /// as a fraction of the frame: under the explainer's captions band.
 const LOW_CAPTION: f64 = 0.37;
+
+/// How long into its scene a sticker comes up, and how long it stays.
+const STICKER_LEAD: f64 = 0.6;
+const STICKER_SECONDS: f64 = 2.4;
+
+/// The colour a caption's emphasised word is shown in.
+const EMPHASIS: &str = "#FFD400";
+
+/// The first of `keywords` a caption `card` holds, as the card has it;
+/// empty when it holds none.
+fn emphasis_of(card: &str, keywords: &[String]) -> String {
+    let plain = |word: &str| {
+        crate::storyboard::without_marks(word)
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase()
+    };
+    let wanted: Vec<String> = keywords
+        .iter()
+        .map(|word| plain(word))
+        .filter(|word| !word.is_empty())
+        .collect();
+    card.split_whitespace()
+        .find(|word| wanted.contains(&plain(word)))
+        .map(plain)
+        .unwrap_or_default()
+}
 
 /// How long into its scene a data card comes up, and how long it stays.
 const CARD_LEAD: f64 = 0.4;
@@ -624,6 +705,7 @@ pub fn thumbnail(
         text: None,
         graphic: None,
         low: false,
+        emphasis: String::new(),
     };
     fit(editor, &clip, &media, &lane, &place, cover(picture, frame));
     if !words.trim().is_empty() {
@@ -693,7 +775,9 @@ pub fn cut(
             Kind::Shot => lanes[0].clone(),
             Kind::Voice => lanes[1].clone(),
             Kind::Music => lanes[2].clone(),
-            Kind::Title | Kind::Caption | Kind::Card | Kind::Graphic => lanes[3].clone(),
+            Kind::Title | Kind::Caption | Kind::Card | Kind::Graphic | Kind::Sticker => {
+                lanes[3].clone()
+            }
         }
     };
 
@@ -724,6 +808,7 @@ pub fn cut(
         Kind::Title,
         Kind::Graphic,
         Kind::Card,
+        Kind::Sticker,
         Kind::Caption,
     ];
     let shots: Vec<&Placement> = placements.iter().filter(|p| p.kind == Kind::Shot).collect();
@@ -778,7 +863,13 @@ pub fn cut(
                             .iter()
                             .position(|shot| std::ptr::eq(*shot, p))
                             .unwrap_or(0);
+                        // The same picture going on from the shot before
+                        // it: a punch in, cut straight.
+                        let punch = n > 0
+                            && shots[n - 1].file == p.file
+                            && (shots[n - 1].start + shots[n - 1].length - p.start).abs() < 1e-6;
                         if n > 0
+                            && !punch
                             && let Some(id) = &options.transition
                         {
                             patch.transition_in = Some(Some(Transition {
@@ -787,7 +878,15 @@ pub fn cut(
                             }));
                         }
                         if p.source.is_none() && options.ken_burns {
-                            let (from, to) = if n % 2 == 0 { (1.0, 1.12) } else { (1.12, 1.0) };
+                            let (from, to) = match (punch, n % 2 == 0) {
+                                // Tighter than the piece before ended, then
+                                // wide again, by turns: each jump reads as
+                                // a cut.
+                                (true, false) => (1.3, 1.2),
+                                (true, true) => (1.0, 1.08),
+                                (false, true) => (1.0, 1.12),
+                                (false, false) => (1.12, 1.0),
+                            };
                             key(
                                 editor,
                                 &clip,
@@ -858,12 +957,36 @@ pub fn cut(
                         pop(editor, &card, p.length);
                     }
                 }
+                // Over the pictures and under the captions, on the cards'
+                // lane: tilted, on a red plate, popping in.
+                Kind::Sticker => {
+                    if figures.is_none() {
+                        figures = editor.apply(Command::AddTrack { bottom: false });
+                    }
+                    let sticker = editor.apply(Command::AddTextClip {
+                        track_id: figures.clone(),
+                        above: true,
+                        start: p.start,
+                        style: Some(sticker_style(p.text.clone().unwrap_or_default())),
+                        duration: Some(p.length),
+                        offset_y: Some(-0.2),
+                    });
+                    if let Some(sticker) = sticker {
+                        key(
+                            editor,
+                            &sticker,
+                            KeyProperty::Rotation,
+                            &[(0.0, -6.0), (1.0, -6.0)],
+                        );
+                        pop(editor, &sticker, p.length);
+                    }
+                }
                 Kind::Caption => {
                     if captions.is_none() {
                         captions = editor.apply(Command::AddTrack { bottom: false });
                     }
                     let text = p.text.clone().unwrap_or_default();
-                    let (style, offset_y) = match options.caption_look {
+                    let (mut style, offset_y) = match options.caption_look {
                         CaptionLook::Classic => (caption_style(text), 0.38),
                         // Over a drawing, under it: the drawing keeps the
                         // frame above its captions band clear for them.
@@ -872,6 +995,13 @@ pub fn cut(
                         }
                         CaptionLook::Animated => (animated_style(text, cards % 2 == 1), 0.24),
                     };
+                    // The word to land on in colour; the rest of the card
+                    // then in white, so the colour means something.
+                    if !p.emphasis.is_empty() {
+                        style.color = "#FFFFFF".to_owned();
+                        style.emphasis = p.emphasis.clone();
+                        style.emphasis_color = EMPHASIS.to_owned();
+                    }
                     let card = editor.apply(Command::AddTextClip {
                         track_id: captions.clone(),
                         above: true,
@@ -1060,6 +1190,23 @@ fn cover(item: &NewMedia, frame: (u32, u32)) -> f64 {
             ratio.max(1.0 / ratio).min(8.0)
         }
         _ => 1.0,
+    }
+}
+
+/// A sticker: a few heavy words on a red plate, tilted by the cut.
+fn sticker_style(content: String) -> TextStyle {
+    TextStyle {
+        content,
+        font_size: 0.058,
+        font_weight: 900.0,
+        color: "#FFFFFF".to_owned(),
+        shadow: true,
+        background: "#E63946".to_owned(),
+        background_radius: 0.012,
+        background_padding_x: 0.026,
+        background_padding_y: 0.014,
+        max_width: 0.7,
+        ..TextStyle::default()
     }
 }
 
@@ -1296,6 +1443,150 @@ mod tests {
             origin: None,
             color_space: Default::default(),
         }
+    }
+
+    /// With a hold, a still longer than it is shown in pieces cut straight
+    /// one into the next, each framed anew; a clip is whole.
+    #[test]
+    fn a_long_still_is_punched_in_on() {
+        let board = board();
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().voice = None;
+        let options = Options {
+            titles: false,
+            captions: false,
+            hold: 1.0,
+            ..Options::default()
+        };
+        let placements = plan(&board, &files, &options, None).unwrap();
+        let shots = of(&placements, Kind::Shot);
+        let stills: Vec<_> = shots
+            .iter()
+            .filter(|p| p.file.as_deref() == Some("/c.png"))
+            .collect();
+        assert!(stills.len() >= 2, "{stills:?}");
+        let whole: f64 = stills.iter().map(|p| p.length).sum();
+        assert!(
+            (stills[0].start + whole
+                - (stills.last().unwrap().start + stills.last().unwrap().length))
+                .abs()
+                < 1e-9
+        );
+        assert_eq!(
+            shots
+                .iter()
+                .filter(|p| p.file.as_deref() == Some("/a.mp4"))
+                .count(),
+            1
+        );
+
+        let media = HashMap::from([
+            (
+                "/a.mp4".to_owned(),
+                probed("/a.mp4", MediaKind::Video, Some(4.0)),
+            ),
+            (
+                "/b.mp4".to_owned(),
+                probed("/b.mp4", MediaKind::Video, Some(6.0)),
+            ),
+            (
+                "/c.png".to_owned(),
+                probed("/c.png", MediaKind::Image, None),
+            ),
+        ]);
+        let mut editor = Bare(Editor::default());
+        cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        let still = editor.media_of("/c.png").expect("imported");
+        let active = editor.0.project().active();
+        let mut pieces: Vec<_> = active
+            .clips
+            .iter()
+            .filter(|clip| clip.media_id == still)
+            .collect();
+        pieces.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+        assert_eq!(pieces.len(), stills.len());
+        // The pieces after the first come in on a straight cut.
+        for piece in &pieces[1..] {
+            assert!(piece.transition_in.is_none(), "{piece:?}");
+        }
+    }
+
+    /// A caption that holds one of its scene's keywords shows it in colour,
+    /// whatever its case or punctuation; a sticker is laid tilted on the
+    /// cards' lane, a moment into its scene.
+    #[test]
+    fn keywords_colour_their_captions_and_a_sticker_is_tilted() {
+        assert_eq!(
+            emphasis_of("جيب التيليفون!", &["التيليفون".into()]),
+            "التيليفون"
+        );
+        assert_eq!(
+            emphasis_of("Show me the Phone.", &["phone".into()]),
+            "phone"
+        );
+        assert_eq!(emphasis_of("nothing here", &["phone".into()]), "");
+        assert_eq!(emphasis_of("a phone", &[]), "");
+        assert_eq!(emphasis_of("سلّم هاتفك", &["هاتِفَك".into()]), "هاتفك");
+
+        let mut board = board();
+        let scene = &mut board.chapters[0].scenes[0];
+        scene.keywords = vec!["Second".into()];
+        scene.sticker = Some("Fined on the spot!".into());
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().voice = None;
+        let options = Options {
+            titles: false,
+            caption_look: CaptionLook::Animated,
+            ..Options::default()
+        };
+        let placements = plan(&board, &files, &options, None).unwrap();
+        let captions = of(&placements, Kind::Caption);
+        assert!(captions.iter().any(|c| c.emphasis == "second"));
+        assert!(captions.iter().any(|c| c.emphasis.is_empty()));
+        let stickers = of(&placements, Kind::Sticker);
+        assert_eq!(stickers.len(), 1);
+        assert!((stickers[0].start - STICKER_LEAD).abs() < 1e-9);
+
+        let media = HashMap::from([
+            (
+                "/a.mp4".to_owned(),
+                probed("/a.mp4", MediaKind::Video, Some(4.0)),
+            ),
+            (
+                "/b.mp4".to_owned(),
+                probed("/b.mp4", MediaKind::Video, Some(6.0)),
+            ),
+            (
+                "/c.png".to_owned(),
+                probed("/c.png", MediaKind::Image, None),
+            ),
+        ]);
+        let mut editor = Bare(Editor::default());
+        cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        let active = editor.0.project().active();
+        let sticker = active
+            .clips
+            .iter()
+            .find(|clip| {
+                clip.text
+                    .as_ref()
+                    .is_some_and(|t| t.content == "Fined on the spot!")
+            })
+            .expect("the sticker is laid");
+        assert!(
+            sticker
+                .keys
+                .iter()
+                .any(|k| k.property == KeyProperty::Rotation && k.value == -6.0)
+        );
+        let coloured = active
+            .clips
+            .iter()
+            .filter_map(|clip| clip.text.as_ref())
+            .find(|text| text.emphasis == "second")
+            .expect("a caption in colour");
+        assert_eq!(coloured.emphasis_color, EMPHASIS);
+        assert_eq!(coloured.color, "#FFFFFF");
     }
 
     /// A caption over a drawn shot is kept low, under the drawing; one

@@ -497,7 +497,13 @@ impl Job {
             .scenes()
             .filter(|scene| !scene.narration.trim().is_empty())
             .collect();
-        if let Voice::ElevenLabs { key, voice_id } = voice {
+        if let Voice::ElevenLabs {
+            key,
+            voice_id,
+            model,
+            lexicon,
+        } = voice
+        {
             // A few lines at a time: each is a wait on the service, and
             // each is read in the light of its neighbours' words, not of
             // their sound, so none waits on another.
@@ -531,20 +537,43 @@ impl Job {
                                 let scene = spoken[i];
                                 // Marked for the voice where it was: the
                                 // captions keep the words as written.
-                                let text = scene.spoken();
+                                // And with the words it says wrong
+                                // written as they are said.
+                                let text = providers::pronounced(scene.spoken(), lexicon);
                                 let cost =
                                     text.chars().count() as f64 / 1000.0 * prices.voice_per_1k;
-                                let words = spend.take(cost).and_then(|()| {
+                                let read = |model: &str| {
                                     providers::retry(|| {
                                         providers::elevenlabs(
                                             key,
                                             voice_id,
-                                            text,
+                                            model,
+                                            &text,
                                             around(i.checked_sub(1)),
                                             around(Some(i + 1)),
                                             &voice_dir.join(format!("{}.mp3", scene.id)),
                                         )
                                     })
+                                };
+                                let words = spend.take(cost).and_then(|()| {
+                                    match read(model) {
+                                        // The expressive model refused the
+                                        // line: read with the usual one.
+                                        Err(error)
+                                            if model.trim()
+                                                == providers::EXPRESSIVE_VOICE_MODEL
+                                                && providers::refused_for_good(&error)
+                                                && !error.contains("401") =>
+                                        {
+                                            log::warn!(
+                                                "{}: {error}; read with {}",
+                                                scene.id,
+                                                providers::VOICE_MODEL
+                                            );
+                                            read(providers::VOICE_MODEL)
+                                        }
+                                        read => read,
+                                    }
                                     .inspect_err(|_| spend.refund(cost))
                                 });
                                 (i, words)
@@ -684,7 +713,12 @@ impl Job {
                             of: total,
                             prompt: shot.prompt.clone(),
                         });
-                        providers::draft(&shots_dir.join(format!("{stem}.png")), width, height, n)?;
+                        stand_in(
+                            &shots_dir.join(format!("{stem}.png")),
+                            (width, height),
+                            &idea_of(scene),
+                            n,
+                        )?;
                     }
                     Shots::Replicate { .. } => {
                         queue.push(Queued {
@@ -693,6 +727,7 @@ impl Job {
                             shot,
                             seconds,
                             stem,
+                            idea: idea_of(scene),
                         });
                         continue;
                     }
@@ -1138,6 +1173,9 @@ struct Queued<'a> {
     shot: &'a Shot,
     seconds: f64,
     stem: String,
+    /// What the scene is about, in its own words: what a card standing in
+    /// for the shot says.
+    idea: String,
 }
 
 /// What every shot of a batch shares.
@@ -1270,10 +1308,10 @@ impl Job {
                                 // Noted as it happens: a run that ends
                                 // early still makes this shot again next
                                 // time.
-                                let noted = providers::draft(
+                                let noted = stand_in(
                                     &batch.dir.join(format!("{stem}.png")),
-                                    width,
-                                    height,
+                                    (width, height),
+                                    &queued.idea,
                                     queued.n,
                                 )
                                 .and_then(|()| self.remember_stand_ins(stood_in));
@@ -1335,6 +1373,31 @@ impl<'a> Order<'a> {
             dir,
             stem,
         }
+    }
+}
+
+/// A card standing in for a shot that could not be made, written as a
+/// PNG of the frame's size at `out`: the scene's idea in large words over
+/// coloured lights, lit differently for each `n` - designed, not a bare
+/// wash, and drawn here for nothing.
+fn stand_in(out: &Path, frame: (u32, u32), idea: &str, n: usize) -> Result<(), String> {
+    let canvas = (f64::from(frame.0), f64::from(frame.1));
+    let mut card = crate::explainer::stand_in(idea, n, canvas);
+    card.settle();
+    crate::explainer::render_still(&card, canvas, frame, 2.0, out)
+}
+
+/// What a scene is about, in its own words: its words on screen, or the
+/// first words of its narration.
+fn idea_of(scene: &crate::storyboard::Scene) -> String {
+    match scene.on_screen_text.as_deref().map(str::trim) {
+        Some(text) if !text.is_empty() => text.to_owned(),
+        _ => scene
+            .narration
+            .split_whitespace()
+            .take(9)
+            .collect::<Vec<_>>()
+            .join(" "),
     }
 }
 
@@ -1530,10 +1593,10 @@ impl Job {
             }
             Shots::Draft => {
                 let (width, height) = board.frame();
-                providers::draft(
+                stand_in(
                     &dir.join(format!("{take}.png")),
-                    width,
-                    height,
+                    (width, height),
+                    &idea_of(scene),
                     number as usize + index,
                 )?;
             }
@@ -1615,16 +1678,33 @@ impl Job {
             }
         }
         spend.take(prices.still)?;
-        let image = providers::retry(|| {
-            providers::replicate_image(
-                token,
-                image_model,
-                &order.prompt,
-                order.aspect,
-                order.dir,
-                order.stem,
-            )
-        });
+        let still = |prompt: &str| {
+            providers::retry(|| {
+                providers::replicate_image(
+                    token,
+                    image_model,
+                    prompt,
+                    order.aspect,
+                    order.dir,
+                    order.stem,
+                )
+            })
+        };
+        let image = match still(&order.prompt) {
+            // Refused by the model's safety filter: asked once more, gently,
+            // before a card stands in for it.
+            Err(error) if providers::refused_for_content(&error) => {
+                log::warn!(
+                    "{}: refused as it stood ({error}); asked again gently",
+                    order.stem
+                );
+                spend.take(prices.still)?;
+                still(&providers::softened(&order.prompt)).inspect_err(|_| {
+                    spend.refund(prices.still);
+                })
+            }
+            image => image,
+        };
         match image {
             Ok(_) => Ok(match still_for_clip {
                 Some(error) => Outcome::StillForClip(error),
