@@ -21,43 +21,86 @@ fn families(face: Face) -> &'static str {
     }
 }
 
-/// The frame at `t` (seconds), for an explainer whose cues are placed.
-pub fn frame(explainer: &Explainer, canvas: (f64, f64), t: f64) -> String {
+/// What the frame defines once and its elements refer to: gradients and
+/// filters, each with an id of its own.
+#[derive(Default)]
+struct Defs {
+    text: String,
+    next: usize,
+}
+
+impl Defs {
+    fn id(&mut self, prefix: &str) -> String {
+        self.next += 1;
+        format!("{prefix}{}", self.next)
+    }
+}
+
+/// Which part of a frame: drawn apart so that what is soft - the
+/// backdrop, the shadows, the glows - can be drawn at a quarter of the
+/// size and enlarged, and only what is sharp at full size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layer {
+    /// The backdrop, its lights and vignette, and the elements' shadows.
+    Soft,
+    /// The grid, the specks and the elements themselves, over a clear
+    /// ground.
+    Sharp,
+    /// The glows alone, blurred, over a clear ground: added as light.
+    Glow,
+}
+
+/// One layer of the frame at `t` (seconds), for an explainer whose cues
+/// are placed.
+pub fn frame(explainer: &Explainer, canvas: (f64, f64), t: f64, layer: Layer) -> String {
     let (w, h) = canvas;
-    let mut out = String::with_capacity(4096);
-    let _ = write!(
-        out,
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">"#
-    );
-    let colours: Vec<&str> = explainer
-        .background
-        .iter()
-        .map(String::as_str)
-        .filter(|c| parse_colour(c).is_some())
-        .collect();
-    match colours.as_slice() {
-        [top, bottom, ..] => {
-            let _ = write!(
-                out,
-                r#"<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{}"/><stop offset="1" stop-color="{}"/></linearGradient></defs><rect width="{w}" height="{h}" fill="url(#bg)"/>"#,
-                hex(top),
-                hex(bottom)
-            );
+    let mut defs = Defs::default();
+    let mut body = String::with_capacity(8192);
+    if layer == Layer::Soft {
+        let colours: Vec<&str> = explainer
+            .background
+            .iter()
+            .map(String::as_str)
+            .filter(|c| parse_colour(c).is_some())
+            .collect();
+        match colours.as_slice() {
+            [top, bottom, ..] => {
+                let _ = write!(
+                    defs.text,
+                    r#"<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{}"/><stop offset="1" stop-color="{}"/></linearGradient>"#,
+                    hex(top),
+                    hex(bottom)
+                );
+                let _ = write!(body, r#"<rect width="{w}" height="{h}" fill="url(#bg)"/>"#);
+            }
+            [one] => {
+                let _ = write!(
+                    body,
+                    r#"<rect width="{w}" height="{h}" fill="{}"/>"#,
+                    hex(one)
+                );
+            }
+            [] => {
+                let _ = write!(body, r##"<rect width="{w}" height="{h}" fill="#0F172A"/>"##);
+            }
         }
-        [one] => {
-            let _ = write!(
-                out,
-                r#"<rect width="{w}" height="{h}" fill="{}"/>"#,
-                hex(one)
-            );
-        }
-        [] => {
-            let _ = write!(out, r##"<rect width="{w}" height="{h}" fill="#0F172A"/>"##);
-        }
+        lights(&mut body, &mut defs, explainer, t);
+        // A vignette: the eye kept to the middle.
+        let _ = write!(
+            defs.text,
+            r##"<radialGradient id="vignette" cx="0.5" cy="0.5" r="0.75"><stop offset="0.55" stop-color="#000000" stop-opacity="0"/><stop offset="1" stop-color="#000000" stop-opacity="0.55"/></radialGradient>"##
+        );
+        let _ = write!(
+            body,
+            r#"<rect width="{w}" height="{h}" fill="url(#vignette)"/>"#
+        );
+    }
+    if layer == Layer::Sharp {
+        specks(&mut body, explainer, canvas, t);
     }
     let camera = explainer.camera(canvas, t);
     let _ = write!(
-        out,
+        body,
         r#"<g transform="translate({} {}) scale({}) translate({} {})">"#,
         w / 2.0,
         h / 2.0,
@@ -66,14 +109,101 @@ pub fn frame(explainer: &Explainer, canvas: (f64, f64), t: f64) -> String {
         -camera.y
     );
     for element in &explainer.elements {
-        draw(&mut out, explainer, element, t);
+        draw(&mut body, &mut defs, explainer, element, t, layer);
     }
-    out.push_str("</g></svg>");
-    out
+    body.push_str("</g>");
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}"><defs>{}</defs>{body}</svg>"#,
+        defs.text
+    )
+}
+
+/// The lights behind it all, drifting and breathing; they do not move
+/// with the camera.
+fn lights(out: &mut String, defs: &mut Defs, explainer: &Explainer, t: f64) {
+    for (n, light) in explainer.lights.iter().enumerate() {
+        let Some([r, g, b, _]) = parse_colour(&light.color) else {
+            continue;
+        };
+        let phase = n as f64 * 1.7;
+        let x = light.x + 40.0 * (t * 0.31 + phase).sin();
+        let y = light.y + 28.0 * (t * 0.23 + phase).cos();
+        let breath = 0.85 + 0.15 * (t * 0.5 + phase).sin();
+        let id = defs.id("light");
+        let _ = write!(
+            defs.text,
+            r#"<radialGradient id="{id}"><stop offset="0" stop-color="{}" stop-opacity="{}"/><stop offset="1" stop-color="{}" stop-opacity="0"/></radialGradient>"#,
+            hex_of([r, g, b, 255]),
+            round(light.opacity * breath),
+            hex_of([r, g, b, 255])
+        );
+        let _ = write!(
+            out,
+            r#"<circle cx="{}" cy="{}" r="{}" fill="url(#{id})"/>"#,
+            round(x),
+            round(y),
+            light.r.max(1.0)
+        );
+    }
+}
+
+/// A faint grid and specks floating up, over the backdrop.
+fn specks(out: &mut String, explainer: &Explainer, canvas: (f64, f64), t: f64) {
+    let (w, h) = canvas;
+    if explainer.grid {
+        let mut d = String::new();
+        let step = 120.0;
+        let mut x = step;
+        while x < w {
+            let _ = write!(d, "M{x} 0V{h}");
+            x += step;
+        }
+        let mut y = step;
+        while y < h {
+            let _ = write!(d, "M0 {y}H{w}");
+            y += step;
+        }
+        let _ = write!(
+            out,
+            r##"<path d="{d}" stroke="#FFFFFF" stroke-opacity="0.05" stroke-width="1.5" fill="none"/>"##
+        );
+    }
+    if explainer.particles > 0 {
+        let colour =
+            parse_colour(&explainer.particle_color).map_or_else(|| "#FFFFFF".to_owned(), hex_of);
+        for n in 0..explainer.particles.min(120) {
+            let seed = |k: f64| {
+                ((n as f64 * 12.9898 + k * 78.233).sin() * 43758.5453)
+                    .fract()
+                    .abs()
+            };
+            let speed = 8.0 + 22.0 * seed(3.0);
+            let x = seed(1.0) * w + 12.0 * (t * 0.6 + seed(5.0) * 6.0).sin();
+            let y = (seed(2.0) * (h + 40.0) - t * speed).rem_euclid(h + 40.0) - 20.0;
+            let size = 1.5 + 3.0 * seed(4.0);
+            let twinkle =
+                0.25 + 0.55 * (0.5 + 0.5 * (t * (1.0 + 2.0 * seed(6.0)) + seed(7.0) * 6.0).sin());
+            let _ = write!(
+                out,
+                r#"<circle cx="{}" cy="{}" r="{}" fill="{colour}" opacity="{}"/>"#,
+                round(x),
+                round(y),
+                round(size),
+                round(twinkle)
+            );
+        }
+    }
 }
 
 /// One element, and a group's children inside it.
-fn draw(out: &mut String, explainer: &Explainer, element: &Element, t: f64) {
+fn draw(
+    out: &mut String,
+    defs: &mut Defs,
+    explainer: &Explainer,
+    element: &Element,
+    t: f64,
+    layer: Layer,
+) {
     let look = explainer.look(element, t);
     let opacity = look.opacity * element.opacity;
     if opacity <= 0.002 {
@@ -102,8 +232,52 @@ fn draw(out: &mut String, explainer: &Explainer, element: &Element, t: f64) {
         r#"<g transform="{transform}" opacity="{}">"#,
         round(opacity)
     );
-    let fill = paint(&element.fill, &look);
-    let stroke = paint(&element.stroke, &look);
+    let mut fill = paint(&element.fill, &look);
+    let mut stroke = paint(&element.stroke, &look);
+    let bounds = bounds(element);
+    // A gradient in place of one colour: along an outline for what is all
+    // outline, across the inside for the rest.
+    if let Some(url) = gradient(defs, element, bounds) {
+        match element.kind {
+            ElementKind::Line | ElementKind::Arrow | ElementKind::Icon => stroke = url,
+            _ => fill = url,
+        }
+    }
+    // The soft layer draws the element's shadow alone, the glow layer
+    // its glow alone, the sharp layer the element itself; a group is gone
+    // through in every layer, for what its elements have.
+    let mut filters = 0;
+    let shown = match layer {
+        Layer::Sharp => true,
+        Layer::Soft => element.shadow,
+        Layer::Glow => element.glow > 0.0,
+    };
+    if !shown && element.kind != ElementKind::Group {
+        out.push_str("</g>");
+        return;
+    }
+    if shown && layer == Layer::Soft {
+        let id = defs.id("shadow");
+        let _ = write!(
+            defs.text,
+            r#"<filter id="{id}" filterUnits="userSpaceOnUse" {}><feGaussianBlur in="SourceAlpha" stdDeviation="14"/><feOffset dy="12"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer></filter>"#,
+            region(bounds, 70.0)
+        );
+        let _ = write!(out, r#"<g filter="url(#{id})">"#);
+        filters += 1;
+    }
+    if shown && layer == Layer::Glow {
+        let spread = 6.0 + 18.0 * element.glow.min(1.0);
+        let id = defs.id("glow");
+        let _ = write!(
+            defs.text,
+            r#"<filter id="{id}" filterUnits="userSpaceOnUse" {}><feGaussianBlur in="SourceGraphic" stdDeviation="{}" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/></feMerge></filter>"#,
+            region(bounds, spread * 3.0 + 10.0),
+            round(spread)
+        );
+        let _ = write!(out, r#"<g filter="url(#{id})">"#);
+        filters += 1;
+    }
     let dash = if element.dash {
         format!(
             r#" stroke-dasharray="{} {}""#,
@@ -194,12 +368,172 @@ fn draw(out: &mut String, explainer: &Explainer, element: &Element, t: f64) {
                 element.x, element.y
             );
             for child in &element.children {
-                draw(out, explainer, child, t);
+                // Inside a group shadowed or glowing as one, its elements are
+                // drawn whole, and the group's filter makes them a shadow or a
+                // glow.
+                let inner = if shown && layer != Layer::Sharp {
+                    Layer::Sharp
+                } else {
+                    layer
+                };
+                draw(out, defs, explainer, child, t, inner);
             }
             out.push_str("</g>");
         }
     }
+    for _ in 0..filters {
+        out.push_str("</g>");
+    }
     out.push_str("</g>");
+}
+
+/// Where an element lies in its own space, roughly: its gradient is laid
+/// across it and its glow drawn within it.
+fn bounds(element: &Element) -> (f64, f64, f64, f64) {
+    match element.kind {
+        ElementKind::Rect => (
+            element.x,
+            element.y,
+            element.x + element.w,
+            element.y + element.h,
+        ),
+        ElementKind::Circle => (
+            element.x - element.r,
+            element.y - element.r,
+            element.x + element.r,
+            element.y + element.r,
+        ),
+        ElementKind::Icon => {
+            let half = element.size.max(1.0) / 2.0;
+            (
+                element.x - half,
+                element.y - half,
+                element.x + half,
+                element.y + half,
+            )
+        }
+        ElementKind::Line | ElementKind::Arrow => {
+            let xs = element.points.iter().map(|p| p[0]);
+            let ys = element.points.iter().map(|p| p[1]);
+            let (x0, x1) = xs.fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(v), b.max(v)));
+            let (y0, y1) = ys.fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(v), b.max(v)));
+            if x0 > x1 {
+                return (element.x, element.y, element.x + 1.0, element.y + 1.0);
+            }
+            // A bowed arrow bulges by its curve.
+            let bow = element.curve.abs() * ((x1 - x0).hypot(y1 - y0)) * 0.6;
+            (x0 - bow, y0 - bow, x1 + bow, y1 + bow)
+        }
+        ElementKind::Path => match kurbo::BezPath::from_svg(element.d.trim()) {
+            Ok(path) => {
+                let b = path.bounding_box();
+                (b.x0, b.y0, b.x1, b.y1)
+            }
+            Err(_) => (element.x, element.y, element.x + 1.0, element.y + 1.0),
+        },
+        ElementKind::Text => {
+            let size = element.size.max(1.0);
+            let lines: Vec<&str> = element.text.split('\n').collect();
+            let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1) as f64;
+            let width = longest * size * 0.58;
+            let x0 = match element.align {
+                Align::Start => element.x - width,
+                Align::Middle => element.x - width / 2.0,
+                Align::End => element.x - width,
+            };
+            let x1 = match element.align {
+                Align::Start => element.x + width,
+                Align::Middle => element.x + width / 2.0,
+                Align::End => element.x + width,
+            };
+            (
+                x0,
+                element.y - size,
+                x1,
+                element.y + size * 1.25 * (lines.len() as f64 - 1.0) + size * 0.4,
+            )
+        }
+        ElementKind::Group => {
+            let mut b = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+            for child in &element.children {
+                let c = bounds(child);
+                b = (b.0.min(c.0), b.1.min(c.1), b.2.max(c.2), b.3.max(c.3));
+            }
+            if b.0 > b.2 {
+                (element.x, element.y, element.x + 1.0, element.y + 1.0)
+            } else {
+                (
+                    b.0 + element.x,
+                    b.1 + element.y,
+                    b.2 + element.x,
+                    b.3 + element.y,
+                )
+            }
+        }
+    }
+}
+
+/// A filter's region over `bounds`, `pad` wider on every side.
+fn region(bounds: (f64, f64, f64, f64), pad: f64) -> String {
+    let (x0, y0, x1, y1) = bounds;
+    format!(
+        r#"x="{}" y="{}" width="{}" height="{}""#,
+        round(x0 - pad),
+        round(y0 - pad),
+        round((x1 - x0).max(1.0) + pad * 2.0),
+        round((y1 - y0).max(1.0) + pad * 2.0)
+    )
+}
+
+/// The element's gradient defined, and the paint that refers to it; none
+/// for fewer than two colours.
+fn gradient(defs: &mut Defs, element: &Element, bounds: (f64, f64, f64, f64)) -> Option<String> {
+    let colours: Vec<[u8; 4]> = element
+        .gradient
+        .iter()
+        .filter_map(|c| parse_colour(c))
+        .collect();
+    if colours.len() < 2 {
+        return None;
+    }
+    let id = defs.id("grad");
+    let (x0, y0, x1, y1) = bounds;
+    let stops: String = colours
+        .iter()
+        .enumerate()
+        .map(|(n, &[r, g, b, a])| {
+            format!(
+                r#"<stop offset="{}" stop-color="{}" stop-opacity="{}"/>"#,
+                round(n as f64 / (colours.len() - 1) as f64),
+                hex_of([r, g, b, 255]),
+                round(a as f64 / 255.0)
+            )
+        })
+        .collect();
+    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    if element.radial {
+        let r = ((x1 - x0).max(y1 - y0) / 2.0).max(1.0);
+        let _ = write!(
+            defs.text,
+            r#"<radialGradient id="{id}" gradientUnits="userSpaceOnUse" cx="{}" cy="{}" r="{}">{stops}</radialGradient>"#,
+            round(cx),
+            round(cy),
+            round(r)
+        );
+    } else {
+        let angle = element.angle.to_radians();
+        let half = ((x1 - x0) * angle.cos().abs() + (y1 - y0) * angle.sin().abs()) / 2.0;
+        let (dx, dy) = (angle.cos() * half, angle.sin() * half);
+        let _ = write!(
+            defs.text,
+            r#"<linearGradient id="{id}" gradientUnits="userSpaceOnUse" x1="{}" y1="{}" x2="{}" y2="{}">{stops}</linearGradient>"#,
+            round(cx - dx),
+            round(cy - dy),
+            round(cx + dx),
+            round(cy + dy)
+        );
+    }
+    Some(format!("url(#{id})"))
 }
 
 /// The point an element turns, scales and grows about.
@@ -266,7 +600,8 @@ fn drawn_fill(fill: &str, look: &Look) -> String {
     }
     match parse_colour(fill) {
         Some([r, g, b, a]) => hex_of([r, g, b, (a as f64 * k).round() as u8]),
-        None => fill.to_owned(),
+        // A gradient fades up by its opacity.
+        None => format!(r#"{fill}" fill-opacity="{}"#, round(k)),
     }
 }
 
@@ -492,12 +827,12 @@ mod tests {
             ]
         }))
         .unwrap();
-        let svg = frame(&explainer, (1920.0, 1080.0), 0.5);
+        let svg = frame(&explainer, (1920.0, 1080.0), 0.5, Layer::Sharp);
         assert!(svg.contains(r#"stroke-dashoffset="50""#), "{svg}");
         // Half way, three of the six words.
         assert!(svg.contains(">Salt &amp; water</tspan>"), "{svg}");
         assert!(!svg.contains("sea"), "{svg}");
-        let done = frame(&explainer, (1920.0, 1080.0), 2.0);
+        let done = frame(&explainer, (1920.0, 1080.0), 2.0, Layer::Sharp);
         assert!(!done.contains("stroke-dashoffset"));
         assert!(done.contains("&lt;in&gt; the sea"));
         assert!((path_length("M0 0L30 40") - 50.0).abs() < 1e-6);
