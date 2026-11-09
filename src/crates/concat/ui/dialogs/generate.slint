@@ -74,6 +74,14 @@ export struct GenerateSheetData {
     /// 0 classic, 1 animated
     caption-look: int,
     titles: bool,
+    /// The cut's own sounds, and the music lifted where nobody speaks.
+    sounds: bool,
+    /// The channel's colour, as typed.
+    brand-color: string,
+    /// Row of the logo list; 0 is none.
+    logo: int,
+    /// The channel's opening and closing on every video.
+    bumpers: bool,
     anthropic-key: string,
     replicate-token: string,
     /// The video model; empty for stills only.
@@ -219,6 +227,7 @@ export component GenerateDialog inherits Modal {
     in property <bool> phone;
     /// "None", then every recording in the bin.
     in property <[string]> music-options;
+    in property <[string]> logo-options;
 
     /// Which text: 0 topic, 1 notes, 2 Anthropic key, 3 Replicate token,
     /// 4 Replicate video model, 5 ElevenLabs key, 6 ElevenLabs voice,
@@ -751,6 +760,53 @@ export component GenerateDialog inherits Modal {
                                 edited(text) => { root.text-edited(16, text); }
                             }
                         }
+
+                        // The channel's look: its colour, its logo in a
+                        // corner, its opening and closing on every video.
+                        DialogRow {
+                            label: I18n.t("generate.brandColor");
+                            Field {
+                                value: root.data.brand-color;
+                                technical: true;
+                                placeholder: "#FFD400";
+                                edited(text) => { root.text-edited(18, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.brandLogo");
+                            Select {
+                                options: root.logo-options;
+                                current: root.data.logo;
+                                changed(index) => { root.choice-changed(14, index); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.brandBumpers");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.bumpers;
+                                    toggled(on) => { root.toggled(5, on); }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: I18n.t("generate.brandHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
                     }
 
                     DialogSection {
@@ -824,6 +880,24 @@ export component GenerateDialog inherits Modal {
                                 Switch {
                                     checked: root.data.titles;
                                     toggled(on) => { root.toggled(1, on); }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.sounds");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.sounds;
+                                    toggled(on) => { root.toggled(4, on); }
                                 }
                             }
                         }

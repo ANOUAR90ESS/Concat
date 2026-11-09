@@ -24,6 +24,7 @@ use concat_generate::cost::{self, Estimate, Prices};
 use concat_generate::job::{Costs, Idea, Job, Made, Remade, Status, Step};
 use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{self, DEFAULT_VIDEO_MODEL, Shots, Voice};
+use concat_generate::review;
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{
@@ -173,6 +174,9 @@ pub struct GeneratePane {
     phase: i32,
     /// The run reads its scenes aloud.
     voiced: bool,
+    /// The shots that failed have been made again once this run: a second
+    /// failure is said, not tried a third time.
+    mended: bool,
     /// What the step under way is making, in the script's words.
     detail: String,
     /// The last shot made, to show while the next is.
@@ -243,6 +247,7 @@ impl Default for GeneratePane {
             message: String::new(),
             phase: 0,
             voiced: false,
+            mended: false,
             detail: String::new(),
             preview: None,
             counts: String::new(),
@@ -343,6 +348,7 @@ impl GeneratePane {
                     15 => prefs.channel_closing = text,
                     16 => prefs.channel_example = text,
                     17 => prefs.pronunciation = text,
+                    18 => prefs.brand_color = text,
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -373,6 +379,15 @@ impl GeneratePane {
                     8 => prefs.content_style = index.min(ContentStyle::ALL.len() - 1),
                     12 => prefs.pictures = index.min(PictureStyle::ALL.len() - 1),
                     13 => prefs.elevenlabs_model = index.min(1),
+                    14 => {
+                        let picked = index
+                            .checked_sub(1)
+                            .and_then(|row| logo_items(studio).into_iter().nth(row))
+                            .unwrap_or_default();
+                        studio.prefs.generate.brand_logo = picked;
+                        studio.prefs.save(&studio.host.dirs);
+                        return;
+                    }
                     10 => prefs.level = Some(index.min(Level::ALL.len() - 1)),
                     11 => {
                         prefs.visuals = index.min(1);
@@ -411,6 +426,14 @@ impl GeneratePane {
                     studio.prefs.generate.research = Some(on);
                     studio.prefs.save(&studio.host.dirs);
                 }
+                4 => {
+                    studio.prefs.generate.sounds = Some(on);
+                    studio.prefs.save(&studio.host.dirs);
+                }
+                5 => {
+                    studio.prefs.generate.brand_bumpers = on;
+                    studio.prefs.save(&studio.host.dirs);
+                }
                 _ => {}
             },
             GenerateMsg::WriteScript => self.write(studio, false),
@@ -425,6 +448,7 @@ impl GeneratePane {
                     self.message = t("generate.stillMaking");
                     return;
                 }
+                self.mended = false;
                 match self.board.clone() {
                     Some(board) => self.make(studio, board),
                     None => self.write(studio, true),
@@ -687,6 +711,18 @@ impl GeneratePane {
                 self.running = false;
                 match *result {
                     Ok((board, made)) => {
+                        // Before the cut: a shot a model could not make is
+                        // asked for once more, as an editor would, rather
+                        // than the video going out with a card in it.
+                        if !self.mended
+                            && studio.prefs.generate.shots == 1
+                            && review::stood_in(&made.stand_ins) > 0
+                        {
+                            self.mended = true;
+                            studio.notify(&t("generate.reviewMending"), false);
+                            self.make(studio, board);
+                            return;
+                        }
                         self.cut(studio, &board, &made, false);
                         // Read for pictures too like their neighbours.
                         self.thumbnails(studio, None);
@@ -1461,6 +1497,7 @@ impl GeneratePane {
             },
             _ => Voice::None,
         };
+        let brand = brand_of(&prefs);
         let shots = shots_of(&prefs);
         // The window's own voice: the speech model in use and the speaker
         // chosen last in the speech sheet.
@@ -1549,6 +1586,15 @@ impl GeneratePane {
                         },
                     )
                 });
+                // The channel's opening and closing, drawn before the run
+                // so its cut finds them; a video goes out without them
+                // where they cannot be drawn.
+                if let Some(brand) = &brand
+                    && let Err(error) =
+                        job.draw_bumpers(&board, brand, &|| stop.load(Ordering::Acquire))
+                {
+                    log::warn!("generate: the channel's opening and closing: {error}");
+                }
                 let made = job.make(
                     &board,
                     &voice,
@@ -1669,6 +1715,42 @@ impl GeneratePane {
         {
             media.insert(path.clone(), summary.to_new_media());
         }
+        // The channel's cards where it wants them and they were drawn,
+        // and its logo where the picture can be read.
+        let bumpers = made
+            .bumpers
+            .clone()
+            // Drawn for the video's frame: a Short's is another shape.
+            .filter(|_| !short && brand_of(&studio.prefs.generate).is_some());
+        let logo = Some(studio.prefs.generate.brand_logo.clone())
+            .filter(|path| !path.trim().is_empty())
+            .filter(|path| {
+                concat_host::media::probe(path)
+                    .map(|summary| {
+                        media.insert(path.clone(), summary.to_new_media());
+                    })
+                    .inspect_err(|error| log::warn!("generate: the logo: {error}"))
+                    .is_ok()
+            });
+        // The cut's own sounds, made in the job's folder and probed like
+        // any other file; a cut without them where they cannot be made.
+        let sounds = self
+            .job(studio)
+            .filter(|_| studio.prefs.generate.sounds.unwrap_or(true))
+            .and_then(|job| {
+                concat_generate::sfx::sounds(&concat_generate::sfx::dir_in(&job.dir))
+                    .inspect_err(|error| log::warn!("generate: the sounds: {error}"))
+                    .ok()
+            })
+            .filter(|sounds| {
+                sounds.all().iter().all(|sound| {
+                    concat_host::media::probe(&sound.path)
+                        .map(|summary| {
+                            media.insert(sound.path.clone(), summary.to_new_media());
+                        })
+                        .is_ok()
+                })
+            });
         let options = Options {
             // A Short is captioned, a few words at a time, and its wide
             // pictures fill the tall frame.
@@ -1680,6 +1762,12 @@ impl GeneratePane {
                 _ => CaptionLook::Classic,
             },
             fill_frame: short,
+            sounds,
+            intro: bumpers.as_ref().map(|(intro, _)| intro.clone()),
+            outro: bumpers.as_ref().map(|(_, outro)| outro.clone()),
+            logo,
+            accent: Some(studio.prefs.generate.brand_color.trim().to_owned())
+                .filter(|colour| !colour.is_empty()),
             // Something new every few seconds where the look is short-form.
             hold: if short {
                 2.5
@@ -1737,6 +1825,38 @@ impl GeneratePane {
                         .collect();
                     studio.notify(&tf("generate.leftOut", &[&names.join(", ")]), true);
                 }
+                // Looked over before it goes out. A Short is cut from a
+                // video already looked over.
+                let findings = if short {
+                    Vec::new()
+                } else {
+                    review::review(
+                        board,
+                        &made.files,
+                        &made.stand_ins,
+                        &placements,
+                        left_out.len(),
+                        self.voice_row(studio) != 0,
+                    )
+                };
+                let said: Vec<String> = findings.iter().map(finding_text).collect();
+                for line in &said {
+                    log::info!("generate: review: {line}");
+                }
+                if findings.iter().any(review::Finding::holds) {
+                    // Something is missing from it: shown, and not
+                    // exported until the person says so.
+                    self.open = true;
+                    self.message = format!("{}\n{}", t("generate.reviewHeld"), said.join("\n"));
+                    studio.notify(&t("generate.reviewHeld"), true);
+                    return;
+                }
+                if !short {
+                    match said.is_empty() {
+                        true => studio.notify(&t("generate.reviewClean"), false),
+                        false => studio.notify(&said.join(" "), false),
+                    }
+                }
                 if studio.prefs.generate.auto_export.unwrap_or(true)
                     && let Some(job) = self.job(studio)
                 {
@@ -1770,6 +1890,19 @@ impl GeneratePane {
                 1
             }
         })
+    }
+
+    /// The logo list's rows: none, then every picture it may be.
+    pub fn logo_rows(&self, studio: &Studio) -> Vec<SharedString> {
+        std::iter::once(t("generate.noLogo"))
+            .chain(logo_items(studio).into_iter().map(|path| {
+                Path::new(&path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or(path)
+            }))
+            .map(SharedString::from)
+            .collect()
     }
 
     /// The music list's rows: none, music made for the video, then every
@@ -1867,6 +2000,13 @@ impl GeneratePane {
             replicate_model: prefs.replicate_model.as_str().into(),
             replicate_image_model: prefs.replicate_image_model.as_str().into(),
             auto_export: prefs.auto_export.unwrap_or(true),
+            sounds: prefs.sounds.unwrap_or(true),
+            brand_color: prefs.brand_color.as_str().into(),
+            logo: logo_items(studio)
+                .iter()
+                .position(|path| *path == prefs.brand_logo)
+                .map_or(0, |row| row as i32 + 1),
+            bumpers: prefs.brand_bumpers,
             elevenlabs_key: prefs.elevenlabs_key.as_str().into(),
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
             voice_model: prefs.elevenlabs_model.min(1) as i32,
@@ -2094,6 +2234,35 @@ fn music_items(studio: &Studio) -> Vec<(String, f64)> {
         .collect()
 }
 
+/// The pictures a logo is picked from: the one already picked, wherever
+/// it is, then every picture in the bin.
+fn logo_items(studio: &Studio) -> Vec<String> {
+    let kept = studio.prefs.generate.brand_logo.clone();
+    let mut items: Vec<String> = Vec::new();
+    if !kept.trim().is_empty() && Path::new(&kept).is_file() {
+        items.push(kept);
+    }
+    for item in &studio.project().media {
+        if item.kind == MediaKind::Image && !items.contains(&item.path) {
+            items.push(item.path.clone());
+        }
+    }
+    items
+}
+
+/// What the channel's opening and closing say, when it wants them on its
+/// videos and has a name to show.
+fn brand_of(prefs: &crate::prefs::GeneratePrefs) -> Option<concat_generate::job::Brand> {
+    (prefs.brand_bumpers && !prefs.channel_name.trim().is_empty()).then(|| {
+        concat_generate::job::Brand {
+            name: prefs.channel_name.trim().to_owned(),
+            opening: prefs.channel_opening.trim().to_owned(),
+            closing: prefs.channel_closing.trim().to_owned(),
+            colour: prefs.brand_color.trim().to_owned(),
+        }
+    })
+}
+
 /// What goes up with the video, written and kept, and the thumbnail's
 /// picture probed - or why there is none.
 pub type Published = (Publishing, Result<NewMedia, String>);
@@ -2216,6 +2385,28 @@ impl Editing for Session<'_> {
             .find(|item| item.path == path)
             .map(|item| item.id.clone())
     }
+}
+
+/// What the review found, in the interface's language.
+fn finding_text(finding: &review::Finding) -> String {
+    use review::Finding;
+    match finding {
+        Finding::StoodIn(n) => tf("generate.reviewStoodIn", &[n]),
+        Finding::Unread(n) => tf("generate.reviewUnread", &[n]),
+        Finding::LeftOut(n) => tf("generate.reviewLeftOut", &[n]),
+        Finding::NotDrawn(n) => tf("generate.reviewNotDrawn", &[n]),
+        Finding::Repeats(n) => tf("generate.reviewRepeats", &[n]),
+        Finding::Silence { seconds, at } => tf(
+            "generate.reviewSilence",
+            &[&format!("{seconds:.0}"), &clock(*at)],
+        ),
+    }
+}
+
+/// Seconds as minutes and seconds: "2:05".
+fn clock(seconds: f64) -> String {
+    let whole = seconds.max(0.0).round() as u64;
+    format!("{}:{:02}", whole / 60, whole % 60)
 }
 
 /// Where the shots come from, as the sheet's choices say.

@@ -119,6 +119,17 @@ pub struct GeneratePrefs {
     pub replicate_image_model: String,
     /// Export the finished cut without being asked; None is yes.
     pub auto_export: Option<bool>,
+    /// The cut's own sounds - a whoosh into a scene, a pop, a chime - and
+    /// the music lifted where nobody speaks; on unless turned off.
+    pub sounds: Option<bool>,
+    /// The channel's colour, `#rrggbb` as typed: its opening and closing
+    /// are lit in it, and captions' key words and stickers take it.
+    pub brand_color: String,
+    /// The channel's logo, a picture's path, kept in a corner of every
+    /// video; empty for none.
+    pub brand_logo: String,
+    /// The channel's opening and closing drawn onto every video.
+    pub brand_bumpers: bool,
     /// ElevenLabs, which reads the narration.
     pub elevenlabs_key: String,
     /// The ElevenLabs voice.

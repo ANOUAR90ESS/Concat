@@ -348,6 +348,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         app.set_speech_sample_waves(ModelRc::from(models.speech_sample_waves.clone()));
         app.set_speech_sample_details(ModelRc::from(models.speech_sample_details.clone()));
         app.set_generate_music(ModelRc::from(models.generate_music.clone()));
+        app.set_generate_logos(ModelRc::from(models.generate_logos.clone()));
         app.set_script_rows(ModelRc::from(models.script_rows.clone()));
         app.set_app_menu_items(ModelRc::from(models.bar.clone()));
         app.set_transcribers(ModelRc::from(models.transcribers.clone()));

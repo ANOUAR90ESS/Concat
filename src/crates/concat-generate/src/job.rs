@@ -125,6 +125,22 @@ pub struct Made {
     pub spent: f64,
     /// The music bed made for the video, and its length, when there is one.
     pub music: Option<(String, f64)>,
+    /// The channel's opening and closing drawn for this video, each with
+    /// its length, when they have been.
+    pub bumpers: Option<((String, f64), (String, f64))>,
+}
+
+/// What a channel's opening and closing say, and in what colour.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Brand {
+    /// The channel's name.
+    pub name: String,
+    /// What it opens every video with; may be empty.
+    pub opening: String,
+    /// What it closes every video with; may be empty.
+    pub closing: String,
+    /// Its colour, `#rrggbb`; anything else is the default.
+    pub colour: String,
 }
 
 /// What a run may spend, and what each thing costs.
@@ -800,6 +816,45 @@ impl Job {
         Ok(made)
     }
 
+    /// Where the channel's opening and closing are drawn for this video.
+    fn bumper_files(&self) -> (PathBuf, PathBuf) {
+        let dir = self.dir.join("brand");
+        (dir.join("intro.mp4"), dir.join("outro.mp4"))
+    }
+
+    /// Draws the channel's opening and closing for `board`'s frame, where
+    /// they are not drawn already as `brand` now has them. Nothing is
+    /// asked of a model. `stop` is asked between frames.
+    pub fn draw_bumpers(
+        &self,
+        board: &Storyboard,
+        brand: &Brand,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<(), String> {
+        use crate::explainer::{INTRO_SECONDS, OUTRO_SECONDS, bumper, render_clip};
+        let frame = board.frame();
+        let canvas = (f64::from(frame.0), f64::from(frame.1));
+        let (intro, outro) = self.bumper_files();
+        if let Some(dir) = intro.parent() {
+            std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        }
+        for (out, line, closing, seconds) in [
+            (&intro, &brand.opening, false, INTRO_SECONDS),
+            (&outro, &brand.closing, true, OUTRO_SECONDS),
+        ] {
+            let mut card = bumper(&brand.name, line, &brand.colour, closing, canvas);
+            card.settle();
+            let key = drawn_key(&card, seconds, frame);
+            let note = out.with_extension("drawn");
+            if out.is_file() && std::fs::read_to_string(&note).ok().as_deref() == Some(&key) {
+                continue;
+            }
+            render_clip(&card, canvas, frame, seconds, out, stop)?;
+            std::fs::write(&note, key).map_err(|error| format!("{}: {error}", note.display()))?;
+        }
+        Ok(())
+    }
+
     /// The music bed made for this video, when there is one.
     pub fn music(&self) -> Option<PathBuf> {
         providers::existing(&self.dir, "music", &MUSIC_EXTENSIONS)
@@ -1072,6 +1127,15 @@ impl Job {
         if let Some(path) = self.music() {
             let (path, length) = probe(&path)?;
             made.music = Some((path, length.unwrap_or(0.0)));
+        }
+        // The channel's cards, where they were drawn for this frame.
+        let (intro, outro) = self.bumper_files();
+        if intro.is_file() && outro.is_file() {
+            let (intro, opening) = probe(&intro)?;
+            let (outro, closing) = probe(&outro)?;
+            if let (Some(opening), Some(closing)) = (opening, closing) {
+                made.bumpers = Some(((intro, opening), (outro, closing)));
+            }
         }
         Ok(made)
     }

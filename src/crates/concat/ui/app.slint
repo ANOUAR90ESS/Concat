@@ -336,6 +336,7 @@ export component App inherits Window {
     /// The Long video sheet: an idea in, a cut timeline out.
     in property <GenerateSheetData> generate;
     in property <[string]> generate-music;
+    in property <[string]> generate-logos;
     callback generate-closed();
     callback generate-text-edited(field: int, text: string);
     callback generate-choice-changed(field: int, index: int);
@@ -1048,6 +1049,7 @@ export component App inherits Window {
         height: root.height;
         data: root.generate;
         music-options: root.generate-music;
+        logo-options: root.generate-logos;
 
         closed => { root.generate-closed(); }
         text-edited(field, text) => { root.generate-text-edited(field, text); }

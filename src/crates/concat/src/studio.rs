@@ -607,6 +607,8 @@ pub struct Models {
     pub speech_sample_details: Rc<VecModel<SharedString>>,
     /// The Long video sheet's music beds: none, then the bin's recordings.
     pub generate_music: Rc<VecModel<SharedString>>,
+    /// The pictures a channel's logo is picked from.
+    pub generate_logos: Rc<VecModel<SharedString>>,
     pub script_rows: Rc<VecModel<crate::ui::ScriptRow>>,
     pub transcribers: Rc<VecModel<ModelData>>,
     pub voices: Rc<VecModel<ModelData>>,
@@ -676,6 +678,7 @@ impl Models {
             speech_sample_waves: Rc::new(VecModel::default()),
             speech_sample_details: Rc::new(VecModel::default()),
             generate_music: Rc::new(VecModel::default()),
+            generate_logos: Rc::new(VecModel::default()),
             script_rows: Rc::new(VecModel::default()),
             transcribers: Rc::new(VecModel::default()),
             voices: Rc::new(VecModel::default()),
@@ -9555,6 +9558,7 @@ impl Studio {
         );
         app.set_speech(self.speech.data(self));
         sync(&models.generate_music, self.generate.music_rows(self));
+        sync(&models.generate_logos, self.generate.logo_rows(self));
         app.set_generate(self.generate.data(self));
         // A file being written, or a video being made, with its sheet put
         // away: a pill over the window says how far, and opens it again.

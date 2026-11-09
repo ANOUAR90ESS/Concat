@@ -62,6 +62,20 @@ pub struct Options {
     /// something new every few seconds, as short-form video does; 0 holds
     /// a still for its whole slot.
     pub hold: f64,
+    /// The cut's own sounds - into a scene, under a sticker, under a
+    /// figure - and the music lifted where nobody speaks; None for a cut
+    /// with neither.
+    pub sounds: Option<crate::sfx::Sounds>,
+    /// The channel's opening, a clip and its length, played before the
+    /// first scene.
+    pub intro: Option<(String, f64)>,
+    /// The channel's closing, played after the last.
+    pub outro: Option<(String, f64)>,
+    /// The channel's logo, a picture kept in a corner over the scenes.
+    pub logo: Option<String>,
+    /// The channel's colour, `#rrggbb`: a caption's emphasised word and a
+    /// sticker's plate take it.
+    pub accent: Option<String>,
 }
 
 impl Default for Options {
@@ -81,6 +95,11 @@ impl Default for Options {
             fade_seconds: 1.0,
             fill_frame: false,
             hold: 0.0,
+            sounds: None,
+            intro: None,
+            outro: None,
+            logo: None,
+            accent: None,
         }
     }
 }
@@ -129,6 +148,13 @@ pub enum Kind {
     Graphic,
     /// A punchy phrase stuck over the pictures as a tilted label.
     Sticker,
+    /// One of the cut's own sounds: a whoosh, a pop, a chime.
+    Sound,
+    /// The channel's opening or closing, before the first scene or after
+    /// the last.
+    Bumper,
+    /// The channel's logo, in a corner over the scenes.
+    Logo,
 }
 
 /// One clip to lay down.
@@ -362,6 +388,37 @@ pub fn plan(
 ) -> Result<Vec<Placement>, String> {
     let mut out = Vec::new();
     let mut t = 0.0;
+    // One of the cut's sounds at `at`, never past `end`.
+    let sound = |sound: &crate::sfx::Sound, at: f64, end: f64| Placement {
+        kind: Kind::Sound,
+        start: at.max(0.0),
+        length: sound.seconds.min(end - at.max(0.0)),
+        file: Some(sound.path.clone()),
+        source: Some(sound.seconds),
+        from: 0.0,
+        text: None,
+        graphic: None,
+        low: false,
+        emphasis: String::new(),
+    };
+    let bumper = |clip: &(String, f64), at: f64| Placement {
+        kind: Kind::Bumper,
+        start: at,
+        length: clip.1,
+        file: Some(clip.0.clone()),
+        source: Some(clip.1),
+        from: 0.0,
+        text: None,
+        graphic: None,
+        low: false,
+        emphasis: String::new(),
+    };
+    // The channel's opening first: every scene starts after it.
+    if let Some(intro) = options.intro.as_ref().filter(|clip| clip.1 > 0.1) {
+        out.push(bumper(intro, 0.0));
+        t = intro.1;
+    }
+    let opened = t;
     for scene in board.scenes() {
         let made = files.get(&scene.id).cloned().unwrap_or_default();
         if made.shots.is_empty() {
@@ -374,6 +431,11 @@ pub fn plan(
             .as_ref()
             .map(|(_, seconds)| *seconds)
             .filter(|s| *s > 0.0);
+        // Into every scene but the first, a whoosh that starts just before
+        // the cut and carries over it.
+        if let Some(sounds) = options.sounds.as_ref().filter(|_| t > 0.0) {
+            out.push(sound(&sounds.whoosh, t - WHOOSH_LEAD, t + length));
+        }
         let mut at = t;
         // Where the scene's drawn shots are: a caption over one goes low.
         let mut drawings: Vec<(f64, f64)> = Vec::new();
@@ -431,6 +493,12 @@ pub fn plan(
                     low: false,
                     emphasis: String::new(),
                 });
+                // A chime as the card's figure lands, a beat in.
+                if let Some(sounds) = &options.sounds
+                    && slot > CHIME_LEAD + 0.2
+                {
+                    out.push(sound(&sounds.chime, at + CHIME_LEAD, at + slot));
+                }
             }
             at += slot;
         }
@@ -523,6 +591,9 @@ pub fn plan(
                 low: false,
                 emphasis: String::new(),
             });
+            if let Some(sounds) = &options.sounds {
+                out.push(sound(&sounds.pop, t + at, t + length));
+            }
         }
         // A data card a moment into the scene, held while the point is
         // made: four seconds and a half at most, never past the scene.
@@ -550,10 +621,34 @@ pub fn plan(
                 low: false,
                 emphasis: String::new(),
             });
+            if let Some(sounds) = &options.sounds {
+                out.push(sound(&sounds.chime, t + at, t + length));
+            }
         }
         t += length;
     }
 
+    // A sound with no room left to ring is left out.
+    out.retain(|p| p.kind != Kind::Sound || p.length > 0.05);
+    // The logo over the scenes, not over the channel's own cards.
+    if let Some(logo) = options.logo.as_ref().filter(|_| t > opened) {
+        out.push(Placement {
+            kind: Kind::Logo,
+            start: opened,
+            length: t - opened,
+            file: Some(logo.clone()),
+            source: None,
+            from: 0.0,
+            text: None,
+            graphic: None,
+            low: false,
+            emphasis: String::new(),
+        });
+    }
+    if let Some(outro) = options.outro.as_ref().filter(|clip| clip.1 > 0.1) {
+        out.push(bumper(outro, t));
+        t += outro.1;
+    }
     if let Some((path, source)) = music.filter(|(_, source)| *source > 0.1) {
         let mut at = 0.0;
         while at < t - 0.05 {
@@ -578,6 +673,81 @@ pub fn plan(
 /// Where an animated caption over a drawn shot sits, down from the middle
 /// as a fraction of the frame: under the explainer's captions band.
 const LOW_CAPTION: f64 = 0.37;
+
+/// How large the channel's logo is drawn, of the frame it is fitted to,
+/// and where: right and up from the middle, as fractions of the frame.
+const LOGO_SCALE: f64 = 0.13;
+const LOGO_OFFSET: (f64, f64) = (0.4, -0.39);
+
+/// How long before a scene's first frame its whoosh starts, and how long
+/// into an animated card its chime rings.
+const WHOOSH_LEAD: f64 = 0.15;
+const CHIME_LEAD: f64 = 0.35;
+
+/// The shortest stretch with nobody speaking the music is lifted in, how
+/// long it takes to rise and fall, and how far it rises: so many times the
+/// level it keeps under the voice, and never over this.
+const MUSIC_GAP: f64 = 1.2;
+const MUSIC_RAMP: f64 = 0.4;
+const MUSIC_LIFT: f64 = 2.6;
+const MUSIC_MOST: f64 = 0.45;
+
+/// The keys that lift a music clip `from..to` where nobody speaks: the
+/// voice's stretches are `voiced`, and `low` is the music's level under
+/// them. Each key is where in the clip, `0..=1`, and the level there;
+/// none when the voice leaves no gap worth the lift.
+fn music_keys(from: f64, to: f64, voiced: &[(f64, f64)], low: f64) -> Vec<(f64, f64)> {
+    let length = to - from;
+    if length <= 0.0 {
+        return Vec::new();
+    }
+    let high = (low * MUSIC_LIFT).min(MUSIC_MOST).max(low);
+    let mut spoken: Vec<(f64, f64)> = voiced
+        .iter()
+        .map(|&(a, b)| (a.max(from), b.min(to)))
+        .filter(|(a, b)| b > a)
+        .collect();
+    spoken.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    // The gaps between them, the clip's two ends included.
+    let mut gaps = Vec::new();
+    let mut at = from;
+    for (a, b) in spoken {
+        if a - at >= MUSIC_GAP {
+            gaps.push((at, a));
+        }
+        at = at.max(b);
+    }
+    if to - at >= MUSIC_GAP {
+        gaps.push((at, to));
+    }
+    let mut keys: Vec<(f64, f64)> = Vec::new();
+    let where_in = |t: f64| ((t - from) / length).clamp(0.0, 1.0);
+    for (a, b) in gaps {
+        // Up already where the gap opens the clip, and still up where it
+        // closes it: the cut's own fades see to its two ends.
+        if a > from {
+            keys.push((where_in(a), low));
+            keys.push((where_in(a + MUSIC_RAMP), high));
+        } else {
+            keys.push((0.0, high));
+        }
+        if b < to {
+            keys.push((where_in(b - MUSIC_RAMP), high));
+            keys.push((where_in(b), low));
+        } else {
+            keys.push((1.0, high));
+        }
+    }
+    if !keys.is_empty() {
+        if keys.first().is_some_and(|key| key.0 > 0.0) {
+            keys.insert(0, (0.0, low));
+        }
+        if keys.last().is_some_and(|key| key.0 < 1.0) {
+            keys.push((1.0, low));
+        }
+    }
+    keys
+}
 
 /// How long into its scene a sticker comes up, and how long it stays.
 const STICKER_LEAD: f64 = 0.6;
@@ -630,7 +800,17 @@ pub trait Editing {
 /// When each chapter starts in the cut: its first scene's first shot.
 /// The plan lays every scene's shots down in order, one placement a shot.
 pub fn chapter_starts(board: &Storyboard, placements: &[Placement]) -> Vec<(String, f64)> {
-    let mut shots = placements.iter().filter(|p| p.kind == Kind::Shot);
+    // A still punched in on is one shot in several pieces: the pieces
+    // after the first go on from it with the same file, and are no shot
+    // of their own.
+    let all: Vec<&Placement> = placements.iter().filter(|p| p.kind == Kind::Shot).collect();
+    let mut shots = all.iter().enumerate().filter_map(|(n, p)| {
+        let goes_on = n > 0
+            && all[n - 1].file == p.file
+            && all[n - 1].source.is_none()
+            && (all[n - 1].start + all[n - 1].length - p.start).abs() < 1e-6;
+        (!goes_on).then_some(*p)
+    });
     let mut starts = Vec::new();
     for chapter in &board.chapters {
         let mut first = None;
@@ -772,12 +952,16 @@ pub fn cut(
     }
     let lane = |kind: Kind| -> String {
         match kind {
-            Kind::Shot => lanes[0].clone(),
+            Kind::Shot | Kind::Bumper => lanes[0].clone(),
             Kind::Voice => lanes[1].clone(),
             Kind::Music => lanes[2].clone(),
-            Kind::Title | Kind::Caption | Kind::Card | Kind::Graphic | Kind::Sticker => {
-                lanes[3].clone()
-            }
+            Kind::Title
+            | Kind::Caption
+            | Kind::Card
+            | Kind::Graphic
+            | Kind::Sticker
+            | Kind::Sound
+            | Kind::Logo => lanes[3].clone(),
         }
     };
 
@@ -803,16 +987,34 @@ pub fn cut(
     // they sit over everything and hide in one click.
     let order = [
         Kind::Shot,
+        Kind::Bumper,
         Kind::Voice,
         Kind::Music,
+        Kind::Sound,
         Kind::Title,
         Kind::Graphic,
         Kind::Card,
         Kind::Sticker,
         Kind::Caption,
+        Kind::Logo,
     ];
     let shots: Vec<&Placement> = placements.iter().filter(|p| p.kind == Kind::Shot).collect();
     let last_music = placements.iter().rposition(|p| p.kind == Kind::Music);
+    // The channel's own cards take the cut's first fade and its last.
+    let opens = placements
+        .iter()
+        .any(|p| p.kind == Kind::Bumper && p.start < 1e-6);
+    let closes = placements
+        .iter()
+        .any(|p| p.kind == Kind::Bumper && p.start > 1e-6);
+    let voiced: Vec<(f64, f64)> = placements
+        .iter()
+        .filter(|p| p.kind == Kind::Voice)
+        .map(|p| (p.start, p.start + p.length))
+        .collect();
+    // The sounds' lanes, minted under everything as they are needed: two
+    // sounds may ring at once, and a lane holds one clip at a time.
+    let mut sound_lanes: Vec<(String, f64)> = Vec::new();
     let mut captions: Option<String> = None;
     let mut figures: Option<String> = None;
     let mut graphic_lanes = crate::motion::Lanes::default();
@@ -825,8 +1027,40 @@ pub fn cut(
             .filter(|(_, p)| p.kind == kind)
         {
             match kind {
-                Kind::Shot | Kind::Voice | Kind::Music => {
+                Kind::Shot
+                | Kind::Voice
+                | Kind::Music
+                | Kind::Sound
+                | Kind::Bumper
+                | Kind::Logo => {
                     let file = p.file.as_deref().unwrap_or_default();
+                    let track = if kind == Kind::Sound {
+                        // The first of the sounds' lanes free by now.
+                        let free = sound_lanes
+                            .iter_mut()
+                            .find(|(_, busy_until)| *busy_until <= p.start + 1e-6);
+                        match free {
+                            Some((id, busy_until)) => {
+                                *busy_until = p.start + p.length;
+                                id.clone()
+                            }
+                            None => match editor.apply(Command::AddTrack { bottom: true }) {
+                                Some(id) => {
+                                    sound_lanes.push((id.clone(), p.start + p.length));
+                                    id
+                                }
+                                None => continue,
+                            },
+                        }
+                    } else if kind == Kind::Logo {
+                        // On a lane of its own over everything.
+                        match editor.apply(Command::AddTrack { bottom: false }) {
+                            Some(id) => id,
+                            None => continue,
+                        }
+                    } else {
+                        lane(kind)
+                    };
                     let placed = media_id(editor, file).and_then(|media| {
                         if !p.start.is_finite() || !p.length.is_finite() {
                             return Err(format!("{file} has no time to go at"));
@@ -834,7 +1068,7 @@ pub fn cut(
                         editor
                             .apply(Command::AddClip {
                                 media_id: media.clone(),
-                                track_id: lane(kind),
+                                track_id: track.clone(),
                                 start: p.start,
                                 ripple: false,
                             })
@@ -856,7 +1090,7 @@ pub fn cut(
                     } else {
                         1.0
                     };
-                    fit(editor, &clip, &media, &lane(kind), p, fill);
+                    fit(editor, &clip, &media, &track, p, fill);
                     let mut patch = ClipPatch::default();
                     if kind == Kind::Shot {
                         let n = shots
@@ -899,14 +1133,54 @@ pub fn cut(
                             &clip,
                             p.length,
                             options.fade_seconds,
-                            n == 0,
-                            n + 1 == shots.len(),
+                            n == 0 && !opens,
+                            n + 1 == shots.len() && !closes,
                         );
                     } else if kind == Kind::Music {
                         patch.volume = Some(options.music_volume);
                         if Some(index) == last_music {
                             patch.fade_out = Some(p.length.min(3.0));
                         }
+                        // Lifted where nobody speaks, back down under the
+                        // voice.
+                        if options.sounds.is_some() {
+                            for (at, value) in music_keys(
+                                p.start,
+                                p.start + p.length,
+                                &voiced,
+                                options.music_volume,
+                            ) {
+                                editor.apply(Command::SetClipKey {
+                                    clip_id: clip.clone(),
+                                    property: KeyProperty::Volume,
+                                    at,
+                                    value,
+                                    ease: KeyEase::IN_OUT,
+                                });
+                            }
+                        }
+                    } else if kind == Kind::Sound
+                        && let Some(sounds) = &options.sounds
+                    {
+                        patch.volume = Some(sounds.gain(file));
+                    }
+                    if kind == Kind::Bumper {
+                        // The opening comes up from black, the closing
+                        // goes down to it.
+                        let first = p.start < 1e-6;
+                        fade(editor, &clip, p.length, options.fade_seconds, first, !first);
+                    } else if kind == Kind::Logo {
+                        // Small, in the top corner at the line's end side.
+                        editor.apply(Command::SetClipTransform {
+                            clip_id: clip.clone(),
+                            scale: Some(LOGO_SCALE),
+                            offset_x: Some(LOGO_OFFSET.0),
+                            offset_y: Some(LOGO_OFFSET.1),
+                            rotation: None,
+                            stretch_x: None,
+                            stretch_y: None,
+                        });
+                        patch.opacity = Some(0.9);
                     }
                     if patch != ClipPatch::default() {
                         editor.apply(Command::UpdateClip {
@@ -967,7 +1241,10 @@ pub fn cut(
                         track_id: figures.clone(),
                         above: true,
                         start: p.start,
-                        style: Some(sticker_style(p.text.clone().unwrap_or_default())),
+                        style: Some(sticker_style(
+                            p.text.clone().unwrap_or_default(),
+                            options.accent.as_deref(),
+                        )),
                         duration: Some(p.length),
                         offset_y: Some(-0.2),
                     });
@@ -1000,7 +1277,7 @@ pub fn cut(
                     if !p.emphasis.is_empty() {
                         style.color = "#FFFFFF".to_owned();
                         style.emphasis = p.emphasis.clone();
-                        style.emphasis_color = EMPHASIS.to_owned();
+                        style.emphasis_color = accent_of(options).to_owned();
                     }
                     let card = editor.apply(Command::AddTextClip {
                         track_id: captions.clone(),
@@ -1193,15 +1470,42 @@ fn cover(item: &NewMedia, frame: (u32, u32)) -> f64 {
     }
 }
 
-/// A sticker: a few heavy words on a red plate, tilted by the cut.
-fn sticker_style(content: String) -> TextStyle {
+/// The colour a caption's emphasised word takes: the channel's, or the
+/// cut's own yellow.
+fn accent_of(options: &Options) -> &str {
+    options
+        .accent
+        .as_deref()
+        .filter(|colour| rgb_of(colour).is_some())
+        .unwrap_or(EMPHASIS)
+}
+
+/// `#rrggbb` as its three channels.
+fn rgb_of(colour: &str) -> Option<[u8; 3]> {
+    let hex = colour.trim().strip_prefix('#')?;
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?])
+}
+
+/// A sticker: a few heavy words on a plate - the channel's colour, or
+/// red - tilted by the cut; dark words on a light plate.
+fn sticker_style(content: String, accent: Option<&str>) -> TextStyle {
+    let plate = accent
+        .filter(|colour| rgb_of(colour).is_some())
+        .unwrap_or("#E63946");
+    let light = rgb_of(plate).is_some_and(|[r, g, b]| {
+        0.299 * f64::from(r) + 0.587 * f64::from(g) + 0.114 * f64::from(b) > 160.0
+    });
     TextStyle {
         content,
         font_size: 0.058,
         font_weight: 900.0,
-        color: "#FFFFFF".to_owned(),
+        color: if light { "#111111" } else { "#FFFFFF" }.to_owned(),
         shadow: true,
-        background: "#E63946".to_owned(),
+        background: plate.trim().to_owned(),
         background_radius: 0.012,
         background_padding_x: 0.026,
         background_padding_y: 0.014,
@@ -1445,6 +1749,239 @@ mod tests {
         }
     }
 
+    /// A channel's opening goes before the first scene and its closing
+    /// after the last, everything between moved on by the opening; its
+    /// logo sits over the scenes alone, small and in a corner; its colour
+    /// is the captions' and the stickers'.
+    #[test]
+    fn a_channel_opens_closes_and_marks_its_video() {
+        let mut board = board();
+        board.chapters[0].scenes[0].keywords = vec!["Second".into()];
+        board.chapters[0].scenes[0].sticker = Some("Look!".into());
+        let plain = Options {
+            titles: false,
+            ..Options::default()
+        };
+        let branded = Options {
+            intro: Some(("/intro.mp4".into(), 2.4)),
+            outro: Some(("/outro.mp4".into(), 3.6)),
+            logo: Some("/logo.png".into()),
+            accent: Some("#00C2FF".into()),
+            ..plain.clone()
+        };
+        let before = plan(&board, &files(), &plain, None).unwrap();
+        let placements = plan(&board, &files(), &branded, None).unwrap();
+        let bumpers = of(&placements, Kind::Bumper);
+        assert_eq!(bumpers.len(), 2);
+        assert_eq!(bumpers[0].start, 0.0);
+        let body = total_length(&before);
+        assert!((bumpers[1].start - (2.4 + body)).abs() < 1e-9);
+        assert!((total_length(&placements) - (body + 6.0)).abs() < 1e-9);
+        assert!((of(&placements, Kind::Shot)[0].start - 2.4).abs() < 1e-9);
+        let logo = of(&placements, Kind::Logo)[0];
+        assert!((logo.start - 2.4).abs() < 1e-9 && (logo.length - body).abs() < 1e-9);
+        // The chapters are timed as the video now runs.
+        assert!((chapter_starts(&board, &placements)[0].1 - 2.4).abs() < 1e-9);
+
+        let mut media = HashMap::from([
+            (
+                "/v1.wav".to_owned(),
+                probed("/v1.wav", MediaKind::Audio, Some(5.0)),
+            ),
+            (
+                "/a.mp4".to_owned(),
+                probed("/a.mp4", MediaKind::Video, Some(4.0)),
+            ),
+            (
+                "/b.mp4".to_owned(),
+                probed("/b.mp4", MediaKind::Video, Some(6.0)),
+            ),
+            (
+                "/c.png".to_owned(),
+                probed("/c.png", MediaKind::Image, None),
+            ),
+            (
+                "/logo.png".to_owned(),
+                probed("/logo.png", MediaKind::Image, None),
+            ),
+        ]);
+        for (path, length) in [("/intro.mp4", 2.4), ("/outro.mp4", 3.6)] {
+            media.insert(
+                path.to_owned(),
+                probed(path, MediaKind::Video, Some(length)),
+            );
+        }
+        let mut editor = Bare(Editor::default());
+        cut(&mut editor, &board, &placements, &media, &branded).unwrap();
+        let logo_media = editor.media_of("/logo.png").expect("imported");
+        let active = editor.0.project().active();
+        let mark = active
+            .clips
+            .iter()
+            .find(|c| c.media_id == logo_media)
+            .expect("laid");
+        assert!((mark.scale - LOGO_SCALE).abs() < 1e-9);
+        assert!(mark.offset_x > 0.3 && mark.offset_y < -0.3);
+        // On the stack's top lane.
+        assert_eq!(active.tracks.last().map(|t| &t.id), Some(&mark.track_id));
+        let texts: Vec<_> = active
+            .clips
+            .iter()
+            .filter_map(|c| c.text.as_ref())
+            .collect();
+        assert!(texts.iter().any(|t| t.emphasis_color == "#00C2FF"));
+        let sticker = texts.iter().find(|t| t.content == "Look!").unwrap();
+        assert_eq!(sticker.background, "#00C2FF");
+        // A light plate takes dark words; a colour that is none is passed over.
+        assert_eq!(sticker_style("x".into(), Some("#FFFF00")).color, "#111111");
+        assert_eq!(
+            sticker_style("x".into(), Some("blue")).background,
+            "#E63946"
+        );
+    }
+
+    /// The music is lifted where nobody speaks for long enough and brought
+    /// back under the voice; a voice with no gaps leaves it alone.
+    #[test]
+    fn the_music_rises_where_nobody_speaks() {
+        // Voice from 2 to 10 of a 14 s clip: up at the start, down by 2,
+        // up again after 10.
+        let keys = music_keys(0.0, 14.0, &[(2.0, 10.0)], 0.12);
+        let high = 0.12 * MUSIC_LIFT;
+        assert_eq!(keys.first(), Some(&(0.0, high)));
+        assert_eq!(keys.last(), Some(&(1.0, high)));
+        assert!(keys.contains(&(2.0 / 14.0, 0.12)));
+        assert!(keys.contains(&(10.0 / 14.0, 0.12)));
+        for pair in keys.windows(2) {
+            assert!(pair[0].0 <= pair[1].0, "{keys:?}");
+        }
+        // Breaths between paragraphs are no gap.
+        assert!(music_keys(0.0, 10.0, &[(0.0, 4.8), (5.2, 10.0)], 0.12).is_empty());
+        // A gap in the middle: down, up, up, down, and low at both ends.
+        let middle = music_keys(0.0, 20.0, &[(0.0, 5.0), (9.0, 20.0)], 0.12);
+        assert_eq!(middle.first(), Some(&(0.0, 0.12)));
+        assert_eq!(middle.last(), Some(&(1.0, 0.12)));
+        assert_eq!(middle.iter().filter(|key| key.1 > 0.12).count(), 2);
+        // Never louder than the most.
+        assert!(
+            music_keys(0.0, 9.0, &[], 0.3)
+                .iter()
+                .all(|key| key.1 <= MUSIC_MOST)
+        );
+    }
+
+    /// With sounds, a whoosh leads into every scene but the first, a pop
+    /// goes under a sticker and a chime under a card; they are laid under
+    /// everything, each at its own level, two at once on two lanes.
+    #[test]
+    fn the_cut_is_laid_with_its_own_sounds() {
+        let dir =
+            std::env::temp_dir().join(format!("concat-generate-plan-sfx-{}", std::process::id()));
+        let sounds = crate::sfx::sounds(&dir).unwrap();
+        let mut board = board();
+        let scene = &mut board.chapters[0].scenes[0];
+        scene.sticker = Some("Look!".into());
+        scene.card = Some(crate::storyboard::Card {
+            figure: "1969".into(),
+            label: "the landing".into(),
+        });
+        let options = Options {
+            titles: false,
+            captions: false,
+            sounds: Some(sounds.clone()),
+            ..Options::default()
+        };
+        let silent = plan(
+            &board,
+            &files(),
+            &Options {
+                sounds: None,
+                ..options.clone()
+            },
+            None,
+        )
+        .unwrap();
+        assert!(of(&silent, Kind::Sound).is_empty());
+        let placements = plan(&board, &files(), &options, None).unwrap();
+        let heard = of(&placements, Kind::Sound);
+        let count = |sound: &crate::sfx::Sound| {
+            heard
+                .iter()
+                .filter(|p| p.file.as_deref() == Some(sound.path.as_str()))
+                .count()
+        };
+        assert_eq!(
+            (
+                count(&sounds.whoosh),
+                count(&sounds.pop),
+                count(&sounds.chime)
+            ),
+            (1, 1, 1)
+        );
+        let second = of(&placements, Kind::Shot)[2].start;
+        let whoosh = heard
+            .iter()
+            .find(|p| p.file.as_deref() == Some(sounds.whoosh.path.as_str()))
+            .unwrap();
+        assert!((whoosh.start - (second - WHOOSH_LEAD)).abs() < 1e-9);
+        assert_eq!(total_length(&placements), total_length(&silent));
+
+        let mut media = HashMap::from([
+            (
+                "/v1.wav".to_owned(),
+                probed("/v1.wav", MediaKind::Audio, Some(5.0)),
+            ),
+            (
+                "/a.mp4".to_owned(),
+                probed("/a.mp4", MediaKind::Video, Some(4.0)),
+            ),
+            (
+                "/b.mp4".to_owned(),
+                probed("/b.mp4", MediaKind::Video, Some(6.0)),
+            ),
+            (
+                "/c.png".to_owned(),
+                probed("/c.png", MediaKind::Image, None),
+            ),
+        ]);
+        for sound in sounds.all() {
+            media.insert(
+                sound.path.clone(),
+                probed(&sound.path, MediaKind::Audio, Some(sound.seconds)),
+            );
+        }
+        let mut editor = Bare(Editor::default());
+        cut(&mut editor, &board, &placements, &media, &options).unwrap();
+        let pop = editor.media_of(&sounds.pop.path).expect("imported");
+        let active = editor.0.project().active();
+        let clip = active
+            .clips
+            .iter()
+            .find(|clip| clip.media_id == pop)
+            .expect("laid");
+        assert!((clip.volume - sounds.gain(&sounds.pop.path)).abs() < 1e-9);
+        // Under the pictures: the sounds' lanes are the stack's first.
+        let lane = active
+            .tracks
+            .iter()
+            .position(|t| t.id == clip.track_id)
+            .unwrap();
+        let pictures = editor.media_of("/a.mp4").unwrap();
+        let picture = active
+            .clips
+            .iter()
+            .find(|c| c.media_id == pictures)
+            .unwrap();
+        assert!(
+            lane < active
+                .tracks
+                .iter()
+                .position(|t| t.id == picture.track_id)
+                .unwrap()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// With a hold, a still longer than it is shown in pieces cut straight
     /// one into the next, each framed anew; a clip is whole.
     #[test]
@@ -1465,6 +2002,23 @@ mod tests {
             .filter(|p| p.file.as_deref() == Some("/c.png"))
             .collect();
         assert!(stills.len() >= 2, "{stills:?}");
+        // The chapters still start where their first shots do.
+        assert_eq!(
+            chapter_starts(&board, &placements),
+            chapter_starts(
+                &board,
+                &plan(
+                    &board,
+                    &files,
+                    &Options {
+                        hold: 0.0,
+                        ..options.clone()
+                    },
+                    None
+                )
+                .unwrap()
+            )
+        );
         let whole: f64 = stills.iter().map(|p| p.length).sum();
         assert!(
             (stills[0].start + whole
