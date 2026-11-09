@@ -1037,6 +1037,12 @@ pub struct TextStyle {
     /// can be a band of a fixed size whatever is written on it.
     /// https://github.com/jub0t/Concat/issues/119
     pub max_height: f64,
+    /// Words painted in `emphasis_color` rather than `color`, separated by
+    /// spaces, matched whole and in any case: a caption's one word to land
+    /// on. Empty for none.
+    pub emphasis: String,
+    /// The emphasised words' colour, `#rrggbb[aa]`.
+    pub emphasis_color: String,
 }
 
 impl TextStyle {
@@ -1087,6 +1093,8 @@ impl Default for TextStyle {
             tracking: 0.0,
             max_width: 0.0,
             max_height: 0.0,
+            emphasis: String::new(),
+            emphasis_color: String::new(),
         }
     }
 }

@@ -23,10 +23,12 @@ use concat_generate::budget::{self, Totals};
 use concat_generate::cost::{self, Estimate, Prices};
 use concat_generate::job::{Costs, Idea, Job, Made, Remade, Status, Step};
 use concat_generate::plan::{self, CaptionLook, Editing, Options};
-use concat_generate::providers::{DEFAULT_VIDEO_MODEL, Shots, Voice};
+use concat_generate::providers::{self, DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
-use concat_generate::writer::{self, Brief, ContentStyle, Level, Publishing, Suggestion, Writing};
+use concat_generate::writer::{
+    self, Brief, ContentStyle, Level, PictureStyle, Publishing, Suggestion, Writing,
+};
 use concat_project::Command;
 use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
@@ -340,6 +342,7 @@ impl GeneratePane {
                     14 => prefs.channel_opening = text,
                     15 => prefs.channel_closing = text,
                     16 => prefs.channel_example = text,
+                    17 => prefs.pronunciation = text,
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -368,6 +371,8 @@ impl GeneratePane {
                     6 => prefs.clips = Some(index.min(CLIP_SHARES.len() - 1)),
                     7 => prefs.caption_look = index.min(1),
                     8 => prefs.content_style = index.min(ContentStyle::ALL.len() - 1),
+                    12 => prefs.pictures = index.min(PictureStyle::ALL.len() - 1),
+                    13 => prefs.elevenlabs_model = index.min(1),
                     10 => prefs.level = Some(index.min(Level::ALL.len() - 1)),
                     11 => {
                         prefs.visuals = index.min(1);
@@ -1003,6 +1008,7 @@ impl GeneratePane {
             channel: channel_profile(prefs),
             research: prefs.research.unwrap_or(true),
             cards_only: prefs.visuals == 1,
+            pictures: PictureStyle::ALL[prefs.pictures.min(PictureStyle::ALL.len() - 1)],
         }
     }
 
@@ -1446,6 +1452,12 @@ impl GeneratePane {
             2 => Voice::ElevenLabs {
                 key: prefs.elevenlabs_key.clone(),
                 voice_id: prefs.elevenlabs_voice.clone(),
+                model: if prefs.elevenlabs_model == 1 {
+                    providers::EXPRESSIVE_VOICE_MODEL.to_owned()
+                } else {
+                    String::new()
+                },
+                lexicon: providers::lexicon(&prefs.pronunciation),
             },
             _ => Voice::None,
         };
@@ -1668,6 +1680,14 @@ impl GeneratePane {
                 _ => CaptionLook::Classic,
             },
             fill_frame: short,
+            // Something new every few seconds where the look is short-form.
+            hold: if short {
+                2.5
+            } else if studio.prefs.generate.caption_look == 1 {
+                3.0
+            } else {
+                0.0
+            },
             ..Options::default()
         };
         let placements = match plan::plan(
@@ -1831,6 +1851,7 @@ impl GeneratePane {
             level: level_row(prefs) as i32,
             research: prefs.research.unwrap_or(true),
             visuals: prefs.visuals.min(1) as i32,
+            picture_style: prefs.pictures.min(PictureStyle::ALL.len() - 1) as i32,
             picture_quality: i32::from(
                 prefs.replicate_image_model.trim() == PROFESSIONAL_IMAGE_MODEL,
             ),
@@ -1848,6 +1869,8 @@ impl GeneratePane {
             auto_export: prefs.auto_export.unwrap_or(true),
             elevenlabs_key: prefs.elevenlabs_key.as_str().into(),
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
+            voice_model: prefs.elevenlabs_model.min(1) as i32,
+            pronunciation: prefs.pronunciation.as_str().into(),
             has_script: self.board.is_some(),
             script_summary: summary.unwrap_or_default().into(),
             status: self.status.as_str().into(),

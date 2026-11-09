@@ -14,11 +14,13 @@
 
 pub mod icons;
 mod render;
+mod stand_in;
 mod svg;
 
 use serde::{Deserialize, Serialize};
 
 pub use render::{Fonts, RATE, render_clip, render_still, still_png};
+pub use stand_in::stand_in;
 
 /// The most elements an explainer may hold: more is clutter, and a frame
 /// the phone draws slowly.

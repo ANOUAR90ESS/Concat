@@ -582,6 +582,8 @@ fn title_style(style: &TextStyle) -> TitleStyle {
         line_height: style.line_height,
         max_width: style.max_width,
         max_height: style.max_height,
+        emphasis: style.emphasis.clone(),
+        emphasis_color: style.emphasis_color.clone(),
         tracking: style.tracking,
     }
 }

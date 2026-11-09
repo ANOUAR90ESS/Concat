@@ -35,7 +35,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
 use tiny_skia::{
-    Color, FillRule, FilterQuality, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap,
+    Color, FillRule, FilterQuality, LineCap, LineJoin, Mask, Paint, Path, PathBuilder, Pixmap,
     PixmapPaint, Rect, Stroke, Transform,
 };
 use unicode_bidi::ParagraphBidiInfo;
@@ -104,6 +104,12 @@ pub struct TitleStyle {
     /// own. With a height the block is a box that tall, at least, and the
     /// words sit centred in it.
     pub max_height: f64,
+    /// Words painted in `emphasis_color` rather than the fill, separated
+    /// by spaces, matched whole and in any case, punctuation aside: the
+    /// one word of a caption the eye should land on. Empty for none.
+    pub emphasis: String,
+    /// The emphasised words' colour, `#rrggbb[aa]`.
+    pub emphasis_color: String,
 }
 
 /// One word's box in canvas pixels, top-left origin, in reading order
@@ -817,6 +823,8 @@ struct Line {
     marks: Vec<Mark>,
     width: f32,
     words: Vec<(f32, f32)>,
+    /// The spans of the words the style emphasises, as `words` has them.
+    marked: Vec<(f32, f32)>,
 }
 
 /// A glyph that colours itself, in pen space at its line's origin: an
@@ -909,6 +917,8 @@ struct Setter<'a> {
     /// The words' colour, for the `COLR` palette entry that means "paint
     /// it with the text's own colour".
     foreground: ttf_parser::RgbaColor,
+    /// The words to emphasise, as [`plain_word`] has them.
+    emphasis: &'a [String],
 }
 
 /// One line of the content, ready to be set: its text, its directions,
@@ -978,6 +988,7 @@ impl Setter<'_> {
                 marks: Vec::new(),
                 width: 0.0,
                 words: Vec::new(),
+                marked: Vec::new(),
             };
         }
         let (levels, runs) = para.bidi.visual_runs(range.clone());
@@ -1051,26 +1062,34 @@ impl Setter<'_> {
         } else {
             (pen - self.tracking).max(0.0)
         };
-        let words = if outline {
-            words(para.text, range)
+        let (words, marked) = if outline {
+            let mut marked = Vec::new();
+            let words = words(para.text, range)
                 .into_iter()
                 .filter_map(|word| {
-                    spans
+                    let span = spans
                         .iter()
                         .filter(|(cluster, _, _)| word.contains(cluster))
                         .fold(None, |span: Option<(f32, f32)>, &(_, left, right)| {
                             Some(span.map_or((left, right), |(l, r)| (l.min(left), r.max(right))))
-                        })
+                        })?;
+                    let plain = plain_word(&para.text[word]);
+                    if !plain.is_empty() && self.emphasis.contains(&plain) {
+                        marked.push(span);
+                    }
+                    Some(span)
                 })
-                .collect()
+                .collect();
+            (words, marked)
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         Line {
             path: builder.finish(),
             marks,
             width,
             words,
+            marked,
         }
     }
 
@@ -1162,6 +1181,13 @@ const MANDATORY: &[char] = &['\u{b}', '\u{c}', '\r', '\u{85}', '\u{2028}', '\u{2
 /// The words of `range`, in reading order: the stretches between the places
 /// a line may break, less their spaces. Words as a space-separated script
 /// has them, and each character of one that has no spaces.
+/// A word as emphasis matches it: punctuation off either end, in lower
+/// case.
+fn plain_word(word: &str) -> String {
+    word.trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+}
+
 fn words(text: &str, range: Range<usize>) -> Vec<Range<usize>> {
     let mut words = Vec::new();
     let mut start = range.start;
@@ -1355,11 +1381,21 @@ fn paint(
     // once the block's width is known. The words' colour goes along: a
     // `COLR` palette entry of 0xFFFF means "paint it with the text's own".
     let fill = colour(&style.color).unwrap_or(Color::WHITE);
+    let emphasis: Vec<String> = match colour(&style.emphasis_color) {
+        Some(_) => style
+            .emphasis
+            .split_whitespace()
+            .map(plain_word)
+            .filter(|word| !word.is_empty())
+            .collect(),
+        None => Vec::new(),
+    };
     let setter = Setter {
         faces: &faces,
         em,
         tracking,
         foreground: rgba(fill),
+        emphasis: &emphasis,
     };
     let lines: Vec<Line> = style
         .content
@@ -1418,6 +1454,8 @@ fn paint(
     // its glyphs' own colours has no path to place but still has words.
     let mut words = PathBuilder::new();
     let mut word_rects = Vec::new();
+    // Where the emphasised words are, for their own colour over the fill.
+    let mut marked = PathBuilder::new();
     for (row, line) in lines.iter().enumerate() {
         let indent = match style.align {
             Align::Left => 0.0,
@@ -1433,6 +1471,18 @@ fn paint(
             words.push_path(&placed);
         }
         let line_top = baseline - ascent;
+        for &(start_x, end_x) in &line.marked {
+            // A little over the word's box, so its outline is coloured whole.
+            let air = em * 0.15;
+            if let Some(rect) = Rect::from_ltrb(
+                left + indent + start_x - air,
+                line_top - air,
+                left + indent + end_x + air,
+                baseline + descent + air,
+            ) {
+                marked.push_rect(rect);
+            }
+        }
         for &(start_x, end_x) in &line.words {
             word_rects.push(WordRect {
                 x: (left + indent + start_x).round() as i32,
@@ -1519,6 +1569,21 @@ fn paint(
             Transform::identity(),
             None,
         );
+        // The emphasised ones again, in their own colour, inside their boxes.
+        if let Some(accent) = colour(&style.emphasis_color)
+            && let Some(boxes) = marked.finish()
+            && let Some(mut mask) = Mask::new(width, height)
+        {
+            mask.fill_path(&boxes, FillRule::Winding, false, Transform::identity());
+            paint.set_color(accent);
+            canvas.fill_path(
+                words,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                Some(&mask),
+            );
+        }
     }
 
     // The glyphs that paint their own colours - an emoji's picture, a
@@ -1921,6 +1986,55 @@ mod tests {
             tracking: 0.0,
             max_width: 0.0,
             max_height: 0.0,
+            emphasis: String::new(),
+            emphasis_color: String::new(),
+        }
+    }
+
+    /// An emphasised word is painted in its colour and the others in the
+    /// fill, whichever way the line runs; punctuation and case aside.
+    #[test]
+    fn an_emphasised_word_takes_its_own_colour() {
+        let fonts = Fonts::new();
+        for (content, emphasis, marked) in [
+            ("one two three", "TWO,", 1),
+            ("جيب التيليفون الآن", "التيليفون", 1),
+        ] {
+            let mut look = style(content);
+            look.shadow = false;
+            look.emphasis = emphasis.to_owned();
+            look.emphasis_color = "#ff0000".to_owned();
+            let (canvas, _, words) = paint(&fonts, &look, 960, 540).expect("paints");
+            let red_in = |rect: &WordRect| {
+                let mut red = 0;
+                for y in rect.y.max(0)..(rect.y + rect.height as i32).min(540) {
+                    for x in rect.x.max(0)..(rect.x + rect.width as i32).min(960) {
+                        let p = canvas.pixel(x as u32, y as u32).expect("on the canvas");
+                        if p.alpha() > 200 && p.red() > 200 && p.green() < 60 {
+                            red += 1;
+                        }
+                    }
+                }
+                red
+            };
+            assert_eq!(words.len(), 3, "{content}");
+            let reds: Vec<usize> = words.iter().map(red_in).collect();
+            assert_eq!(
+                reds.iter().filter(|&&n| n > 20).count(),
+                marked,
+                "{content}: {reds:?}"
+            );
+            // Without a colour nothing is emphasised.
+            look.emphasis_color.clear();
+            let (plain, _, words) = paint(&fonts, &look, 960, 540).expect("paints");
+            let any_red = words.iter().any(|rect| {
+                (rect.x.max(0)..(rect.x + rect.width as i32).min(960)).any(|x| {
+                    let y = (rect.y + rect.height as i32 / 2).clamp(0, 539) as u32;
+                    let p = plain.pixel(x as u32, y).expect("on the canvas");
+                    p.alpha() > 200 && p.red() > 200 && p.green() < 60
+                })
+            });
+            assert!(!any_red, "{content}");
         }
     }
 

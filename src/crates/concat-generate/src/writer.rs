@@ -24,8 +24,8 @@ use serde_json::{Value, json};
 
 use crate::budget::{self, ChapterPlan, Pacing, ScenePlan};
 use crate::storyboard::{
-    Chapter, Graphic, GraphicKind, Reading, Scene, ShotKind, Storyboard, Style, shot_stem,
-    without_marks,
+    Chapter, Character, Graphic, GraphicKind, Reading, Scene, ShotKind, Storyboard, Style,
+    shot_stem, without_marks,
 };
 
 /// The Messages API.
@@ -129,6 +129,57 @@ impl Level {
     }
 }
 
+/// What the pictures look like, the whole video through. Auto lets the
+/// writer choose for the topic; any other is held to, word for word, at
+/// the head of every picture's prompt, so a video never drifts from one
+/// medium to another.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PictureStyle {
+    /// The writer picks the medium for the topic.
+    #[default]
+    Auto,
+    /// Cinematic photographs.
+    Photo,
+    /// Flat 2D vector illustration with simple characters: the look of
+    /// motion-graphics explainers.
+    Flat,
+    /// A stylised 3D cartoon, like an animated feature.
+    Cartoon,
+}
+
+impl PictureStyle {
+    /// In the sheet's order.
+    pub const ALL: [PictureStyle; 4] = [
+        PictureStyle::Auto,
+        PictureStyle::Photo,
+        PictureStyle::Flat,
+        PictureStyle::Cartoon,
+    ];
+
+    /// The line every picture's prompt starts its look with; None to let
+    /// the writer choose.
+    pub fn medium(self) -> Option<&'static str> {
+        match self {
+            PictureStyle::Auto => None,
+            PictureStyle::Photo => Some(
+                "Cinematic photograph, full-frame camera, natural light, shallow depth of field, \
+                 filmic colour grade, photorealistic",
+            ),
+            PictureStyle::Flat => Some(
+                "Flat 2D vector illustration, motion-graphics explainer style, clean bold \
+                 shapes, solid colours with soft gradients, simple rounded characters with big \
+                 expressive eyes, clean outlines, uncluttered background, no photographic \
+                 detail, no text",
+            ),
+            PictureStyle::Cartoon => Some(
+                "Stylised 3D cartoon render, animated feature film look, soft global \
+                 illumination, smooth rounded characters with expressive faces, vivid colours, \
+                 no text",
+            ),
+        }
+    }
+}
+
 /// How the video is written: what it is for, and the shape that serves
 /// it. Chosen in the Long video sheet; each comes with its own brief to
 /// the writer.
@@ -223,6 +274,8 @@ pub struct Brief {
     pub research: bool,
     /// Every shot an animated card the app draws, none made by a model.
     pub cards_only: bool,
+    /// What the pictures look like.
+    pub pictures: PictureStyle,
 }
 
 impl Brief {
@@ -252,6 +305,12 @@ impl Brief {
         }
         if !self.notes.trim().is_empty() {
             text += &format!("Notes from the producer: {}\n", self.notes.trim());
+        }
+        if let Some(medium) = self.pictures.medium() {
+            text += &format!(
+                "Picture style, fixed for every picture: {medium}. Write every picture's prompt \
+                 for this medium.\n"
+            );
         }
         text
     }
@@ -348,8 +407,19 @@ pub fn write(
         language: brief.language.clone(),
         aspect: brief.aspect.clone(),
         style: Style {
-            visual: text(&outline["visual_style"]),
+            visual: match brief.pictures.medium() {
+                // The medium held to word for word, whatever the writer
+                // added to it.
+                Some(medium) => format!(
+                    "{medium}. {}",
+                    text(&outline["visual_style"]).trim_end_matches('.')
+                )
+                .trim_end_matches(". ")
+                .to_owned(),
+                None => text(&outline["visual_style"]),
+            },
             voice: text(&outline["voice_style"]),
+            cast: cast_of(&outline["cast"]),
         },
         chapters: outlined
             .iter()
@@ -1119,6 +1189,19 @@ fn chapter_prompt(
         chapter.title,
         chapter.summary,
     );
+    if !board.style.cast.is_empty() {
+        let cast: String = board
+            .style
+            .cast
+            .iter()
+            .map(|one| format!("- {}: {}\n", one.name, one.look))
+            .collect();
+        prompt += &format!(
+            "The recurring characters - where one is in a picture, name them in its prompt by \
+             this name and they are drawn the same every time; show them doing what the \
+             narration says, and bring them back often, so the viewer follows someone:\n{cast}"
+        );
+    }
     if !points.is_empty() {
         prompt += &format!("It covers: {points}\n");
     }
@@ -1711,6 +1794,24 @@ fn text(value: &Value) -> String {
     value.as_str().unwrap_or_default().trim().to_owned()
 }
 
+/// The recurring characters an outline names: at most four, each with a
+/// name and a look.
+fn cast_of(value: &Value) -> Vec<Character> {
+    value
+        .as_array()
+        .map(|cast| {
+            cast.iter()
+                .map(|one| Character {
+                    name: text(&one["name"]),
+                    look: text(&one["look"]),
+                })
+                .filter(|one| !one.name.is_empty() && !one.look.is_empty())
+                .take(4)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn outline_tool() -> Value {
     json!({
         "name": "outline",
@@ -1724,6 +1825,18 @@ fn outline_tool() -> Value {
                     "description": "One line in English appended to every shot prompt so all shots look like one film, chosen for this topic and this kind of video: the medium (cinematic photograph, photojournalism, archival film, 3D render, illustration), the lens and film or sensor look, the light and the grade. No palette: each chapter brings its own."
                 },
                 "voice_style": {"type": "string", "description": "How the narrator sounds."},
+                "cast": {
+                    "type": "array",
+                    "description": "The recurring characters the viewer follows from picture to picture, when the video has any - a guide, a family, a scientist, a soldier, an everyman who stands for the viewer. Each is drawn the same in every picture that names them. Up to four; none for a video of places and objects.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "A short name in English, one word, used in shot prompts to bring them in: \"Omar\", \"Grandma\"."},
+                            "look": {"type": "string", "description": "In English, what they look like, fixed: age, build, face, hair, clothes and their colours, one thing they carry or wear that marks them."}
+                        },
+                        "required": ["name", "look"]
+                    }
+                },
                 "chapters": {
                     "type": "array",
                     "items": {
@@ -1763,6 +1876,15 @@ fn scene_schema() -> Value {
             "onScreenText": {
                 "type": ["string", "null"],
                 "description": "A short title shown over the scene's start, or null."
+            },
+            "keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "One to three single words of this scene's narration, copied exactly as written there, that carry its meaning - the name, the object, the surprising word - shown in colour in the captions so the eye lands on them. Nouns and strong verbs, never 'the' or 'and'."
+            },
+            "sticker": {
+                "type": ["string", "null"],
+                "description": "At most one scene in three: two to four words of the narration's language, punchy, with ! or ? - the turn of the scene ('Fined on the spot!', 'Lost forever?') - stuck over the pictures as a tilted label. Null otherwise."
             },
             "card": {
                 "type": ["object", "null"],
@@ -2101,6 +2223,26 @@ mod tests {
         };
         assert!(brief.text().contains("Name: Tarikh. Opens with: Ahlan."));
         assert!(!Brief::default().text().contains("The channel"));
+    }
+
+    /// A fixed picture style is in every call's brief; Auto leaves the
+    /// medium to the writer. The outline's cast is read, at most four.
+    #[test]
+    fn a_picture_style_is_briefed_and_a_cast_read() {
+        let flat = Brief {
+            pictures: PictureStyle::Flat,
+            ..Brief::default()
+        };
+        assert!(flat.text().contains("Flat 2D vector illustration"));
+        assert!(!Brief::default().text().contains("Picture style"));
+        let cast = cast_of(&json!([
+            {"name": "Omar", "look": "a boy of ten in a red cap"},
+            {"name": "", "look": "nobody"},
+            {"name": "Grandma", "look": "white scarf, round glasses"}
+        ]));
+        assert_eq!(cast.len(), 2);
+        assert_eq!(cast[1].name, "Grandma");
+        assert!(cast_of(&Value::Null).is_empty());
     }
 
     /// A list put in a string comes out as the list, fenced or after a

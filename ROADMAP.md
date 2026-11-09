@@ -391,7 +391,7 @@ shipped together, each whole, in alpha.26.
   its end is the script editor's thumbnail. In the script editor an
   explainer shows what it shows, and Design again designs it anew. The
   Pictures choice is now pictures and drawn shots, or drawn only.
-- 🚧 **Look 2: modern and lit** (owner, after alpha.26: "modern designs,
+- ✅ **Look 2: modern and lit** (alpha.27) (owner, after alpha.26: "modern designs,
   lights and many colours"). Behind the diagram, coloured lights that
   drift and breathe, drifting specks of light, a faint grid and a
   vignette; elements may be filled with linear or radial gradients, glow
@@ -407,6 +407,39 @@ shipped together, each whole, in alpha.26.
 - Later: an explainer in a Short drawn for the tall frame (it is cropped
   from the wide one now); the designer's palette and pace chosen in the
   sheet; pictures from Replicate placed inside an explainer.
+
+## Against a channel that does it well (owner, after alpha.27)
+
+The owner set a video of ours (a nuclear bomb, 16:9, flat cards) beside a
+short made the same way by another channel: one illustrated cast from
+shot to shot, a new picture every second or two, the caption's key word
+in colour, tilted labels for the turn, a dense voice. Ours showed bare
+washes of colour where pictures had failed, and the voice misread words.
+
+- 🚧 **A failed picture stands in well, and costs less.** A picture a
+  model's safety filter refuses is not asked for again in the same words
+  - each try is paid for - but once more, gently; one that still cannot
+  be made is a designed card - the scene's idea in large words on a glass
+  plate over coloured lights - never a bare wash. The owner's log is to
+  say why so many failed.
+- 🚧 **Picture style.** Auto, photo, flat illustration or 3D cartoon,
+  held word for word at the head of every prompt. The writer may give the
+  video a cast of up to four recurring characters, each with a fixed
+  look; a shot that names one has that look added, so they are drawn the
+  same from shot to shot.
+- 🚧 **Captions that point.** The writer marks each scene's key words; a
+  caption that holds one shows it in yellow, the rest in white (the text
+  painter now colours chosen words, either direction). A scene's turn may
+  be a sticker: a few words on a red plate, tilted, popping in.
+- 🚧 **Pace.** In a Short, and wherever the captions are animated, a
+  still held past a few seconds is cut into pieces that punch in on it,
+  framed tighter and wider by turns, cut straight.
+- 🚧 **The voice.** A pronunciation list in the sheet - word = how to say
+  it - rewrites those words before the voice reads them, whatever their
+  vowel marks; ElevenLabs v3, the more expressive, may be chosen, and a
+  line it refuses is read with v2.
+- Next: sound effects under stickers and cuts; the owner's list of
+  misread words.
 
 ## Done since alpha.14
 

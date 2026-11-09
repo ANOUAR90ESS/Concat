@@ -153,6 +153,8 @@ impl PresetStyle {
             tracking: self.tracking.unwrap_or(0.0),
             max_width: self.max_width.unwrap_or(0.0).max(0.0),
             max_height: self.max_height.unwrap_or(0.0).max(0.0),
+            emphasis: String::new(),
+            emphasis_color: String::new(),
         }
     }
 }
