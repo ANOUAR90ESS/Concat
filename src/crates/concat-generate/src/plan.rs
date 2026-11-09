@@ -143,6 +143,9 @@ pub struct Placement {
     pub text: Option<String>,
     /// What an animated card shows.
     pub graphic: Option<Graphic>,
+    /// A caption over a drawn shot - an explainer or an animated card -
+    /// kept low, under the drawing, rather than over what it draws.
+    pub low: bool,
 }
 
 /// A word of a narration, and when it is said in its file.
@@ -362,8 +365,15 @@ pub fn plan(
             .map(|(_, seconds)| *seconds)
             .filter(|s| *s > 0.0);
         let mut at = t;
+        // Where the scene's drawn shots are: a caption over one goes low.
+        let mut drawings: Vec<(f64, f64)> = Vec::new();
         for (i, (path, source)) in made.shots.iter().enumerate() {
             let slot = timing.slots[i].1;
+            if scene.shots.get(i).is_some_and(|shot| {
+                matches!(shot.made_as(), ShotKind::Motion | ShotKind::Explainer)
+            }) {
+                drawings.push((at, at + slot));
+            }
             out.push(Placement {
                 kind: Kind::Shot,
                 start: at,
@@ -373,6 +383,7 @@ pub fn plan(
                 from: 0.0,
                 text: None,
                 graphic: None,
+                low: false,
             });
             // An animated card's words over its backdrop, for the shot's
             // whole slot.
@@ -391,6 +402,7 @@ pub fn plan(
                     from: 0.0,
                     text: None,
                     graphic: Some(graphic),
+                    low: false,
                 });
             }
             at += slot;
@@ -406,6 +418,7 @@ pub fn plan(
                 from,
                 text: None,
                 graphic: None,
+                low: false,
             });
         }
         // The captions run with the voice when there is one, and over the
@@ -422,15 +435,21 @@ pub fn plan(
                 None => shared(&cards, over),
             };
             for (card, (at, span)) in cards.into_iter().zip(spans) {
+                let (from, to) = (t + at, t + at + span);
+                let drawn: f64 = drawings
+                    .iter()
+                    .map(|&(a, b)| (to.min(b) - from.max(a)).max(0.0))
+                    .sum();
                 out.push(Placement {
                     kind: Kind::Caption,
-                    start: t + at,
+                    start: from,
                     length: span,
                     file: None,
                     source: None,
                     from: 0.0,
                     text: Some(card),
                     graphic: None,
+                    low: span > 0.0 && drawn * 2.0 >= span,
                 });
             }
         }
@@ -449,6 +468,7 @@ pub fn plan(
                 from: 0.0,
                 text: Some(text.trim().to_owned()),
                 graphic: None,
+                low: false,
             });
         }
         // A data card a moment into the scene, held while the point is
@@ -474,6 +494,7 @@ pub fn plan(
                 from: 0.0,
                 text: Some(text),
                 graphic: None,
+                low: false,
             });
         }
         t += length;
@@ -491,12 +512,17 @@ pub fn plan(
                 from: 0.0,
                 text: None,
                 graphic: None,
+                low: false,
             });
             at += source;
         }
     }
     Ok(out)
 }
+
+/// Where an animated caption over a drawn shot sits, down from the middle
+/// as a fraction of the frame: under the explainer's captions band.
+const LOW_CAPTION: f64 = 0.37;
 
 /// How long into its scene a data card comes up, and how long it stays.
 const CARD_LEAD: f64 = 0.4;
@@ -597,6 +623,7 @@ pub fn thumbnail(
         from: 0.0,
         text: None,
         graphic: None,
+        low: false,
     };
     fit(editor, &clip, &media, &lane, &place, cover(picture, frame));
     if !words.trim().is_empty() {
@@ -838,6 +865,11 @@ pub fn cut(
                     let text = p.text.clone().unwrap_or_default();
                     let (style, offset_y) = match options.caption_look {
                         CaptionLook::Classic => (caption_style(text), 0.38),
+                        // Over a drawing, under it: the drawing keeps the
+                        // frame above its captions band clear for them.
+                        CaptionLook::Animated if p.low => {
+                            (animated_style(text, cards % 2 == 1), LOW_CAPTION)
+                        }
                         CaptionLook::Animated => (animated_style(text, cards % 2 == 1), 0.24),
                     };
                     let card = editor.apply(Command::AddTextClip {
@@ -1263,6 +1295,32 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+        }
+    }
+
+    /// A caption over a drawn shot is kept low, under the drawing; one
+    /// over a picture stays where captions go.
+    #[test]
+    fn captions_over_a_drawing_go_low() {
+        let mut board = board();
+        let scene = &mut board.chapters[0].scenes[0];
+        scene.narration = "One two three four five six seven eight nine ten eleven twelve.".into();
+        scene.shots[1].kind = ShotKind::Motion;
+        let mut files = files();
+        files.get_mut("c01s01").unwrap().voice = None;
+        let options = Options {
+            titles: false,
+            caption_look: CaptionLook::Animated,
+            ..Options::default()
+        };
+        let placements = plan(&board, &files, &options, None).unwrap();
+        let drawn = of(&placements, Kind::Shot)[1];
+        let captions = of(&placements, Kind::Caption);
+        assert!(captions.len() > 2, "{captions:?}");
+        for caption in captions {
+            let middle = caption.start + caption.length / 2.0;
+            let over = middle > drawn.start && middle < drawn.start + drawn.length;
+            assert_eq!(caption.low, over, "{caption:?}");
         }
     }
 

@@ -26,6 +26,9 @@ pub const MOST_ELEMENTS: usize = 40;
 /// The smallest words may be on the canvas, in pixels: smaller is not read
 /// on a phone.
 pub const SMALLEST_TEXT: f64 = 26.0;
+/// Where the captions' band starts, as a share of the canvas's height:
+/// nothing the viewer must read goes below it.
+pub const CAPTIONS_BAND: f64 = 0.78;
 
 /// The canvas an explainer is drawn on for a video of `aspect`, in pixels.
 pub fn canvas(aspect: &str) -> (f64, f64) {
@@ -47,6 +50,44 @@ pub struct Explainer {
     pub elements: Vec<Element>,
     /// What happens, and when.
     pub steps: Vec<Step>,
+    /// Soft coloured lights behind everything, drifting slowly: the depth
+    /// a modern explainer is lit with.
+    pub lights: Vec<Light>,
+    /// How many specks float up through the frame, twinkling: dust in a
+    /// beam, stars, plankton. 0 for none.
+    pub particles: u32,
+    /// The specks' colour.
+    pub particle_color: String,
+    /// A faint grid behind everything: a blueprint, a lab, a screen.
+    pub grid: bool,
+}
+
+/// A soft light behind the canvas.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Light {
+    /// Its centre, across.
+    pub x: f64,
+    /// Its centre, down.
+    pub y: f64,
+    /// How far it reaches, in pixels.
+    pub r: f64,
+    /// Its colour.
+    pub color: String,
+    /// How bright at its centre, 0 to 1.
+    pub opacity: f64,
+}
+
+impl Default for Light {
+    fn default() -> Self {
+        Light {
+            x: 0.0,
+            y: 0.0,
+            r: 500.0,
+            color: "#3B82F6".to_owned(),
+            opacity: 0.45,
+        }
+    }
 }
 
 /// One thing on the canvas.
@@ -97,6 +138,18 @@ pub struct Element {
     pub dash: bool,
     /// How opaque it is at rest, 0 to 1.
     pub opacity: f64,
+    /// Two or three colours the fill (an outline, for a line, an arrow or
+    /// an icon) runs through instead of one.
+    pub gradient: Vec<String>,
+    /// The gradient's direction, in degrees: 0 left to right, 90 top to
+    /// bottom.
+    pub angle: f64,
+    /// The gradient from the middle out rather than across.
+    pub radial: bool,
+    /// A glow around it in its own colours, 0 to 1: neon, light, heat.
+    pub glow: f64,
+    /// A soft shadow under it, lifting it off the background.
+    pub shadow: bool,
     /// A group's elements, placed from its origin.
     pub children: Vec<Element>,
 }
@@ -125,6 +178,11 @@ impl Default for Element {
             width: 0.0,
             dash: false,
             opacity: 1.0,
+            gradient: Vec::new(),
+            angle: 0.0,
+            radial: false,
+            glow: 0.0,
+            shadow: false,
             children: Vec::new(),
         }
     }
@@ -242,6 +300,12 @@ pub enum Effect {
     Count,
     /// Swells and settles once: look here.
     Pulse,
+    /// Bobs up and down from then on, by `value` pixels: a thing afloat,
+    /// alive.
+    Float,
+    /// Turns from then on, `value` degrees a second: a wheel, a planet,
+    /// an atom.
+    Spin,
     /// Shakes: a warning, a mistake.
     Shake,
     /// The camera moves and zooms to `to` = `[x, y, zoom]`.
@@ -268,6 +332,7 @@ impl Effect {
             Effect::Count => 1.4,
             Effect::Pulse => 0.6,
             Effect::Shake => 0.5,
+            Effect::Float | Effect::Spin => 1.0,
             Effect::Zoom => 1.3,
         }
     }
@@ -555,6 +620,55 @@ impl Explainer {
         {
             problems.push("the background is not one or two #rrggbb colours".to_owned());
         }
+        for element in &all {
+            if element
+                .gradient
+                .iter()
+                .any(|colour| parse_colour(colour).is_none())
+            {
+                problems.push(format!(
+                    "\"{}\": a gradient colour is not #rrggbb",
+                    element.id
+                ));
+            }
+        }
+        let glowing = all.iter().filter(|e| e.glow > 0.0).count();
+        if glowing > 8 {
+            problems.push(format!(
+                "{glowing} elements glow: keep it to the few that matter, 8 at most"
+            ));
+        }
+        if self.lights.len() > 5 {
+            problems.push("more than 5 lights: 2 or 3 are enough".to_owned());
+        }
+        if self.lights.iter().any(|l| parse_colour(&l.color).is_none()) {
+            problems.push("a light's color is not #rrggbb".to_owned());
+        }
+        if self.particles > 120 {
+            problems.push("more than 120 particles".to_owned());
+        }
+        if !self.particle_color.is_empty() && parse_colour(&self.particle_color).is_none() {
+            problems.push("particleColor is not #rrggbb".to_owned());
+        }
+        // The captions run along the bottom of the frame: words there are
+        // covered by them.
+        let band = canvas.1 * CAPTIONS_BAND;
+        for element in &self.elements {
+            let low = match element.kind {
+                ElementKind::Text => element.y > band,
+                ElementKind::Rect => element.y + element.h > band + canvas.1 * 0.04,
+                ElementKind::Circle => element.y + element.r > band + canvas.1 * 0.04,
+                ElementKind::Icon => element.y + element.size / 2.0 > band + canvas.1 * 0.04,
+                _ => false,
+            };
+            if low {
+                problems.push(format!(
+                    "\"{}\" reaches into the lowest fifth (below y {band:.0}), where the \
+                     captions go: move it up",
+                    element.id
+                ));
+            }
+        }
         problems
     }
 
@@ -598,6 +712,15 @@ impl Explainer {
         walk(&mut self.elements);
         if self.background.is_empty() {
             self.background = vec!["#0F172A".to_owned()];
+        }
+        if self.particles > 0 && self.particle_color.is_empty() {
+            self.particle_color = "#FFFFFF".to_owned();
+        }
+        for light in &mut self.lights {
+            if light.r.is_nan() || light.r <= 0.0 {
+                light.r = 500.0;
+            }
+            light.opacity = light.opacity.clamp(0.0, 1.0);
         }
     }
 }
@@ -756,6 +879,17 @@ impl Explainer {
                 Effect::Shake => {
                     shake = 14.0 * (raw * std::f64::consts::PI * 8.0).sin() * (1.0 - raw)
                 }
+                Effect::Float => {
+                    let since = t - step.at;
+                    let amplitude = if step.value > 0.0 { step.value } else { 12.0 };
+                    look.dy += amplitude
+                        * (since * std::f64::consts::TAU / 3.2).sin()
+                        * (since / 0.6).min(1.0);
+                }
+                Effect::Spin => {
+                    let speed = if step.value != 0.0 { step.value } else { 40.0 };
+                    look.rotate += speed * (t - step.at);
+                }
                 Effect::Zoom => {}
             }
         }
@@ -765,12 +899,18 @@ impl Explainer {
     }
 
     /// Where the camera is at `t`: the canvas whole until a zoom moves it.
+    /// With no zoom at all it drifts in, slowly, so a still frame is never
+    /// quite still.
     pub fn camera(&self, canvas: (f64, f64), t: f64) -> Camera {
         let mut camera = Camera {
             x: canvas.0 / 2.0,
             y: canvas.1 / 2.0,
             zoom: 1.0,
         };
+        if !self.steps.iter().any(|s| s.target == "camera") {
+            camera.zoom = 1.0 + t.clamp(0.0, 16.0) * 0.0025;
+            return camera;
+        }
         for step in self.steps.iter().filter(|s| s.target == "camera") {
             if t < step.at {
                 continue;

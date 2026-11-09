@@ -350,9 +350,9 @@ diagram that builds itself in step with the narration, the way the best
 educational channels explain. Claude writes, it does not paint - so it
 designs the animation as data and the app draws it, frame by frame, on
 the phone as on the desk, for nothing. All four stages are built and
-shipped together, each whole.
+shipped together, each whole, in alpha.26.
 
-- 🚧 **Stage 1: the engine** (`explainer/`). An explainer is a canvas in
+- ✅ **Stage 1: the engine** (`explainer/`). An explainer is a canvas in
   pixels (1920x1080 for a wide video) of elements - text, rect, circle,
   line, arrow (bowed, its head arriving last), path, icon, group - and
   steps: fade, pop, grow from an edge, draw an outline on along its
@@ -366,7 +366,7 @@ shipped together, each whole.
   frame is the same everywhere. A validator names every fault - ids twice
   or missing, steps on nothing, unknown icons, colours that are not,
   words too small or off the canvas.
-- 🚧 **Stage 2: the writer as motion director.** A shot may be an
+- ✅ **Stage 2: the writer as motion director.** A shot may be an
   explainer (`ShotKind::Explainer`): the chapter call marks it where the
   narration explains a mechanism, a process, a cause and effect, a
   comparison of sizes, a route, a structure or a cycle (up to one shot in
@@ -380,9 +380,9 @@ shipped together, each whole.
   mended; then two frames are drawn and shown to it as pictures, and it
   mends what it sees - overlaps, cut words, crowding, imbalance. One that
   cannot be designed is made as a still of its prompt.
-- 🚧 **Stage 3: the icon library.** 191 Lucide icons (ISC), as paths so
+- ✅ **Stage 3: the icon library.** 191 Lucide icons (ISC), as paths so
   each can be drawn on stroke by stroke, named in the designer's brief.
-- 🚧 **Stage 4: in the run.** Explainers are drawn last, each to the slot
+- ✅ **Stage 4: in the run.** Explainers are drawn last, each to the slot
   the voice and the shots beside it leave (`plan::timing`, the one sum the
   cut and the job share), its steps on the times their cue words are said
   - from ElevenLabs' word timings, or by the letters for an untimed voice.
@@ -391,6 +391,19 @@ shipped together, each whole.
   its end is the script editor's thumbnail. In the script editor an
   explainer shows what it shows, and Design again designs it anew. The
   Pictures choice is now pictures and drawn shots, or drawn only.
+- 🚧 **Look 2: modern and lit** (owner, after alpha.26: "modern designs,
+  lights and many colours"). Behind the diagram, coloured lights that
+  drift and breathe, drifting specks of light, a faint grid and a
+  vignette; elements may be filled with linear or radial gradients, glow
+  in their own colour and cast soft shadows; ambient motion - float and
+  spin - and a slow camera drift keep a held frame alive. The soft layers
+  are drawn at a quarter size and enlarged, the glows added only where
+  something glows, so a frame costs less than before (about 57 ms at
+  1080p). The designer's brief has a design system for it: seven vivid
+  palettes (neon night, aurora, sunset, ocean, ember, forest, cosmos),
+  glass plates, glow on the few things that matter; the review also
+  sends back a flat or washed-out frame. Animated captions over a drawn
+  shot sit low, under its captions band, never over what it draws.
 - Later: an explainer in a Short drawn for the tall frame (it is cropped
   from the wide one now); the designer's palette and pace chosen in the
   sheet; pictures from Replicate placed inside an explainer.

@@ -44,7 +44,13 @@ impl Fonts {
     }
 }
 
-/// One frame at `t`, `size` pixels, as straight RGBA.
+/// How much smaller the soft layers are drawn: they are blurred or
+/// smooth, and enlarged they look the same at a sixteenth of the cost.
+const SOFT: u32 = 4;
+
+/// One frame at `t`, `size` pixels, as straight RGBA: the soft layer drawn
+/// small and enlarged, the glows drawn small and added over it as light,
+/// and the sharp layer over both at full size.
 fn pixels(
     explainer: &Explainer,
     canvas: (f64, f64),
@@ -52,25 +58,127 @@ fn pixels(
     t: f64,
     fonts: &Fonts,
 ) -> Result<Vec<u8>, String> {
-    let svg = super::svg::frame(explainer, canvas, t);
+    use super::svg::{Layer, frame};
+    let small = (size.0.div_ceil(SOFT).max(1), size.1.div_ceil(SOFT).max(1));
+    let soft = draw(
+        &frame(explainer, canvas, t, Layer::Soft),
+        canvas,
+        small,
+        fonts,
+        t,
+    )?;
+    let mut pixmap = tiny_skia::Pixmap::new(size.0, size.1)
+        .ok_or_else(|| format!("a frame of {}x{} cannot be drawn", size.0, size.1))?;
+    let up = |from: (u32, u32)| {
+        tiny_skia::Transform::from_scale(
+            size.0 as f32 / from.0 as f32,
+            size.1 as f32 / from.1 as f32,
+        )
+    };
+    pixmap.draw_pixmap(
+        0,
+        0,
+        soft.as_ref(),
+        &tiny_skia::PixmapPaint {
+            quality: tiny_skia::FilterQuality::Bilinear,
+            blend_mode: tiny_skia::BlendMode::Source,
+            ..tiny_skia::PixmapPaint::default()
+        },
+        up(small),
+        None,
+    );
+    if explainer.all().iter().any(|element| element.glow > 0.0) {
+        let glow = draw(
+            &frame(explainer, canvas, t, Layer::Glow),
+            canvas,
+            small,
+            fonts,
+            t,
+        )?;
+        // Added only where something glows: the rest of the frame is
+        // left as it is, and enlarging nothing costs nothing.
+        if let Some((x0, y0, x1, y1)) = lit(&glow) {
+            let (kx, ky) = (
+                size.0 as f32 / small.0 as f32,
+                size.1 as f32 / small.1 as f32,
+            );
+            let area = tiny_skia::Rect::from_ltrb(
+                (x0 as f32 - 1.0) * kx,
+                (y0 as f32 - 1.0) * ky,
+                (x1 as f32 + 2.0) * kx,
+                (y1 as f32 + 2.0) * ky,
+            );
+            if let Some(area) = area {
+                let paint = tiny_skia::Paint {
+                    shader: tiny_skia::Pattern::new(
+                        glow.as_ref(),
+                        tiny_skia::SpreadMode::Pad,
+                        tiny_skia::FilterQuality::Bilinear,
+                        1.0,
+                        up(small),
+                    ),
+                    blend_mode: tiny_skia::BlendMode::Plus,
+                    ..tiny_skia::Paint::default()
+                };
+                pixmap.fill_rect(area, &paint, tiny_skia::Transform::identity(), None);
+            }
+        }
+    }
+    // The elements over their glows: lit round, not washed out.
+    let sharp = tree(&frame(explainer, canvas, t, Layer::Sharp), fonts, t)?;
+    resvg::render(&sharp, scale(canvas, size), &mut pixmap.as_mut());
+    // The backdrop covers the frame, so every pixel is opaque and the
+    // premultiplied channels are the straight ones.
+    Ok(pixmap.take())
+}
+
+/// The pixels of `pixmap` that are not clear, as the corners of the box
+/// round them; None when it is clear throughout.
+fn lit(pixmap: &tiny_skia::Pixmap) -> Option<(u32, u32, u32, u32)> {
+    let (w, h) = (pixmap.width(), pixmap.height());
+    let mut corners: Option<(u32, u32, u32, u32)> = None;
+    for (n, pixel) in pixmap.pixels().iter().enumerate() {
+        if pixel.alpha() > 2 {
+            let (x, y) = (n as u32 % w, n as u32 / w);
+            corners = Some(match corners {
+                None => (x, y, x, y),
+                Some((x0, y0, x1, y1)) => (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+            });
+        }
+    }
+    corners.map(|(x0, y0, x1, y1)| (x0, y0, x1.min(w - 1), y1.min(h - 1)))
+}
+
+/// One layer's SVG parsed, its words shaped in the bundled faces.
+fn tree(svg: &str, fonts: &Fonts, t: f64) -> Result<usvg::Tree, String> {
     let options = usvg::Options {
         fontdb: Arc::clone(&fonts.0),
         font_family: "Inter".to_owned(),
         ..usvg::Options::default()
     };
-    let tree = usvg::Tree::from_str(&svg, &options)
-        .map_err(|error| format!("the explainer's frame at {t:.2} s: {error}"))?;
+    usvg::Tree::from_str(svg, &options)
+        .map_err(|error| format!("the explainer's frame at {t:.2} s: {error}"))
+}
+
+/// The canvas fitted to `size` pixels.
+fn scale(canvas: (f64, f64), size: (u32, u32)) -> tiny_skia::Transform {
+    let scale = (size.0 as f64 / canvas.0).min(size.1 as f64 / canvas.1) as f32;
+    tiny_skia::Transform::from_scale(scale, scale)
+}
+
+/// One layer drawn on its own, `size` pixels, over a clear ground.
+fn draw(
+    svg: &str,
+    canvas: (f64, f64),
+    size: (u32, u32),
+    fonts: &Fonts,
+    t: f64,
+) -> Result<tiny_skia::Pixmap, String> {
+    let tree = tree(svg, fonts, t)?;
     let mut pixmap = tiny_skia::Pixmap::new(size.0, size.1)
         .ok_or_else(|| format!("a frame of {}x{} cannot be drawn", size.0, size.1))?;
-    let scale = (size.0 as f64 / canvas.0).min(size.1 as f64 / canvas.1) as f32;
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(scale, scale),
-        &mut pixmap.as_mut(),
-    );
-    // The backdrop covers the frame, so every pixel is opaque and the
-    // premultiplied channels are the straight ones.
-    Ok(pixmap.take())
+    resvg::render(&tree, scale(canvas, size), &mut pixmap.as_mut());
+    Ok(pixmap)
 }
 
 /// The frame at `t` as a PNG at `out`, `size` pixels.
