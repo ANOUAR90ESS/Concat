@@ -1522,24 +1522,39 @@ fn paint(
     // a layer of their own and laid under the real words.
     if style.shadow
         && let Some(words) = &words
-        && let Some(mut layer) = Pixmap::new(width, height)
     {
-        let mut shade = Paint {
-            anti_alias: true,
-            ..Paint::default()
-        };
-        shade.set_color(Color::from_rgba8(0, 0, 0, 150));
-        let offset = Transform::from_translate(em * 0.05, em * 0.07);
-        layer.fill_path(words, &shade, FillRule::Winding, offset, None);
-        blur(&mut layer, (em * 0.04).round().max(1.0) as usize);
-        canvas.draw_pixmap(
-            0,
-            0,
-            layer.as_ref(),
-            &PixmapPaint::default(),
-            Transform::identity(),
-            None,
-        );
+        // On a layer the size of the words and what the blur spreads them
+        // by, not of the frame: a caption is a line or two, and blurring
+        // the whole frame for it was nearly all a title cost to paint.
+        let radius = (em * 0.04).round().max(1.0) as usize;
+        let (dx, dy) = (em * 0.05, em * 0.07);
+        let reach = (2 * radius + 2) as f32;
+        let bounds = words.bounds();
+        let left = (bounds.left() + dx - reach).floor().max(0.0);
+        let top = (bounds.top() + dy - reach).floor().max(0.0);
+        let right = (bounds.right() + dx + reach).ceil().min(width as f32);
+        let bottom = (bounds.bottom() + dy + reach).ceil().min(height as f32);
+        if right > left
+            && bottom > top
+            && let Some(mut layer) = Pixmap::new((right - left) as u32, (bottom - top) as u32)
+        {
+            let mut shade = Paint {
+                anti_alias: true,
+                ..Paint::default()
+            };
+            shade.set_color(Color::from_rgba8(0, 0, 0, 150));
+            let offset = Transform::from_translate(dx - left, dy - top);
+            layer.fill_path(words, &shade, FillRule::Winding, offset, None);
+            blur(&mut layer, radius);
+            canvas.draw_pixmap(
+                left as i32,
+                top as i32,
+                layer.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+        }
     }
 
     // The outline, under the fill so only its outer half shows - which is
@@ -2035,6 +2050,40 @@ mod tests {
                 })
             });
             assert!(!any_red, "{content}");
+        }
+    }
+
+    /// A title's shadow falls under its words and nowhere else in the
+    /// frame, and a title with none has none.
+    #[test]
+    fn a_shadow_stays_by_its_words() {
+        let fonts = Fonts::new();
+        let mut look = style("shade");
+        look.color = "#ffffff".to_owned();
+        let (lit, block, _) = paint(&fonts, &look, 960, 540).expect("paints");
+        look.shadow = false;
+        let (bare, _, _) = paint(&fonts, &look, 960, 540).expect("paints");
+        let dark = |canvas: &Pixmap| {
+            canvas
+                .pixels()
+                .iter()
+                .enumerate()
+                // Straight colour: an antialiased white edge is faint, not dark.
+                .filter(|(_, p)| p.alpha() > 40 && p.demultiply().red() < 60)
+                .map(|(n, _)| ((n % 960) as i32, (n / 960) as i32))
+                .collect::<Vec<_>>()
+        };
+        assert!(dark(&bare).is_empty());
+        let shade = dark(&lit);
+        assert!(shade.len() > 50, "{}", shade.len());
+        // Within the words' block and a little round it.
+        let (w, h) = (block.0 as i32, block.1 as i32);
+        let (cx, cy) = (480 + block.2, 270 + block.3);
+        for (x, y) in shade {
+            assert!(
+                (x - cx).abs() <= w / 2 + 30 && (y - cy).abs() <= h / 2 + 30,
+                "{x},{y}"
+            );
         }
     }
 

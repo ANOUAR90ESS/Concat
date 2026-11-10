@@ -223,6 +223,8 @@ impl Titles {
     fn clips_with(&self, project: &Project, width: u32, height: u32, live: bool) -> Vec<TitleClip> {
         if live {
             self.live.lock().unwrap_or_else(|e| e.into_inner()).begin();
+        } else {
+            self.paint_missing(project, width, height);
         }
         let timeline = project.active();
         let mut out = Vec::new();
@@ -317,6 +319,96 @@ impl Titles {
         out
     }
 
+    /// Paints every title of the active timeline that is neither known
+    /// nor on disk, several at a time on as many threads: a project's
+    /// first showing paints hundreds of captions, and one after another on
+    /// the caller's thread that was the whole of the wait. What cannot be
+    /// painted is left for [`Titles::painted`] to say.
+    fn paint_missing(&self, project: &Project, width: u32, height: u32) {
+        let timeline = project.active();
+        let mut seen = HashSet::new();
+        let mut wanted: Vec<(u64, &concat_project::model::Clip)> = Vec::new();
+        {
+            let memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
+            for clip in &timeline.clips {
+                let key = match clip.kind {
+                    ModelClipKind::Text => match &clip.text {
+                        Some(text) => key_of(project, Painting::Title(text), width, height),
+                        None => continue,
+                    },
+                    ModelClipKind::Shape => match &clip.shape {
+                        Some(shape) => key_of(project, Painting::Shape(shape), width, height),
+                        None => continue,
+                    },
+                    _ => continue,
+                };
+                if !seen.insert(key)
+                    || memo.contains_key(&key)
+                    || self.dir.join(format!("{key:016x}.png")).is_file()
+                {
+                    continue;
+                }
+                wanted.push((key, clip));
+            }
+        }
+        // A handful paints as fast on the caller's thread as it is handed out.
+        if wanted.len() < 4 {
+            return;
+        }
+        if let Err(error) = std::fs::create_dir_all(&self.dir) {
+            log::warn!("titles: {}: {error}", self.dir.display());
+            return;
+        }
+        let started = std::time::Instant::now();
+        let mut held = self.fonts.lock().unwrap_or_else(|e| e.into_inner());
+        let fonts: &Fonts = self.fonts_for(project, &mut held);
+        let threads = std::thread::available_parallelism()
+            .map_or(2, |n| n.get())
+            .clamp(2, 6)
+            .min(wanted.len());
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let painted: Vec<(u64, Art)> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..threads)
+                .map(|_| {
+                    let (wanted, next, dir) = (&wanted, &next, &self.dir);
+                    scope.spawn(move || {
+                        let mut done = Vec::new();
+                        loop {
+                            let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some((key, clip)) = wanted.get(at) else {
+                                break;
+                            };
+                            let painting = match (&clip.text, &clip.shape) {
+                                (Some(text), _) if clip.kind == ModelClipKind::Text => {
+                                    Painting::Title(text)
+                                }
+                                (_, Some(shape)) => Painting::Shape(shape),
+                                _ => continue,
+                            };
+                            match paint_to(dir, fonts, painting, width, height, *key) {
+                                Ok(art) => done.push((*key, art)),
+                                Err(error) => log::warn!("title {}: {error}", clip.id),
+                            }
+                        }
+                        done
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap_or_default())
+                .collect()
+        });
+        drop(held);
+        log::info!(
+            "titles: {} painted on {threads} threads in {:.1} s",
+            painted.len(),
+            started.elapsed().as_secs_f64()
+        );
+        let mut memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
+        memo.extend(painted);
+    }
+
     /// One style at one size, painted in memory: the name the monitor is
     /// to hold the pixels under, the block, and the pixels.
     fn painted_live(
@@ -393,40 +485,12 @@ impl Titles {
             return Ok((png, art));
         }
 
-        let rendered = match painting {
-            Painting::Title(style) => {
-                let title = title_style(style);
-                let mut fonts = self.fonts.lock().unwrap_or_else(|e| e.into_inner());
-                let fonts = self.fonts_for(project, &mut fonts);
-                concat_text::render(fonts, &title, width, height)
-                    .map_err(|error| error.to_string())?
-            }
-            Painting::Shape(style) => concat_text::render_shape(&shape_style(style), width, height)
-                .map_err(|error| error.to_string())?,
-        };
         std::fs::create_dir_all(&self.dir).map_err(|error| error.to_string())?;
-        std::fs::write(&png, &rendered.png).map_err(|error| error.to_string())?;
-        let art = Art {
-            block: (rendered.block_width, rendered.block_height),
-            offset: (rendered.block_dx, rendered.block_dy),
-            reveal: reveal_of(&rendered.words, width, height),
+        let art = {
+            let mut fonts = self.fonts.lock().unwrap_or_else(|e| e.into_inner());
+            let fonts = self.fonts_for(project, &mut fonts);
+            paint_to(&self.dir, fonts, painting, width, height, key)?
         };
-        let words: Vec<String> = rendered
-            .words
-            .iter()
-            .map(|w| format!("[{},{},{},{}]", w.x, w.y, w.width, w.height))
-            .collect();
-        let _ = std::fs::write(
-            &side,
-            format!(
-                "{{\"w\":{},\"h\":{},\"x\":{},\"y\":{},\"words\":[{}]}}",
-                art.block.0,
-                art.block.1,
-                art.offset.0,
-                art.offset.1,
-                words.join(",")
-            ),
-        );
         self.remember(key, art.clone());
         Ok((png, art))
     }
@@ -450,6 +514,52 @@ impl Titles {
             .unwrap_or_else(|e| e.into_inner())
             .insert(key, art);
     }
+}
+
+/// Paints one style at one frame size into `dir` under `key`: the PNG, and
+/// beside it the block it holds and its words' boxes. Written under
+/// another name first and moved into place, so a reader on another thread
+/// never finds half a picture.
+fn paint_to(
+    dir: &Path,
+    fonts: &Fonts,
+    painting: Painting<'_>,
+    width: u32,
+    height: u32,
+    key: u64,
+) -> Result<Art, String> {
+    let rendered = match painting {
+        Painting::Title(style) => concat_text::render(fonts, &title_style(style), width, height)
+            .map_err(|error| error.to_string())?,
+        Painting::Shape(style) => concat_text::render_shape(&shape_style(style), width, height)
+            .map_err(|error| error.to_string())?,
+    };
+    let art = Art {
+        block: (rendered.block_width, rendered.block_height),
+        offset: (rendered.block_dx, rendered.block_dy),
+        reveal: reveal_of(&rendered.words, width, height),
+    };
+    let words: Vec<String> = rendered
+        .words
+        .iter()
+        .map(|w| format!("[{},{},{},{}]", w.x, w.y, w.width, w.height))
+        .collect();
+    let _ = std::fs::write(
+        dir.join(format!("{key:016x}.json")),
+        format!(
+            "{{\"w\":{},\"h\":{},\"x\":{},\"y\":{},\"words\":[{}]}}",
+            art.block.0,
+            art.block.1,
+            art.offset.0,
+            art.offset.1,
+            words.join(",")
+        ),
+    );
+    let png = dir.join(format!("{key:016x}.png"));
+    let partial = dir.join(format!("{key:016x}.partial"));
+    std::fs::write(&partial, &rendered.png).map_err(|error| error.to_string())?;
+    std::fs::rename(&partial, &png).map_err(|error| error.to_string())?;
+    Ok(art)
 }
 
 /// Everything the pixels depend on, hashed. Placement and timing are left
@@ -490,9 +600,13 @@ fn key_of(project: &Project, painting: Painting<'_>, width: u32, height: u32) ->
 }
 
 /// How many painted titles the directory keeps. Each is a frame-sized PNG,
-/// mostly transparent, so this is tens of megabytes at most; above it the
-/// oldest go, and a title that is still in use paints again.
-const TITLES_KEPT: usize = 400;
+/// mostly transparent, a few kilobytes; above this the oldest go, and a
+/// title that is still in use paints again. A long video captioned a few
+/// words at a time holds hundreds of titles on its own: with room for
+/// 400, one such project emptied the directory of every other's, and each
+/// was painted again, one after another on the window's thread, the next
+/// time it opened - half a minute of a phone saying the app had stopped.
+const TITLES_KEPT: usize = 4000;
 
 /// Removes the oldest painted titles until `keep` remain. Sidecars go with
 /// their PNGs. Best effort throughout: a file that will not go is left.
@@ -622,6 +736,59 @@ mod tests {
         }
     }
 
+    /// A timeline of many captions is painted once, several at a time,
+    /// every one of them whole on disk with its block beside it; shown
+    /// again - by this painter or by one started later - nothing is
+    /// painted a second time.
+    #[test]
+    fn many_titles_are_painted_together_and_only_once() {
+        let dirs = scratch("many");
+        let mut editor = Editor::new();
+        for n in 0..24 {
+            editor
+                .apply(Command::AddTextClip {
+                    above: false,
+                    track_id: None,
+                    start: f64::from(n) * 2.0,
+                    style: Some(TextStyle {
+                        content: format!("caption number {n}"),
+                        ..TextStyle::default()
+                    }),
+                    duration: Some(2.0),
+                    offset_y: None,
+                })
+                .expect("a caption is added");
+        }
+        let titles = Titles::new(&dirs);
+        let out = titles.clips(editor.project(), 640, 360);
+        assert_eq!(out.len(), 24);
+        let dir = dirs.data.join("titles");
+        let count = |extension: &str| {
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .filter(|entry| entry.path().extension().is_some_and(|e| e == extension))
+                .count()
+        };
+        assert_eq!((count("png"), count("json"), count("partial")), (24, 24, 0));
+        for title in &out {
+            let bytes = std::fs::read(&title.clip.path).unwrap();
+            assert_eq!(&bytes[1..4], b"PNG");
+            assert!(title.block.0 > 0 && title.block.1 > 0);
+        }
+        let stamp = |path: &str| std::fs::metadata(path).unwrap().modified().unwrap();
+        let first: Vec<_> = out.iter().map(|title| stamp(&title.clip.path)).collect();
+        // A painter started later reads them from disk.
+        let later = Titles::new(&dirs);
+        let again = later.clips(editor.project(), 640, 360);
+        assert_eq!(again.len(), 24);
+        for ((a, b), written) in again.iter().zip(&out).zip(&first) {
+            assert_eq!(a.clip.path, b.clip.path);
+            assert_eq!(a.block, b.block);
+            assert_eq!(&stamp(&a.clip.path), written);
+        }
+    }
+
     /// A title clip carrying a stretch - what 0.2.2's side grips wrote to
     /// make a long caption fit - comes back unstretched: the words wrap
     /// now, and a squashed glyph was never wanted.
@@ -706,8 +873,11 @@ mod tests {
         // "Your text": two words, so their reveal order spans 0 to 255.
         let reveal = title.clip.reveal_map.as_ref().expect("a title reveals");
         assert_eq!((reveal.width, reveal.height), (640, 360));
-        assert!(reveal.gray.contains(&0));
-        assert!(reveal.gray.contains(&255), "a second word reaches the top");
+        assert!(reveal.gray().contains(&0));
+        assert!(
+            reveal.gray().contains(&255),
+            "a second word reaches the top"
+        );
         let painted = Path::new(&title.clip.path);
         assert!(painted.is_file(), "the PNG is on disk");
         let stamp = std::fs::metadata(painted).and_then(|m| m.modified()).ok();
@@ -749,8 +919,8 @@ mod tests {
         // The sidecar carries the words too, so a cold read reveals the
         // same order as the one that painted them.
         assert_eq!(
-            cold[0].clip.reveal_map.as_ref().map(|r| &*r.gray),
-            left[0].clip.reveal_map.as_ref().map(|r| &*r.gray)
+            cold[0].clip.reveal_map.as_ref().map(|r| r.gray()),
+            left[0].clip.reveal_map.as_ref().map(|r| r.gray())
         );
         let _ = std::fs::remove_dir_all(dirs.data.parent().unwrap());
     }
