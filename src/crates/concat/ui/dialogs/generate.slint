@@ -74,6 +74,22 @@ export struct GenerateSheetData {
     /// 0 classic, 1 animated
     caption-look: int,
     titles: bool,
+    /// The cut's own sounds, and the music lifted where nobody speaks.
+    sounds: bool,
+    /// What the video is made from: a page's address or a file's path.
+    source: string,
+    /// Row of the language the video is made again in.
+    also-language: int,
+    /// The writer has proposed videos to make.
+    has-ideas: bool,
+    /// How many ideas of a batch are still to make.
+    queued: int,
+    /// The channel's colour, as typed.
+    brand-color: string,
+    /// Row of the logo list; 0 is none.
+    logo: int,
+    /// The channel's opening and closing on every video.
+    bumpers: bool,
     anthropic-key: string,
     replicate-token: string,
     /// The video model; empty for stills only.
@@ -219,6 +235,9 @@ export component GenerateDialog inherits Modal {
     in property <bool> phone;
     /// "None", then every recording in the bin.
     in property <[string]> music-options;
+    in property <[string]> logo-options;
+    in property <[string]> idea-options;
+    in property <[string]> template-options;
 
     /// Which text: 0 topic, 1 notes, 2 Anthropic key, 3 Replicate token,
     /// 4 Replicate video model, 5 ElevenLabs key, 6 ElevenLabs voice,
@@ -239,6 +258,10 @@ export component GenerateDialog inherits Modal {
     callback edit-script();
     /// Cut a Short: a minute of the video, 9:16.
     callback make-short();
+    /// One of the sheet's buttons: 0 suggest ideas, 1 make every idea,
+    /// 2 make the video in another language, 3 save the choices as a
+    /// series, 4 cut several Shorts.
+    callback act(kind: int);
     callback publish();
     callback cancel();
 
@@ -319,12 +342,57 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
+                        // Videos worth making, proposed for the channel:
+                        // one picked becomes the idea above; all of them
+                        // are made one after another.
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 8px;
+
+                            Button {
+                                label: I18n.t("generate.suggestIdeas");
+                                glyph: Glyph.sparkle;
+                                clicked => { root.act(0); }
+                            }
+
+                            if root.data.has-ideas: Button {
+                                label: I18n.t("generate.makeAllIdeas");
+                                glyph: Glyph.film;
+                                clicked => { root.act(1); }
+                            }
+                        }
+
+                        if root.data.has-ideas: Select {
+                            options: root.idea-options;
+                            current: 0;
+                            changed(index) => { root.choice-changed(16, index); }
+                        }
+
+                        if root.data.has-ideas || root.data.queued > 0: Text {
+                            text: I18n.t("generate.makeAllHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
                         DialogRow {
                             label: I18n.t("generate.notes");
                             Field {
                                 value: root.data.notes;
                                 placeholder: I18n.t("generate.notesPlaceholder");
                                 edited(text) => { root.text-edited(1, text); }
+                            }
+                        }
+
+                        // An article's address, or a PDF or text file's
+                        // path: the video says what it says.
+                        DialogRow {
+                            label: I18n.t("generate.madeFrom");
+                            Field {
+                                value: root.data.source;
+                                technical: true;
+                                placeholder: I18n.t("generate.madeFromPlaceholder");
+                                edited(text) => { root.text-edited(19, text); }
                             }
                         }
 
@@ -464,11 +532,39 @@ export component GenerateDialog inherits Modal {
                         // no width at all.
                         if root.data.can-short: HorizontalLayout {
                             alignment: start;
+                            spacing: 8px;
 
                             Button {
                                 label: I18n.t("generate.makeShort");
                                 glyph: Glyph.film;
                                 clicked => { root.make-short(); }
+                            }
+
+                            Button {
+                                label: I18n.t("generate.makeShorts");
+                                glyph: Glyph.film;
+                                clicked => { root.act(4); }
+                            }
+                        }
+
+                        // The same video again in another language: the
+                        // pictures as they are, the words and the voice new.
+                        if root.data.can-short: DialogRow {
+                            label: I18n.t("generate.alsoIn");
+                            Select {
+                                options: ["العربية", "English", "Français", "Español", "Deutsch", "Türkçe", "Português", "Bahasa Indonesia", "हिन्दी", "اردو"];
+                                current: root.data.also-language;
+                                changed(index) => { root.choice-changed(17, index); }
+                            }
+                        }
+
+                        if root.data.can-short: HorizontalLayout {
+                            alignment: start;
+
+                            Button {
+                                label: I18n.t("generate.translate");
+                                glyph: Glyph.text-mark;
+                                clicked => { root.act(2); }
                             }
                         }
 
@@ -751,6 +847,73 @@ export component GenerateDialog inherits Modal {
                                 edited(text) => { root.text-edited(16, text); }
                             }
                         }
+
+                        // The choices saved under the channel's name, and
+                        // brought back with one pick: a series.
+                        DialogRow {
+                            label: I18n.t("generate.series");
+                            Select {
+                                options: root.template-options;
+                                current: 0;
+                                changed(index) => { root.choice-changed(18, index); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            alignment: start;
+
+                            Button {
+                                label: I18n.t("generate.saveSeries");
+                                clicked => { root.act(3); }
+                            }
+                        }
+
+                        // The channel's look: its colour, its logo in a
+                        // corner, its opening and closing on every video.
+                        DialogRow {
+                            label: I18n.t("generate.brandColor");
+                            Field {
+                                value: root.data.brand-color;
+                                technical: true;
+                                placeholder: "#FFD400";
+                                edited(text) => { root.text-edited(18, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.brandLogo");
+                            Select {
+                                options: root.logo-options;
+                                current: root.data.logo;
+                                changed(index) => { root.choice-changed(14, index); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.brandBumpers");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.bumpers;
+                                    toggled(on) => { root.toggled(5, on); }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: I18n.t("generate.brandHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
                     }
 
                     DialogSection {
@@ -824,6 +987,24 @@ export component GenerateDialog inherits Modal {
                                 Switch {
                                     checked: root.data.titles;
                                     toggled(on) => { root.toggled(1, on); }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.sounds");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.sounds;
+                                    toggled(on) => { root.toggled(4, on); }
                                 }
                             }
                         }

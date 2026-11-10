@@ -36,6 +36,8 @@ pub mod job;
 pub mod motion;
 pub mod plan;
 pub mod providers;
+pub mod review;
+pub mod sfx;
 pub mod shorts;
 pub mod storyboard;
 pub mod writer;

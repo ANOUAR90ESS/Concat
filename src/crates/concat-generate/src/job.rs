@@ -125,6 +125,22 @@ pub struct Made {
     pub spent: f64,
     /// The music bed made for the video, and its length, when there is one.
     pub music: Option<(String, f64)>,
+    /// The channel's opening and closing drawn for this video, each with
+    /// its length, when they have been.
+    pub bumpers: Option<((String, f64), (String, f64))>,
+}
+
+/// What a channel's opening and closing say, and in what colour.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Brand {
+    /// The channel's name.
+    pub name: String,
+    /// What it opens every video with; may be empty.
+    pub opening: String,
+    /// What it closes every video with; may be empty.
+    pub closing: String,
+    /// Its colour, `#rrggbb`; anything else is the default.
+    pub colour: String,
 }
 
 /// What a run may spend, and what each thing costs.
@@ -800,6 +816,95 @@ impl Job {
         Ok(made)
     }
 
+    /// Takes over what `from` - the same video in another language - made
+    /// that words do not change: its pictures, their takes and starting
+    /// frames, its music, and its notes of which shots are stale or stood
+    /// in for. Nothing here is written over; the voice is not taken, and
+    /// an explainer or a card that says something is drawn again by the
+    /// run, its words having changed.
+    pub fn adopt(&self, from: &Job) -> Result<(), String> {
+        fn copy(from: &Path, to: &Path) -> Result<(), String> {
+            if to.exists() {
+                return Ok(());
+            }
+            std::fs::copy(from, to)
+                .map(|_| ())
+                .map_err(|error| format!("{}: {error}", to.display()))
+        }
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|error| format!("{}: {error}", self.dir.display()))?;
+        for (theirs, ours) in [
+            (from.shots_dir(), self.shots_dir()),
+            (from.takes_dir(), self.takes_dir()),
+            (from.frames_dir(), self.frames_dir()),
+        ] {
+            let Ok(entries) = std::fs::read_dir(&theirs) else {
+                continue;
+            };
+            std::fs::create_dir_all(&ours)
+                .map_err(|error| format!("{}: {error}", ours.display()))?;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && let Some(name) = path.file_name()
+                {
+                    copy(&path, &ours.join(name))?;
+                }
+            }
+        }
+        for name in ["stand-ins.txt", "stale.txt"] {
+            let theirs = from.dir.join(name);
+            if theirs.is_file() {
+                copy(&theirs, &self.dir.join(name))?;
+            }
+        }
+        if let Some(music) = from.music()
+            && let Some(name) = music.file_name()
+        {
+            copy(&music, &self.dir.join(name))?;
+        }
+        Ok(())
+    }
+
+    /// Where the channel's opening and closing are drawn for this video.
+    fn bumper_files(&self) -> (PathBuf, PathBuf) {
+        let dir = self.dir.join("brand");
+        (dir.join("intro.mp4"), dir.join("outro.mp4"))
+    }
+
+    /// Draws the channel's opening and closing for `board`'s frame, where
+    /// they are not drawn already as `brand` now has them. Nothing is
+    /// asked of a model. `stop` is asked between frames.
+    pub fn draw_bumpers(
+        &self,
+        board: &Storyboard,
+        brand: &Brand,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<(), String> {
+        use crate::explainer::{INTRO_SECONDS, OUTRO_SECONDS, bumper, render_clip};
+        let frame = board.frame();
+        let canvas = (f64::from(frame.0), f64::from(frame.1));
+        let (intro, outro) = self.bumper_files();
+        if let Some(dir) = intro.parent() {
+            std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        }
+        for (out, line, closing, seconds) in [
+            (&intro, &brand.opening, false, INTRO_SECONDS),
+            (&outro, &brand.closing, true, OUTRO_SECONDS),
+        ] {
+            let mut card = bumper(&brand.name, line, &brand.colour, closing, canvas);
+            card.settle();
+            let key = drawn_key(&card, seconds, frame);
+            let note = out.with_extension("drawn");
+            if out.is_file() && std::fs::read_to_string(&note).ok().as_deref() == Some(&key) {
+                continue;
+            }
+            render_clip(&card, canvas, frame, seconds, out, stop)?;
+            std::fs::write(&note, key).map_err(|error| format!("{}: {error}", note.display()))?;
+        }
+        Ok(())
+    }
+
     /// The music bed made for this video, when there is one.
     pub fn music(&self) -> Option<PathBuf> {
         providers::existing(&self.dir, "music", &MUSIC_EXTENSIONS)
@@ -1072,6 +1177,15 @@ impl Job {
         if let Some(path) = self.music() {
             let (path, length) = probe(&path)?;
             made.music = Some((path, length.unwrap_or(0.0)));
+        }
+        // The channel's cards, where they were drawn for this frame.
+        let (intro, outro) = self.bumper_files();
+        if intro.is_file() && outro.is_file() {
+            let (intro, opening) = probe(&intro)?;
+            let (outro, closing) = probe(&outro)?;
+            if let (Some(opening), Some(closing)) = (opening, closing) {
+                made.bumpers = Some(((intro, opening), (outro, closing)));
+            }
         }
         Ok(made)
     }
@@ -1805,6 +1919,42 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A video made again in another language starts with the pictures of
+    /// the first, its music and its notes, and none of its voice; what it
+    /// already has is not written over.
+    #[test]
+    fn a_translation_adopts_the_pictures_and_not_the_voice() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-adopt-{}", std::process::id()));
+        let (first, second) = (Job::new(&root, "stars"), Job::new(&root, "stars arabic"));
+        for dir in [first.shots_dir(), first.takes_dir(), first.voice_dir()] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(first.shots_dir().join("c01s01_1.png"), b"picture").unwrap();
+        std::fs::write(first.takes_dir().join("c01s01_1-2.png"), b"take").unwrap();
+        std::fs::write(first.voice_dir().join("c01s01.mp3"), b"voice").unwrap();
+        std::fs::write(first.dir.join("music.mp3"), b"music").unwrap();
+        std::fs::write(first.stand_ins(), "c01s02_1\n").unwrap();
+        std::fs::create_dir_all(second.shots_dir()).unwrap();
+        std::fs::write(second.shots_dir().join("c01s01_1.png"), b"its own").unwrap();
+        second.adopt(&first).unwrap();
+        assert_eq!(
+            std::fs::read(second.shots_dir().join("c01s01_1.png")).unwrap(),
+            b"its own"
+        );
+        assert_eq!(
+            std::fs::read(second.takes_dir().join("c01s01_1-2.png")).unwrap(),
+            b"take"
+        );
+        assert!(second.music().is_some());
+        assert_eq!(
+            std::fs::read_to_string(second.stand_ins()).unwrap(),
+            "c01s02_1\n"
+        );
+        assert!(!second.voice_dir().join("c01s01.mp3").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn the_music_bed_is_found_in_the_jobs_folder() {

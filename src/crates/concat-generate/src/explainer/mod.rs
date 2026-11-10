@@ -12,6 +12,7 @@
 //! `y` down, and is scaled to the frame when drawn. Times are seconds from
 //! the start of the shot.
 
+mod bumper;
 pub mod icons;
 mod render;
 mod stand_in;
@@ -19,6 +20,7 @@ mod svg;
 
 use serde::{Deserialize, Serialize};
 
+pub use bumper::{DEFAULT_COLOUR, INTRO_SECONDS, OUTRO_SECONDS, bumper};
 pub use render::{Fonts, RATE, render_clip, render_still, still_png};
 pub use stand_in::stand_in;
 

@@ -102,6 +102,60 @@ pub struct Preferences {
     pub generate: GeneratePrefs,
 }
 
+/// A series' settings, saved under its name: everything the Long video
+/// sheet remembers but the services' keys and the other series.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Template {
+    /// What the person called it.
+    pub name: String,
+    /// The sheet's choices.
+    pub prefs: Box<GeneratePrefs>,
+}
+
+impl GeneratePrefs {
+    /// These choices as a series to save: without the keys, which stay
+    /// where they are, and without the series saved before.
+    pub fn as_template(&self, name: &str) -> Template {
+        let mut prefs = self.clone();
+        prefs.anthropic_key.clear();
+        prefs.replicate_token.clear();
+        prefs.elevenlabs_key.clear();
+        prefs.templates.clear();
+        Template {
+            name: name.trim().to_owned(),
+            prefs: Box::new(prefs),
+        }
+    }
+
+    /// Keeps `template` among the series, in place of one of its name.
+    pub fn keep_template(&mut self, template: Template) {
+        match self
+            .templates
+            .iter_mut()
+            .find(|kept| kept.name == template.name)
+        {
+            Some(kept) => *kept = template,
+            None => self.templates.push(template),
+        }
+    }
+
+    /// Brings back the series at `index`: its choices, under the keys and
+    /// the series these already hold. False when there is no such series.
+    pub fn apply_template(&mut self, index: usize) -> bool {
+        let Some(template) = self.templates.get(index).cloned() else {
+            return false;
+        };
+        let mut prefs = *template.prefs;
+        prefs.anthropic_key = std::mem::take(&mut self.anthropic_key);
+        prefs.replicate_token = std::mem::take(&mut self.replicate_token);
+        prefs.elevenlabs_key = std::mem::take(&mut self.elevenlabs_key);
+        prefs.templates = std::mem::take(&mut self.templates);
+        *self = prefs;
+        true
+    }
+}
+
 /// What the Long video sheet remembers: the services' keys, kept in this
 /// file on this machine and sent nowhere but to the service each belongs
 /// to, and the choices made last time.
@@ -119,6 +173,20 @@ pub struct GeneratePrefs {
     pub replicate_image_model: String,
     /// Export the finished cut without being asked; None is yes.
     pub auto_export: Option<bool>,
+    /// The cut's own sounds - a whoosh into a scene, a pop, a chime - and
+    /// the music lifted where nobody speaks; on unless turned off.
+    pub sounds: Option<bool>,
+    /// The channel's colour, `#rrggbb` as typed: its opening and closing
+    /// are lit in it, and captions' key words and stickers take it.
+    pub brand_color: String,
+    /// The channel's logo, a picture's path, kept in a corner of every
+    /// video; empty for none.
+    pub brand_logo: String,
+    /// The channel's opening and closing drawn onto every video.
+    pub brand_bumpers: bool,
+    /// The series saved: each a name and the sheet's choices as they
+    /// were, to bring back with one pick.
+    pub templates: Vec<Template>,
     /// ElevenLabs, which reads the narration.
     pub elevenlabs_key: String,
     /// The ElevenLabs voice.
@@ -289,6 +357,32 @@ impl Preferences {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A series is saved without the keys and brought back under the keys
+    /// in use; saving under a name again takes the first one's place.
+    #[test]
+    fn a_series_is_saved_and_brought_back_without_touching_the_keys() {
+        let mut prefs = GeneratePrefs {
+            anthropic_key: "sk-secret".into(),
+            channel_name: "Tarikh".into(),
+            content_style: 2,
+            ..GeneratePrefs::default()
+        };
+        let saved = prefs.as_template(" Tarikh ");
+        assert_eq!(saved.name, "Tarikh");
+        assert!(saved.prefs.anthropic_key.is_empty());
+        prefs.keep_template(saved);
+        prefs.content_style = 4;
+        prefs.keep_template(prefs.as_template("Tarikh"));
+        assert_eq!(prefs.templates.len(), 1);
+        prefs.content_style = 0;
+        prefs.anthropic_key = "sk-newer".into();
+        assert!(prefs.apply_template(0));
+        assert_eq!(prefs.content_style, 4);
+        assert_eq!(prefs.anthropic_key, "sk-newer");
+        assert_eq!(prefs.templates.len(), 1);
+        assert!(!prefs.apply_template(3));
+    }
 
     const NAMES: [&str; 3] = ["Lime", "Sky", "Violet"];
 

@@ -348,6 +348,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         app.set_speech_sample_waves(ModelRc::from(models.speech_sample_waves.clone()));
         app.set_speech_sample_details(ModelRc::from(models.speech_sample_details.clone()));
         app.set_generate_music(ModelRc::from(models.generate_music.clone()));
+        app.set_generate_logos(ModelRc::from(models.generate_logos.clone()));
+        app.set_generate_ideas(ModelRc::from(models.generate_ideas.clone()));
+        app.set_generate_templates(ModelRc::from(models.generate_templates.clone()));
         app.set_script_rows(ModelRc::from(models.script_rows.clone()));
         app.set_app_menu_items(ModelRc::from(models.bar.clone()));
         app.set_transcribers(ModelRc::from(models.transcribers.clone()));
@@ -1787,6 +1790,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     }));
     app.on_generate_make_short(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::Short));
+    }));
+    app.on_generate_act(on_window!(|state, kind: i32| {
+        state.handle(Msg::Generate(GenerateMsg::Act(kind)));
     }));
     app.on_generate_publish(on_window!(|state| {
         state.handle(Msg::Generate(GenerateMsg::Publish));

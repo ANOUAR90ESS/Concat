@@ -408,7 +408,7 @@ shipped together, each whole, in alpha.26.
   from the wide one now); the designer's palette and pace chosen in the
   sheet; pictures from Replicate placed inside an explainer.
 
-## Against a channel that does it well (owner, after alpha.27)
+## Against a channel that does it well (owner, after alpha.27; shipped in alpha.28)
 
 The owner set a video of ours (a nuclear bomb, 16:9, flat cards) beside a
 short made the same way by another channel: one illustrated cast from
@@ -416,30 +416,78 @@ shot to shot, a new picture every second or two, the caption's key word
 in colour, tilted labels for the turn, a dense voice. Ours showed bare
 washes of colour where pictures had failed, and the voice misread words.
 
-- 🚧 **A failed picture stands in well, and costs less.** A picture a
+- ✅ **A failed picture stands in well, and costs less.** A picture a
   model's safety filter refuses is not asked for again in the same words
   - each try is paid for - but once more, gently; one that still cannot
   be made is a designed card - the scene's idea in large words on a glass
   plate over coloured lights - never a bare wash. The owner's log is to
   say why so many failed.
-- 🚧 **Picture style.** Auto, photo, flat illustration or 3D cartoon,
+- ✅ **Picture style.** Auto, photo, flat illustration or 3D cartoon,
   held word for word at the head of every prompt. The writer may give the
   video a cast of up to four recurring characters, each with a fixed
   look; a shot that names one has that look added, so they are drawn the
   same from shot to shot.
-- 🚧 **Captions that point.** The writer marks each scene's key words; a
+- ✅ **Captions that point.** The writer marks each scene's key words; a
   caption that holds one shows it in yellow, the rest in white (the text
   painter now colours chosen words, either direction). A scene's turn may
   be a sticker: a few words on a red plate, tilted, popping in.
-- 🚧 **Pace.** In a Short, and wherever the captions are animated, a
+- ✅ **Pace.** In a Short, and wherever the captions are animated, a
   still held past a few seconds is cut into pieces that punch in on it,
   framed tighter and wider by turns, cut straight.
-- 🚧 **The voice.** A pronunciation list in the sheet - word = how to say
+- ✅ **The voice.** A pronunciation list in the sheet - word = how to say
   it - rewrites those words before the voice reads them, whatever their
   vowel marks; ElevenLabs v3, the more expressive, may be chosen, and a
   line it refuses is read with v2.
 - Next: sound effects under stickers and cuts; the owner's list of
   misread words.
+
+## From an idea to a video ready to publish (owner, 9 Nov)
+
+The owner's aim: nothing on the market makes content ready to publish;
+LongCut is close. Six stages, each done whole. Publishing straight to a
+platform was weighed and left out by the owner: the system's share sheet
+does it.
+
+- 🚧 **Stage A: sound design.** Three sounds the app makes itself, sample
+  by sample (`sfx.rs`): a whoosh into every scene but the first, a pop
+  under a sticker, a chime under a figure or an animated card - on lanes
+  of their own under the pictures, each at its own level. The music is
+  lifted where nobody speaks for more than a moment and brought back
+  under the voice (`plan::music_keys`). A switch in the sheet.
+- 🚧 **Stage B: a check before export.** One tap already ran from idea
+  to export; what was missing was the look-over. Shots a model could not
+  make are asked for once more before the cut. The cut is then reviewed
+  (`review.rs`): cards standing in for shots, scenes unread and files
+  left out hold the export and are said on the sheet; explainers not
+  designed, pictures alike and a long silence are said and let through.
+- 🚧 **Stage C: the channel's identity.** A colour - captions' key words
+  and stickers take it; a logo, a picture kept small in a top corner
+  over the scenes; an opening and a closing drawn in the colour with the
+  channel's name and its opening and closing lines
+  (`explainer::bumper`), before the first scene and after the last. The
+  sheet's choices are saved under a name as a series and brought back
+  with one pick, the keys left where they are.
+- 🚧 **Stage D: ideas, and several at once.** Suggest ideas proposes
+  five videos for the channel, about what is typed or whatever suits it
+  (`writer::ideas`); one picked becomes the idea; Make them all makes
+  each in turn, the next starting once the one before is cut and its
+  export is over.
+- 🚧 **Stage E: from a source.** Made from takes a page's address - it
+  is fetched and read in full - or a PDF's path, attached, or a text
+  file's, quoted whole; the research then says what the source says and
+  searches only to check. Make 3 Shorts cuts up to three stretches of a
+  finished video, none sharing a scene, each on a timeline of its own
+  (`writer::pick_shorts`).
+- 🚧 **Stage F: other languages.** Make it in this language translates
+  the script a chapter at a time - narration, titles, stickers, key
+  words, cards, and the words drawn in animated cards and explainers,
+  with the cues their steps wait for (`writer::translate`) - as a video
+  of its own that takes over the pictures and the music as they are
+  (`Job::adopt`); its voice is read and its drawn shots drawn again.
+  Arabic is marked with its vowels as any Arabic script is.
+- Known limits: several Shorts are not exported by themselves - one
+  export runs at a time; a logo must be a picture in the project; a
+  batch runs in the open project and stops with the app.
 
 ## Done since alpha.14
 
