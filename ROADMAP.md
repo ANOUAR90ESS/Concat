@@ -503,6 +503,36 @@ does it.
   captions at 1080p: 15.4 s to 3.2 s the first time, 1.2 s to nothing
   after. The watchdog is told each step of opening a project.
 
+## Formats: a kind of video made whole (owner, 10 Nov)
+
+The owner's judgement after alpha.29: much has been added and it still
+cannot be marketed. What is missing is not features but a result that
+can go up as it is. Keys stay the person's own - they pay the services
+directly and see what they spend; the app's own subscription is small,
+and that is the difference from tools that are dear and capped.
+
+- 🚧 **Three formats**, each a writer's brief on top of the content
+  style and the sheet's choices that go with it (`writer::VideoFormat`,
+  the sheet's Format row): **Explained in a minute** - upright, opens on
+  a situation or a question, a few short beats, the same two characters
+  in every picture, ends on a question; **Documentary story** - five
+  minutes, a cold open on the most dramatic moment, acts ending on
+  turns, photographs; **Simple lesson** - three minutes, one concept
+  from an everyday question, one analogy carried through, drawn as it is
+  explained, three things to remember.
+- ⏳ Tuned on the owner's real runs: each format made several times on
+  the phone, the log and the video read, the brief changed until most
+  runs can be published as they are.
+- ⏳ A first-run sheet of three steps - format, idea, make - with the
+  rest under Advanced; a sample of the script and a shot or two before
+  the rest is paid for.
+- ⏳ The voice listened to after it is made: a transcript compared with
+  the script, words said wrong added to the pronunciation list.
+- ⏳ The channel's presenter: a drawn character whose mouth moves with
+  the voice (later, a real face through a lip-sync model on Replicate).
+- ⏳ A library of example scripts per format; prompt caching for the
+  writer's standing briefs.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

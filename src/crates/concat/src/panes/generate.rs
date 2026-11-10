@@ -28,7 +28,8 @@ use concat_generate::review;
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{
-    self, Brief, ContentStyle, Level, PictureStyle, Publishing, Suggestion, VideoIdea, Writing,
+    self, Brief, ContentStyle, Level, PictureStyle, Publishing, Suggestion, VideoFormat, VideoIdea,
+    Writing,
 };
 use concat_project::Command;
 use concat_project::commands::NewMedia;
@@ -417,6 +418,26 @@ impl GeneratePane {
                     8 => prefs.content_style = index.min(ContentStyle::ALL.len() - 1),
                     12 => prefs.pictures = index.min(PictureStyle::ALL.len() - 1),
                     13 => prefs.elevenlabs_model = index.min(1),
+                    19 => {
+                        // A format sets what goes with it; the choices stay
+                        // the person's to change after.
+                        let format = index.min(VideoFormat::ALL.len() - 1);
+                        prefs.format = format;
+                        if let Some(look) = format_look(VideoFormat::ALL[format]) {
+                            self.minutes = look.minutes;
+                            prefs.minutes = Some(look.minutes);
+                            prefs.aspect = look.aspect;
+                            prefs.content_style = look.content_style;
+                            prefs.level = Some(look.level);
+                            prefs.pictures = look.pictures;
+                            prefs.caption_look = look.caption_look;
+                            prefs.clips = Some(look.clips);
+                            prefs.visuals = 0;
+                        }
+                        studio.prefs.save(&studio.host.dirs);
+                        self.tally(studio);
+                        return;
+                    }
                     16 => {
                         // The idea picked becomes the video's.
                         if let Some(idea) = index.checked_sub(1).and_then(|row| self.ideas.get(row))
@@ -1169,6 +1190,7 @@ impl GeneratePane {
             cards_only: prefs.visuals == 1,
             pictures: PictureStyle::ALL[prefs.pictures.min(PictureStyle::ALL.len() - 1)],
             source: self.source.trim().to_owned(),
+            format: VideoFormat::ALL[prefs.format.min(VideoFormat::ALL.len() - 1)],
         }
     }
 
@@ -2295,6 +2317,7 @@ impl GeneratePane {
             replicate_image_model: prefs.replicate_image_model.as_str().into(),
             auto_export: prefs.auto_export.unwrap_or(true),
             sounds: prefs.sounds.unwrap_or(true),
+            format: prefs.format.min(VideoFormat::ALL.len() - 1) as i32,
             source: self.source.as_str().into(),
             also_language: self.also_language as i32,
             has_ideas: !self.ideas.is_empty(),
@@ -2530,6 +2553,58 @@ fn music_items(studio: &Studio) -> Vec<(String, f64)> {
         .filter(|item| item.kind == MediaKind::Audio)
         .map(|item| (item.path.clone(), item.duration.unwrap_or(0.0)))
         .collect()
+}
+
+/// The sheet's choices that go with a format, as rows of their lists.
+struct FormatLook {
+    minutes: usize,
+    aspect: usize,
+    content_style: usize,
+    level: usize,
+    pictures: usize,
+    caption_look: usize,
+    clips: usize,
+}
+
+/// What a format sets in the sheet; None for no format, which sets
+/// nothing.
+fn format_look(format: VideoFormat) -> Option<FormatLook> {
+    match format {
+        VideoFormat::Custom => None,
+        // A minute, upright, taught, in flat illustration with animated
+        // captions, all stills: nothing in it holds long enough for a clip.
+        VideoFormat::Minute => Some(FormatLook {
+            minutes: 0,
+            aspect: 1,
+            content_style: 1,
+            level: 1,
+            pictures: 2,
+            caption_look: 1,
+            clips: 0,
+        }),
+        // Five minutes, wide, a documentary in photographs, a quarter of
+        // its shots moving.
+        VideoFormat::Story => Some(FormatLook {
+            minutes: 2,
+            aspect: 0,
+            content_style: 0,
+            level: 1,
+            pictures: 1,
+            caption_look: 0,
+            clips: 1,
+        }),
+        // Three minutes, wide, taught to a beginner, illustrated, all
+        // stills beside its drawings.
+        VideoFormat::Lesson => Some(FormatLook {
+            minutes: 1,
+            aspect: 0,
+            content_style: 1,
+            level: 0,
+            pictures: 2,
+            caption_look: 0,
+            clips: 0,
+        }),
+    }
 }
 
 /// The pictures a logo is picked from: the one already picked, wherever
