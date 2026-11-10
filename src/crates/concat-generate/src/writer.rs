@@ -370,6 +370,10 @@ pub struct Brief {
     /// The kind of video it is made as, when it is one of those the app
     /// makes whole.
     pub format: VideoFormat,
+    /// The video's shape in the person's own words - how it opens, what
+    /// it is made of, how it ends: a format of their own, for any kind of
+    /// video the app has no format for. Empty for none.
+    pub structure: String,
 }
 
 impl Brief {
@@ -402,6 +406,15 @@ impl Brief {
         }
         if !self.format.brief().is_empty() {
             text += &format!("{}\n", self.format.brief());
+        }
+        // The person's own shape last: where it and a format disagree, it
+        // is theirs that holds.
+        if !self.structure.trim().is_empty() {
+            text += &format!(
+                "THE PRODUCER'S OWN SHAPE for this video, in their words - hold to it in every \
+                 chapter, and where it differs from anything above, it wins:\n{}\n",
+                self.structure.trim()
+            );
         }
         if let Some(medium) = self.pictures.medium() {
             text += &format!(
@@ -2939,6 +2952,17 @@ mod tests {
             assert!(brief.text().contains("FORMAT - "), "{format:?}");
         }
         assert!(!Brief::default().text().contains("FORMAT"));
+        // A shape of the person's own is briefed after any format, and
+        // alone when there is none.
+        let own = Brief {
+            format: VideoFormat::Minute,
+            structure: " Open on a joke, then three facts. ".into(),
+            ..Brief::default()
+        };
+        let text = own.text();
+        assert!(text.find("FORMAT - ").unwrap() < text.find("Open on a joke").unwrap());
+        assert!(text.contains("it wins:\nOpen on a joke, then three facts.\n"));
+        assert!(!Brief::default().text().contains("PRODUCER'S OWN SHAPE"));
         assert_eq!(VideoFormat::ALL[0], VideoFormat::Custom);
     }
 

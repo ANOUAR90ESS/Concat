@@ -384,6 +384,7 @@ impl GeneratePane {
                     16 => prefs.channel_example = text,
                     17 => prefs.pronunciation = text,
                     18 => prefs.brand_color = text,
+                    20 => prefs.structure = text,
                     19 => {
                         self.source = text;
                         return;
@@ -1191,6 +1192,7 @@ impl GeneratePane {
             pictures: PictureStyle::ALL[prefs.pictures.min(PictureStyle::ALL.len() - 1)],
             source: self.source.trim().to_owned(),
             format: VideoFormat::ALL[prefs.format.min(VideoFormat::ALL.len() - 1)],
+            structure: prefs.structure.trim().to_owned(),
         }
     }
 
@@ -2318,6 +2320,7 @@ impl GeneratePane {
             auto_export: prefs.auto_export.unwrap_or(true),
             sounds: prefs.sounds.unwrap_or(true),
             format: prefs.format.min(VideoFormat::ALL.len() - 1) as i32,
+            structure: prefs.structure.as_str().into(),
             source: self.source.as_str().into(),
             also_language: self.also_language as i32,
             has_ideas: !self.ideas.is_empty(),

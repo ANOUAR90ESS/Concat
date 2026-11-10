@@ -78,6 +78,8 @@ export struct GenerateSheetData {
     sounds: bool,
     /// 0 none, 1 one idea in a minute, 2 a story, 3 a lesson.
     format: int,
+    /// The video's shape in the person's own words.
+    structure: string,
     /// What the video is made from: a page's address or a file's path.
     source: string,
     /// Row of the language the video is made again in.
@@ -369,6 +371,26 @@ export component GenerateDialog inherits Modal {
                                 font-size: Theme.fs-lg;
                                 wrap: word-wrap;
                             }
+                        }
+
+                        // A format of the person's own: how their videos
+                        // open, what they are made of, how they end - for
+                        // any kind the app has no format for. Kept with a
+                        // series.
+                        DialogRow {
+                            label: I18n.t("generate.structure");
+                            Field {
+                                value: root.data.structure;
+                                placeholder: I18n.t("generate.structurePlaceholder");
+                                edited(text) => { root.text-edited(20, text); }
+                            }
+                        }
+
+                        Text {
+                            text: I18n.t("generate.structureHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
                         }
 
                         // Videos worth making, proposed for the channel:

@@ -520,6 +520,12 @@ and that is the difference from tools that are dear and capped.
   turns, photographs; **Simple lesson** - three minutes, one concept
   from an everyday question, one analogy carried through, drawn as it is
   explained, three things to remember.
+- 🚧 **A format of the person's own.** The owner would not have the app
+  held to three kinds: nobody knows what a user will want to make. The
+  sheet's default is no format; the three are examples to pick or pass
+  over. Your own format is a line in the person's words - how their
+  videos open, what they are made of, how they end - told to the writer
+  over any format, and saved with a series.
 - ⏳ Tuned on the owner's real runs: each format made several times on
   the phone, the log and the video read, the brief changed until most
   runs can be published as they are.
