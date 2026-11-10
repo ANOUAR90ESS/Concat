@@ -2981,7 +2981,7 @@ impl WgpuCompositor {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &reveal.gray,
+            reveal.gray(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(reveal.width),

@@ -489,6 +489,20 @@ does it.
   export runs at a time; a logo must be a picture in the project; a
   batch runs in the open project and stops with the app.
 
+## After alpha.29 (owner's test, 10 Nov)
+
+- 🚧 **Opening a project said the app had stopped.** A long video
+  captioned a few words at a time holds hundreds of titles, all painted
+  when the project first shows, one after another on the window's
+  thread. Each blurred its shadow over the whole frame - nearly all a
+  title cost; the blur is now over the words alone, to the same pixels.
+  The titles' directory kept 400 and swept the rest, so they were
+  painted again at every opening: it keeps 4000. Each title's reveal
+  map, a frame's worth of bytes, is baked when a reveal reads it, not
+  for every title. What is missing is painted on several threads. 300
+  captions at 1080p: 15.4 s to 3.2 s the first time, 1.2 s to nothing
+  after. The watchdog is told each step of opening a project.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

@@ -230,16 +230,29 @@ impl Lut {
 /// paint a title is baked once into a texture, exactly as a colour look-up
 /// table bakes a grade, and a shader reads it back with one comparison
 /// against `progress`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RevealMap {
-    /// A hash of the contents, so a renderer can cache the upload.
+    /// A hash of what the map holds, so a renderer can cache the upload.
     pub id: u64,
     /// The canvas width this map was baked at.
     pub width: u32,
     /// The canvas height this map was baked at.
     pub height: u32,
-    /// `width * height` bytes, one per pixel, red channel only.
-    pub gray: Arc<[u8]>,
+    /// The words' boxes, in the order they reveal.
+    rects: Arc<[(i32, i32, u32, u32)]>,
+    /// The map itself, baked the first time it is read: a long video's
+    /// hundreds of captions each have one, a frame's worth of bytes, and
+    /// only the few on screen with a reveal on them are ever read.
+    gray: std::sync::OnceLock<Arc<[u8]>>,
+}
+
+impl PartialEq for RevealMap {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.width == other.width
+            && self.height == other.height
+            && self.rects == other.rects
+    }
 }
 
 impl RevealMap {
@@ -249,26 +262,47 @@ impl RevealMap {
     /// stays revealed from the start; one inside more than one keeps the
     /// later word's order, though words in practice never overlap.
     pub fn from_rects(width: u32, height: u32, rects: &[(i32, i32, u32, u32)]) -> RevealMap {
-        let mut gray = vec![0u8; width as usize * height as usize];
-        let last = rects.len().saturating_sub(1).max(1) as f32;
-        for (index, &(x, y, w, h)) in rects.iter().enumerate() {
-            let value = ((index as f32 / last) * 255.0).round() as u8;
-            let x0 = x.clamp(0, width as i32) as u32;
-            let y0 = y.clamp(0, height as i32) as u32;
-            let x1 = (x + w as i32).clamp(0, width as i32) as u32;
-            let y1 = (y + h as i32).clamp(0, height as i32) as u32;
-            for row in y0..y1 {
-                let start = row as usize * width as usize + x0 as usize;
-                gray[start..start + (x1 - x0) as usize].fill(value);
-            }
+        // The id is of the boxes and the size, which are all the pixels
+        // are made from: hashing a frame's worth of bytes for every title
+        // of a project was a second of its opening.
+        let mut described = Vec::with_capacity(8 + rects.len() * 16);
+        described.extend_from_slice(&width.to_le_bytes());
+        described.extend_from_slice(&height.to_le_bytes());
+        for &(x, y, w, h) in rects {
+            described.extend_from_slice(&x.to_le_bytes());
+            described.extend_from_slice(&y.to_le_bytes());
+            described.extend_from_slice(&w.to_le_bytes());
+            described.extend_from_slice(&h.to_le_bytes());
         }
-        let id = fnv64(&gray) ^ u64::from(width) ^ (u64::from(height) << 32);
         RevealMap {
-            id,
+            id: fnv64(&described),
             width,
             height,
-            gray: gray.into(),
+            rects: rects.into(),
+            gray: std::sync::OnceLock::new(),
         }
+    }
+
+    /// `width * height` bytes, one per pixel: the order of the word
+    /// painted there, 0 where there is none.
+    pub fn gray(&self) -> &[u8] {
+        self.gray.get_or_init(|| {
+            let (width, height) = (self.width, self.height);
+            let mut gray = vec![0u8; width as usize * height as usize];
+            let last = self.rects.len().saturating_sub(1).max(1) as f32;
+            for (index, &(x, y, w, h)) in self.rects.iter().enumerate() {
+                let value = ((index as f32 / last) * 255.0).round() as u8;
+                let x0 = x.clamp(0, width as i32) as u32;
+                let y0 = y.clamp(0, height as i32) as u32;
+                let x1 = (x + w as i32).clamp(0, width as i32) as u32;
+                let y1 = (y + h as i32).clamp(0, height as i32) as u32;
+                for row in y0..y1 {
+                    let start = row as usize * width as usize + x0 as usize;
+                    gray[start..start + (x1 - x0) as usize].fill(value);
+                }
+            }
+            gray.into()
+        })
     }
 
     /// The map that reveals everything from the first frame: what a pass
@@ -336,17 +370,17 @@ mod tests {
     #[test]
     fn the_identity_reveal_map_reveals_everywhere() {
         let map = RevealMap::identity();
-        assert!(map.gray.iter().all(|&g| g == 0));
+        assert!(map.gray().iter().all(|&g| g == 0));
     }
 
     #[test]
     fn word_rects_are_ordered_zero_to_full_and_outside_stays_revealed() {
         let map = RevealMap::from_rects(10, 10, &[(0, 0, 2, 2), (5, 0, 2, 2), (0, 5, 2, 2)]);
-        assert_eq!(map.gray[0], 0);
-        assert_eq!(map.gray[5], 128);
-        assert_eq!(map.gray[5 * 10], 255);
+        assert_eq!(map.gray()[0], 0);
+        assert_eq!(map.gray()[5], 128);
+        assert_eq!(map.gray()[5 * 10], 255);
         // A pixel no rect covers is left at the "already revealed" value.
-        assert_eq!(map.gray[9 * 10 + 9], 0);
+        assert_eq!(map.gray()[9 * 10 + 9], 0);
     }
 
     /// A stage's picture is the layer's size shrunk and rounded up, never
@@ -367,6 +401,6 @@ mod tests {
     #[test]
     fn a_single_word_reveals_at_the_very_start() {
         let map = RevealMap::from_rects(4, 4, &[(0, 0, 2, 2)]);
-        assert_eq!(map.gray[0], 0);
+        assert_eq!(map.gray()[0], 0);
     }
 }

@@ -7119,8 +7119,12 @@ impl Studio {
         {
             return Err(t("studio.projectOpenThroughRemote"));
         }
+        // Said to the watchdog step by step: a project that is slow to
+        // open says which part of opening it was.
+        crate::watchdog::doing(&"opening a project: reading it");
         match Session::open_info(&info) {
             Ok(session) => {
+                crate::watchdog::doing(&"opening a project: sweeping its proxies");
                 if let Err(error) = projects::remember(&self.host.dirs.config, &info) {
                     log::warn!("{error}");
                 }
@@ -7172,9 +7176,13 @@ impl Studio {
                 self.audition = None;
                 self.revision += 1;
                 self.flat = None;
+                crate::watchdog::doing(&"opening a project: its sound");
                 self.sync_audio();
+                crate::watchdog::doing(&"opening a project: its pictures");
                 self.request_media_art();
+                crate::watchdog::doing(&"opening a project: its first frame and titles");
                 self.request_preview();
+                crate::watchdog::doing(&"opening a project: cutouts and regions");
                 self.ensure_cutouts();
                 self.ensure_regions();
 
