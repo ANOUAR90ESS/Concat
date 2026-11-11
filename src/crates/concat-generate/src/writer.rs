@@ -180,6 +180,93 @@ impl PictureStyle {
     }
 }
 
+/// A kind of video made whole: a shape the writer holds to on top of what
+/// the video is for - where the hook goes, how it is paced, who is in its
+/// pictures - tuned until what comes out can go up as it is. The sheet
+/// sets the frame, the length and the look that go with it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VideoFormat {
+    /// No format: the sheet's choices alone.
+    #[default]
+    Custom,
+    /// One idea in a minute, upright, with the same two characters in
+    /// every picture: for Shorts, Reels and TikTok.
+    Minute,
+    /// A true story told as a film, in acts: for a long video.
+    Story,
+    /// One concept taught from an everyday question, drawn as it is
+    /// explained.
+    Lesson,
+}
+
+impl VideoFormat {
+    /// In the sheet's order.
+    pub const ALL: [VideoFormat; 4] = [
+        VideoFormat::Custom,
+        VideoFormat::Minute,
+        VideoFormat::Story,
+        VideoFormat::Lesson,
+    ];
+
+    /// What the writer is told of the format; nothing for none.
+    fn brief(self) -> &'static str {
+        match self {
+            VideoFormat::Custom => "",
+            VideoFormat::Minute => {
+                "FORMAT - one idea in a minute, upright, for Shorts, Reels and TikTok.\n\
+                 - The first sentence puts the viewer in a situation or asks them a question \
+                 they cannot scroll past: 'A policeman stops you and asks for your phone. Do \
+                 you have to hand it over?' Never a greeting, never 'in this video'.\n\
+                 - Then the answer in three or four beats, one idea a beat, each one or two \
+                 sentences of at most ten words. Speak to the viewer as 'you'.\n\
+                 - One beat is the turn: what most people get wrong, or the exception. Give \
+                 that scene a sticker.\n\
+                 - End on the one line to remember, then a question to the viewer that \
+                 invites a comment. No summary, no goodbye.\n\
+                 - Give the video a cast of two: one who stands for the viewer, one for the \
+                 other side of the situation. Every picture is a moment of the situation with \
+                 them in it - doing, not posing - or the object the beat is about, large.\n\
+                 - Every scene has keywords. Figures are said and shown: where a number \
+                 matters, an animated card."
+            }
+            VideoFormat::Story => {
+                "FORMAT - a true story told as a film.\n\
+                 - Open cold on the story's most dramatic moment, in the present tense, \
+                 thirty seconds at most, and stop before it resolves; then go back: 'To \
+                 understand how it came to this, we start in...'.\n\
+                 - Each chapter is an act with its own question, and ends on a turn that \
+                 makes the next one necessary. The last returns to the opening moment and \
+                 resolves it.\n\
+                 - People before events: name who did what, where they stood, what they \
+                 said or wrote where it is on record. Dates and figures exactly as the \
+                 research has them.\n\
+                 - One line in each chapter says why this still matters to the viewer \
+                 today.\n\
+                 - Pictures are places, objects, documents and people at the moment the \
+                 narration names them, shot like a film; maps and timelines are drawn, not \
+                 described."
+            }
+            VideoFormat::Lesson => {
+                "FORMAT - one concept, taught.\n\
+                 - Start from a question the viewer has asked themselves in everyday life, \
+                 never from a definition.\n\
+                 - Give the concept one analogy from everyday life and carry it through the \
+                 whole video: every new part of the concept is a new part of the same \
+                 analogy.\n\
+                 - Three steps at most, each built on the one before; say each new term \
+                 once, plainly, the moment it appears.\n\
+                 - Wherever the narration says how something works, the shot is an \
+                 explainer that draws it as it is said.\n\
+                 - Half way, ask the viewer to predict what happens next, then show it.\n\
+                 - End on the three things to remember, as a list card, and the one \
+                 misconception this video has just corrected.\n\
+                 - Give the video a guide: one character who asks the questions the viewer \
+                 would, and is in the pictures that are not drawings."
+            }
+        }
+    }
+}
+
 /// How the video is written: what it is for, and the shape that serves
 /// it. Chosen in the Long video sheet; each comes with its own brief to
 /// the writer.
@@ -280,6 +367,13 @@ pub struct Brief {
     /// page's address, or a PDF or text file's path. Empty for a video
     /// written from the topic alone.
     pub source: String,
+    /// The kind of video it is made as, when it is one of those the app
+    /// makes whole.
+    pub format: VideoFormat,
+    /// The video's shape in the person's own words - how it opens, what
+    /// it is made of, how it ends: a format of their own, for any kind of
+    /// video the app has no format for. Empty for none.
+    pub structure: String,
 }
 
 impl Brief {
@@ -309,6 +403,18 @@ impl Brief {
         }
         if !self.notes.trim().is_empty() {
             text += &format!("Notes from the producer: {}\n", self.notes.trim());
+        }
+        if !self.format.brief().is_empty() {
+            text += &format!("{}\n", self.format.brief());
+        }
+        // The person's own shape last: where it and a format disagree, it
+        // is theirs that holds.
+        if !self.structure.trim().is_empty() {
+            text += &format!(
+                "THE PRODUCER'S OWN SHAPE for this video, in their words - hold to it in every \
+                 chapter, and where it differs from anything above, it wins:\n{}\n",
+                self.structure.trim()
+            );
         }
         if let Some(medium) = self.pictures.medium() {
             text += &format!(
@@ -2833,6 +2939,31 @@ mod tests {
         assert!(apply_words(&mut chapter.clone(), &short).is_err());
         short["scenes"] = json!([]);
         assert!(apply_words(&mut chapter.clone(), &short).is_err());
+    }
+
+    /// A format is in every call's brief, and none adds nothing.
+    #[test]
+    fn a_format_is_briefed_in_every_call() {
+        for format in [VideoFormat::Minute, VideoFormat::Story, VideoFormat::Lesson] {
+            let brief = Brief {
+                format,
+                ..Brief::default()
+            };
+            assert!(brief.text().contains("FORMAT - "), "{format:?}");
+        }
+        assert!(!Brief::default().text().contains("FORMAT"));
+        // A shape of the person's own is briefed after any format, and
+        // alone when there is none.
+        let own = Brief {
+            format: VideoFormat::Minute,
+            structure: " Open on a joke, then three facts. ".into(),
+            ..Brief::default()
+        };
+        let text = own.text();
+        assert!(text.find("FORMAT - ").unwrap() < text.find("Open on a joke").unwrap());
+        assert!(text.contains("it wins:\nOpen on a joke, then three facts.\n"));
+        assert!(!Brief::default().text().contains("PRODUCER'S OWN SHAPE"));
+        assert_eq!(VideoFormat::ALL[0], VideoFormat::Custom);
     }
 
     /// A fixed picture style is in every call's brief; Auto leaves the

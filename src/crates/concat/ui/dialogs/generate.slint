@@ -76,6 +76,10 @@ export struct GenerateSheetData {
     titles: bool,
     /// The cut's own sounds, and the music lifted where nobody speaks.
     sounds: bool,
+    /// 0 none, 1 one idea in a minute, 2 a story, 3 a lesson.
+    format: int,
+    /// The video's shape in the person's own words.
+    structure: string,
     /// What the video is made from: a page's address or a file's path.
     source: string,
     /// Row of the language the video is made again in.
@@ -296,6 +300,33 @@ export component GenerateDialog inherits Modal {
                         first: true;
                         title: I18n.t("generate.idea");
 
+                        // A kind of video made whole: picking one sets the
+                        // frame, the length and the look that go with it,
+                        // and tells the writer its shape.
+                        DialogRow {
+                            label: I18n.t("generate.format");
+                            Select {
+                                options: [
+                                    I18n.t("generate.formatCustom"),
+                                    I18n.t("generate.formatMinute"),
+                                    I18n.t("generate.formatStory"),
+                                    I18n.t("generate.formatLesson"),
+                                ];
+                                current: root.data.format;
+                                changed(index) => { root.choice-changed(19, index); }
+                            }
+                        }
+
+                        Text {
+                            text: root.data.format == 1 ? I18n.t("generate.formatMinuteHint")
+                                : root.data.format == 2 ? I18n.t("generate.formatStoryHint")
+                                : root.data.format == 3 ? I18n.t("generate.formatLessonHint")
+                                : I18n.t("generate.formatCustomHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
                         Rectangle {
                             height: 88px;
                             border-radius: Theme.r;
@@ -340,6 +371,26 @@ export component GenerateDialog inherits Modal {
                                 font-size: Theme.fs-lg;
                                 wrap: word-wrap;
                             }
+                        }
+
+                        // A format of the person's own: how their videos
+                        // open, what they are made of, how they end - for
+                        // any kind the app has no format for. Kept with a
+                        // series.
+                        DialogRow {
+                            label: I18n.t("generate.structure");
+                            Field {
+                                value: root.data.structure;
+                                placeholder: I18n.t("generate.structurePlaceholder");
+                                edited(text) => { root.text-edited(20, text); }
+                            }
+                        }
+
+                        Text {
+                            text: I18n.t("generate.structureHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
                         }
 
                         // Videos worth making, proposed for the channel:

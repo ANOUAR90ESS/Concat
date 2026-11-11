@@ -187,6 +187,12 @@ pub struct GeneratePrefs {
     /// The series saved: each a name and the sheet's choices as they
     /// were, to bring back with one pick.
     pub templates: Vec<Template>,
+    /// Row of the format list: none, one idea in a minute, a story, a
+    /// lesson.
+    pub format: usize,
+    /// The shape of the person's videos in their own words, told to the
+    /// writer: a format of their own, saved with a series.
+    pub structure: String,
     /// ElevenLabs, which reads the narration.
     pub elevenlabs_key: String,
     /// The ElevenLabs voice.
