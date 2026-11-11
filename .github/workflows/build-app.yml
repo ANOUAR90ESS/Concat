@@ -520,8 +520,10 @@ jobs:
       # build goes there, and a red run explains itself to anyone.
       - name: Build
         # An Intel Mac runner is the slow one: its release build ran past
-        # sixty minutes in v0.2.7-rc.1.
-        timeout-minutes: ${{ matrix.platform == 'macos' && matrix.arch == 'x86_64' && 100 || 60 }}
+        # sixty minutes in v0.2.7-rc.1. An Apple silicon one did too in
+        # v0.2.8-alpha.31, fifty-four minutes into the app crate alone, and
+        # the Windows build is at forty-five: the app has grown.
+        timeout-minutes: ${{ matrix.platform == 'macos' && 100 || 90 }}
         shell: bash
         working-directory: src
         run: |
