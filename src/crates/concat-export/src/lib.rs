@@ -1869,14 +1869,49 @@ impl Spent {
         let total = self.began.elapsed().as_secs_f64();
         log::info!(
             "export {when}: {} frames in {total:.1}s ({:.1} a second); a frame: reading \
-             {:.1} ms, drawing {:.1} ms, writing {:.1} ms",
+             {:.1} ms, drawing {:.1} ms, writing {:.1} ms{}",
             self.frames,
             self.frames as f64 / total.max(1e-3),
             per(self.reading),
             per(self.drawing),
             per(self.writing),
+            memory_said(),
         );
     }
+}
+
+/// The app's own memory and what the machine has left, for the log: a
+/// phone short of memory slows every step alike and ends the app the
+/// moment it is left for another, and neither says why. Empty where the
+/// system does not tell - anything but Linux and Android.
+pub fn memory_said() -> String {
+    let kilobytes = |file: &str, field: &str| -> Option<u64> {
+        let text = std::fs::read_to_string(file).ok()?;
+        memory_field(&text, field)
+    };
+    match (
+        kilobytes("/proc/self/status", "VmRSS"),
+        kilobytes("/proc/meminfo", "MemAvailable"),
+    ) {
+        (Some(own), Some(free)) => {
+            format!(
+                "; memory: the app holds {} MB, {} MB free",
+                own / 1024,
+                free / 1024
+            )
+        }
+        _ => String::new(),
+    }
+}
+
+/// The kilobytes after `field:` in a /proc file's text.
+fn memory_field(text: &str, field: &str) -> Option<u64> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(field)?.strip_prefix(':'))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// How many frames apart an export says how far it has got, at most.
@@ -2500,6 +2535,17 @@ pub fn preview_moments(
 
 #[cfg(test)]
 mod tests {
+    /// A /proc file's field is read in kilobytes, and one that is not
+    /// there, or is another's prefix, is not.
+    #[test]
+    fn a_memory_field_is_read_from_proc_text() {
+        let text = "VmPeak:\t 2000 kB\nVmRSS:\t  812344 kB\nMemAvailable:    1536000 kB\n";
+        assert_eq!(super::memory_field(text, "VmRSS"), Some(812_344));
+        assert_eq!(super::memory_field(text, "MemAvailable"), Some(1_536_000));
+        assert_eq!(super::memory_field(text, "Vm"), None);
+        assert_eq!(super::memory_field(text, "MemFree"), None);
+    }
+
     /// A treatment on track 1 runs over what track 0 drew and not over what
     /// track 2 draws on top of it, and its strength blends the result back.
     #[test]

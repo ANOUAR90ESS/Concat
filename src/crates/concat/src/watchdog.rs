@@ -69,9 +69,12 @@ pub fn start() -> slint::Timer {
                         stalled = Some(beat);
                     }
                     Some(from) if beat != from => {
+                        // With the memory: a phone short of it stalls
+                        // every thread alike, and the stall is all it says.
                         log::warn!(
-                            "the window answers again after {:.1}s",
-                            beat.saturating_sub(from) as f64 / 1000.0
+                            "the window answers again after {:.1}s{}",
+                            beat.saturating_sub(from) as f64 / 1000.0,
+                            concat_export::memory_said()
                         );
                         stalled = None;
                     }
