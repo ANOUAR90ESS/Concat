@@ -17,7 +17,7 @@ use concat_host::export::{self, ExportSpec};
 use concat_media::ColorRange;
 
 use crate::format::{bytes, eta};
-use crate::host::{on_ui, spawn};
+use crate::host::{on_ui, on_ui_for_export, spawn};
 use crate::i18n::{self, t, tf};
 use crate::panes::Msg;
 use crate::platform;
@@ -567,7 +567,7 @@ impl ExportPane {
                         "muxing" => t("export.finalisingFile"),
                         other => other.to_owned(),
                     };
-                    on_ui(move |studio, _, _| {
+                    on_ui_for_export(move |studio, _, _| {
                         studio.handle(Msg::Export(ExportMsg::Progress { fraction, stage }));
                     });
                 })

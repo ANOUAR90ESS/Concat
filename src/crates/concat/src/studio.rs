@@ -9528,7 +9528,6 @@ impl Studio {
         sync(&models.menu, rows);
         editor.set_menu_token(self.menu_token);
 
-        app.set_export(self.export.data(self));
         app.set_settings(self.settings.data(self));
         sync(&models.transcribers, self.settings.transcriber_rows());
         sync(&models.voices, self.settings.voice_rows());
@@ -9579,6 +9578,24 @@ impl Studio {
             self.generate.template_rows(self),
         );
         app.set_generate(self.generate.data(self));
+        self.publish_export(app);
+        sync(&models.script_rows, self.generate.script_rows(self));
+        app.set_script(self.generate.script_data(self));
+        self.publish_source(app);
+        editor.set_recording(self.voiceover.recording());
+
+        let bar = self.menu_bar();
+        app.set_app_menu_height(Self::menu_height(&bar));
+        sync(&models.bar, bar);
+        app.set_app_menu_token(self.menu_bar_token);
+        app.set_open_menu(self.open_menu);
+    }
+
+    /// The export's sheet and the pill that stands for it when it is put
+    /// away: all that a report of how far a file has got changes. See
+    /// `host::on_ui_for_export`.
+    pub fn publish_export(&self, app: &App) {
+        app.set_export(self.export.data(self));
         // A file being written, or a video being made, with its sheet put
         // away: a pill over the window says how far, and opens it again.
         let pill = if self.export.phase == crate::ui::ExportPhase::Running && !self.export.open {
@@ -9596,16 +9613,6 @@ impl Studio {
                 .map_or_else(Default::default, |(_, label, _)| label.as_str().into()),
         );
         app.set_pill_progress(pill.as_ref().map_or(0.0, |(_, _, progress)| *progress));
-        sync(&models.script_rows, self.generate.script_rows(self));
-        app.set_script(self.generate.script_data(self));
-        self.publish_source(app);
-        editor.set_recording(self.voiceover.recording());
-
-        let bar = self.menu_bar();
-        app.set_app_menu_height(Self::menu_height(&bar));
-        sync(&models.bar, bar);
-        app.set_app_menu_token(self.menu_bar_token);
-        app.set_open_menu(self.open_menu);
     }
 
     /// Asks the workers for anything the launch screen or the bin is

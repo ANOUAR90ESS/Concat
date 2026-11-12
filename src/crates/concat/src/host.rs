@@ -414,6 +414,23 @@ fn on_ui_gated(epoch: Option<u64>, body: impl FnOnce(&mut Studio, &App, &Models)
     });
 }
 
+/// [`on_ui`] for an export's progress: `body`, then the export's sheet and
+/// its pill alone. A report comes every second for as long as a file is
+/// written, and the full publish after each - the lanes, every sheet, the
+/// whole script - was a second's work for the window on a phone already
+/// busy with the export, which then stopped answering.
+pub fn on_ui_for_export(body: impl FnOnce(&mut Studio, &App, &Models) + Send + 'static) {
+    let _ = slint::invoke_from_event_loop(move || {
+        Shell::with(|shell, app| {
+            {
+                let mut studio = shell.studio.borrow_mut();
+                body(&mut studio, &app, &shell.models);
+            }
+            shell.studio.borrow().publish_export(&app);
+        });
+    });
+}
+
 /// A decoded frame as a Slint image.
 pub fn image_of(frame: &concat_core::frame::Frame) -> slint::Image {
     let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
