@@ -516,6 +516,10 @@ impl GeneratePane {
                     studio.prefs.generate.brand_bumpers = on;
                     studio.prefs.save(&studio.host.dirs);
                 }
+                6 => {
+                    studio.prefs.generate.hook = Some(on);
+                    studio.prefs.save(&studio.host.dirs);
+                }
                 _ => {}
             },
             GenerateMsg::WriteScript => self.write(studio, false),
@@ -1193,6 +1197,7 @@ impl GeneratePane {
             source: self.source.trim().to_owned(),
             format: VideoFormat::ALL[prefs.format.min(VideoFormat::ALL.len() - 1)],
             structure: prefs.structure.trim().to_owned(),
+            hook: prefs.hook.unwrap_or(true),
         }
     }
 
@@ -1432,6 +1437,7 @@ impl GeneratePane {
                                 tf("generate.designingExplainer", &[&n, &of]),
                                 String::new(),
                             ),
+                            Writing::Hook => (0.98, t("generate.writingHook"), String::new()),
                         };
                         on_ui_in_project(epoch, move |studio, _, _| {
                             studio.handle(Msg::Generate(GenerateMsg::Progress(
@@ -2331,6 +2337,7 @@ impl GeneratePane {
                 .position(|path| *path == prefs.brand_logo)
                 .map_or(0, |row| row as i32 + 1),
             bumpers: prefs.brand_bumpers,
+            hook: prefs.hook.unwrap_or(true),
             elevenlabs_key: prefs.elevenlabs_key.as_str().into(),
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
             voice_model: prefs.elevenlabs_model.min(1) as i32,

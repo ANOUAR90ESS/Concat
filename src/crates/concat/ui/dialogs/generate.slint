@@ -94,6 +94,8 @@ export struct GenerateSheetData {
     logo: int,
     /// The channel's opening and closing on every video.
     bumpers: bool,
+    /// Open on a hook written last, from the whole script.
+    hook: bool,
     anthropic-key: string,
     replicate-token: string,
     /// The video model; empty for stills only.
@@ -1058,6 +1060,32 @@ export component GenerateDialog inherits Modal {
                                     toggled(on) => { root.toggled(4, on); }
                                 }
                             }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.hook");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.hook;
+                                    toggled(on) => { root.toggled(6, on); }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: I18n.t("generate.hookHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
                         }
                     }
 

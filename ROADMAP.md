@@ -539,6 +539,36 @@ and that is the difference from tools that are dear and capped.
 - ⏳ A library of example scripts per format; prompt caching for the
   writer's standing briefs.
 
+## After alpha.32 (owner's test, 12 Nov)
+
+The owner's phone exported a five-minute lesson of drawn shots at 1.8
+frames a second, the window stalling for seconds, and the app ended each
+time it was left for another during an export.
+
+- ✅ A report of how far publishes the export's sheet and its pill, not
+  the whole window (#41).
+- ✅ The export's timings split the reading - moving clips, stills,
+  sought - name what reads each clip, and carry the memory (#41).
+- ⏳ The slow reading itself, and the app ending in the background:
+  from the log the build with #41 gives.
+
+## The hook (owner, 13 Nov)
+
+"The base of any successful video": once the script is whole, it is read
+through and the video is given an opening made from it.
+
+- ✅ A last call reads all the narration and writes the hook: one spoken
+  line, two to four words shown large, key words to colour, and the
+  picture the video opens on. It is the video's first scene under the id
+  `hook`, so its voice and picture are made, shown in the script editor
+  and made again like any other.
+- ✅ The cut shows it before the channel's opening, with no fade up from
+  black; the logo starts after the opening.
+- ✅ A switch in the sheet, on unless turned off. Not made for a video of
+  cards alone, which has no picture to open on.
+- ⏳ The hook's picture as the thumbnail; the brief tuned on the owner's
+  real runs.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

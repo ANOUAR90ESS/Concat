@@ -176,6 +176,9 @@ pub struct GeneratePrefs {
     /// The cut's own sounds - a whoosh into a scene, a pop, a chime - and
     /// the music lifted where nobody speaks; on unless turned off.
     pub sounds: Option<bool>,
+    /// Open every video on a hook written last, from the whole script,
+    /// with a picture of its own; on unless turned off.
+    pub hook: Option<bool>,
     /// The channel's colour, `#rrggbb` as typed: its opening and closing
     /// are lit in it, and captions' key words and stickers take it.
     pub brand_color: String,

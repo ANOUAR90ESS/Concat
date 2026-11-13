@@ -374,6 +374,9 @@ pub struct Brief {
     /// it is made of, how it ends: a format of their own, for any kind of
     /// video the app has no format for. Empty for none.
     pub structure: String,
+    /// Open on a hook: a few seconds written last, from the whole script,
+    /// with a picture of its own, before anything else.
+    pub hook: bool,
 }
 
 impl Brief {
@@ -454,6 +457,8 @@ pub enum Writing {
         /// Of how many in the chapter.
         of: usize,
     },
+    /// The opening hook is being written, from the finished script.
+    Hook,
 }
 
 /// Writes a storyboard for `brief`, reporting each call before it is made.
@@ -622,7 +627,119 @@ pub fn write(
         });
     }
     board.tidy()?;
+
+    // The hook last, from the script as it came out: an opening written
+    // first promises what the plan was, and this one what the video has.
+    // A video of cards alone has no picture to open on, and none is made.
+    if brief.hook && !brief.cards_only {
+        progress(Writing::Hook);
+        match ask(&hook_tool(), hook_prompt(&board, &brief_text)) {
+            Ok(got) => match hook_scene(&got) {
+                Some(mut scene) => {
+                    if needs_marks(&brief.language) {
+                        let scenes = std::slice::from_mut(&mut scene);
+                        match ask(&reading_tool(), reading_prompt(scenes)) {
+                            Ok(read) => apply_readings(scenes, &read),
+                            Err(error) => log::warn!("the hook's vowel marks failed: {error}"),
+                        }
+                    }
+                    board.chapters[0].scenes.insert(0, scene);
+                    board.tidy()?;
+                }
+                None => log::warn!("the hook came back without a line or a picture; none is used"),
+            },
+            // The video is whole without it.
+            Err(error) => log::warn!("the hook could not be written: {error}"),
+        }
+    }
     Ok(board)
+}
+
+/// How long a hook is planned to hold; its voice decides in the end.
+const HOOK_SECONDS: f64 = 4.0;
+
+/// What the hook's call may read of the script, in characters: past it
+/// each scene is given by its opening words.
+const HOOK_READS: usize = 60_000;
+
+/// The ask for the hook: the whole script, and what a hook is.
+fn hook_prompt(board: &Storyboard, brief_text: &str) -> String {
+    let whole = |words: usize| -> String {
+        board
+            .chapters
+            .iter()
+            .map(|chapter| {
+                let scenes: String = chapter
+                    .scenes
+                    .iter()
+                    .map(|scene| format!("{}\n", short(scene.narration.trim(), words)))
+                    .collect();
+                format!("## {}\n{scenes}", chapter.title.trim())
+            })
+            .collect()
+    };
+    let mut script = whole(usize::MAX);
+    if script.len() > HOOK_READS {
+        script = whole(30);
+    }
+    format!(
+        "{brief_text}\nThe video \"{}\" is written. This is all of its narration, in order:\n\n\
+         {script}\n\
+         Now write its HOOK: the three to five seconds a viewer sees before anything else, \
+         which decide whether they stay. Read the whole script and take the strongest thing \
+         it really holds - the number nobody expects, the contradiction, the question it \
+         answers, what is at stake - and open on that.\n\
+         - line: one spoken sentence in {}, at most 16 words, said to the viewer. It promises \
+         only what the video delivers, gives away no answer, and uses none of the first \
+         scene's own words. No greeting, no channel name, no \"in this video\", no \"did you \
+         know\".\n\
+         - words: two to four words in {} shown very large over the picture while the line \
+         is said - the hook at a glance with the sound off, not the line again.\n\
+         - keywords: one or two words of the line, exactly as written in it, for the caption \
+         to colour.\n\
+         - picture: in English, 40 to 70 words, the one image the video opens on: a single \
+         striking subject, close, high contrast, readable at a glance on a phone, room for \
+         the words, no text in the picture. Visual style: {}\n\
+         - voice: how the line is said, in a few words.",
+        board.title.trim(),
+        board.language,
+        board.language,
+        board.style.visual.trim(),
+    )
+}
+
+/// The hook as the video's first scene, or None when it came back
+/// without a line or without a picture.
+fn hook_scene(got: &Value) -> Option<Scene> {
+    let line = text(&got["line"]).trim().to_owned();
+    let picture = text(&got["picture"]).trim().to_owned();
+    if line.is_empty() || picture.is_empty() {
+        return None;
+    }
+    let words = text(&got["words"]).trim().to_owned();
+    Some(Scene {
+        id: crate::storyboard::HOOK.to_owned(),
+        narration: line,
+        voice: text(&got["voice"]).trim().to_owned(),
+        seconds: HOOK_SECONDS,
+        shots: vec![crate::storyboard::Shot {
+            kind: ShotKind::Image,
+            prompt: picture,
+            ..Default::default()
+        }],
+        keywords: got["keywords"]
+            .as_array()
+            .map(|words| {
+                words
+                    .iter()
+                    .map(|word| text(word).trim().to_owned())
+                    .filter(|word| !word.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        sticker: (!words.is_empty()).then_some(words),
+        ..Scene::default()
+    })
 }
 
 /// Whether a voice reads `language` better with its words marked: Arabic,
@@ -2597,6 +2714,24 @@ fn short_tool() -> Value {
     })
 }
 
+fn hook_tool() -> Value {
+    json!({
+        "name": "hook",
+        "description": "The video's opening hook.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "line": {"type": "string", "description": "The spoken sentence, at most 16 words."},
+                "words": {"type": "string", "description": "Two to four words shown large."},
+                "keywords": {"type": "array", "items": {"type": "string"}},
+                "picture": {"type": "string", "description": "The opening image's prompt, in English."},
+                "voice": {"type": "string", "description": "How the line is said."}
+            },
+            "required": ["line", "words", "picture"]
+        }
+    })
+}
+
 fn translation_tool() -> Value {
     let strings = json!({"type": "array", "items": {"type": "string"}});
     json!({
@@ -2728,6 +2863,46 @@ fn revise_tool() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hook is the video's first scene under its own id: its line read,
+    /// its words stuck large, one picture; without a line or a picture
+    /// there is none.
+    #[test]
+    fn a_hook_is_a_scene_of_its_own() {
+        let got = json!({
+            "line": " Una bomba del tamaño de una piña borró una ciudad. ",
+            "words": "UNA SOLA BOMBA",
+            "keywords": ["piña", " "],
+            "picture": "a pineapple-sized metal sphere on a desert floor at dawn",
+            "voice": "low, urgent"
+        });
+        let scene = hook_scene(&got).expect("a hook");
+        assert_eq!(scene.id, crate::storyboard::HOOK);
+        assert_eq!(
+            scene.narration,
+            "Una bomba del tamaño de una piña borró una ciudad."
+        );
+        assert_eq!(scene.sticker.as_deref(), Some("UNA SOLA BOMBA"));
+        assert_eq!(scene.keywords, ["piña"]);
+        assert_eq!(scene.shots.len(), 1);
+        assert_eq!(scene.shots[0].made_as(), ShotKind::Image);
+        assert!(hook_scene(&json!({"line": "x", "words": "y", "picture": " "})).is_none());
+        assert!(hook_scene(&json!({"words": "y", "picture": "z"})).is_none());
+
+        // It goes in first, and the storyboard still tidies with it there.
+        let mut board: Storyboard = serde_json::from_str(
+            r#"{"title":"T","language":"Spanish","chapters":[{"title":"One","scenes":[
+                {"narration":"First.","seconds":5,"shots":[{"prompt":"a red kite"}]}]}]}"#,
+        )
+        .unwrap();
+        board.tidy().unwrap();
+        board.chapters[0].scenes.insert(0, scene);
+        board.tidy().unwrap();
+        assert!(board.hooked());
+        assert_eq!(board.chapters[0].scenes[1].id, "c01s01");
+        let ask = hook_prompt(&board, "Topic: bombs\n");
+        assert!(ask.contains("First.") && ask.contains("in Spanish"));
+    }
 
     #[test]
     fn the_music_is_asked_for_in_english_from_the_moods() {
