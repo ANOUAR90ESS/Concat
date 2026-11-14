@@ -418,9 +418,10 @@ impl GeneratePane {
                     28 => {
                         // The notes as the person corrects them, kept with
                         // the video as they go; emptied, they are gone.
+                        let job = self.job(studio);
                         let research = self.research.get_or_insert_with(Research::default);
                         research.notes = text;
-                        if let Some(job) = self.job(studio)
+                        if let Some(job) = job
                             && let Err(error) = job.keep_research(research)
                         {
                             log::warn!("generate: the research notes: {error}");
