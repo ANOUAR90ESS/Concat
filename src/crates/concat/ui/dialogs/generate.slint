@@ -74,6 +74,11 @@ export struct GenerateSheetData {
     channel-memory: string,
     /// The channels' list row of the channel in use; 0 for none.
     channel-row: int,
+    /// The research kept with the video: its notes, to read and correct,
+    /// and how many sources they cite, said; empty for none.
+    has-research: bool,
+    research-notes: string,
+    research-sources: string,
     /// 0 none, 1 Concat's own voices, 2 ElevenLabs
     voice: int,
     /// 0 draft cards, 1 Replicate, 2 made by hand
@@ -273,7 +278,8 @@ export component GenerateDialog inherits Modal {
     /// 4 Replicate video model, 5 ElevenLabs key, 6 ElevenLabs voice,
     /// 7 Replicate image model, 8 spend limit, 9 price of a clip, 10 price
     /// of a still, 11-16 the channel: name, audience, voice, opening line,
-    /// closing line, a script it likes; 26 its topics, 27 its rules.
+    /// closing line, a script it likes; 26 its topics, 27 its rules; 28
+    /// the research notes.
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
     /// 5 music, 6 clips, 7 caption look, 8 content style, 9 picture quality,
@@ -290,7 +296,7 @@ export component GenerateDialog inherits Modal {
     callback make-short();
     /// One of the sheet's buttons: 0 suggest ideas, 1 make every idea,
     /// 2 make the video in another language, 3 save the choices as a
-    /// series, 4 cut several Shorts.
+    /// series, 4 cut several Shorts, 5 research first.
     callback act(kind: int);
     callback publish();
     callback cancel();
@@ -307,12 +313,21 @@ export component GenerateDialog inherits Modal {
     // it is being typed into.
     property <string> draft;
     property <bool> typing;
+    // The research notes being corrected, held apart the same way.
+    property <string> notes-draft;
+    property <bool> notes-typing;
     changed data => {
         if (!root.typing) {
             root.draft = root.data.topic;
         }
+        if (!root.notes-typing) {
+            root.notes-draft = root.data.research-notes;
+        }
     }
-    init => { root.draft = root.data.topic; }
+    init => {
+        root.draft = root.data.topic;
+        root.notes-draft = root.data.research-notes;
+    }
 
     VerticalLayout {
         if !root.data.running: Rectangle {
@@ -432,6 +447,65 @@ export component GenerateDialog inherits Modal {
 
                         Text {
                             text: I18n.t("generate.structureHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        // The research, done first on its own when asked:
+                        // its notes shown here to read and correct, kept
+                        // with the video, and the script written from them.
+                        HorizontalLayout {
+                            alignment: start;
+
+                            Button {
+                                label: root.data.has-research
+                                    ? I18n.t("generate.researchAgain")
+                                    : I18n.t("generate.researchFirst");
+                                glyph: Glyph.search;
+                                clicked => { root.act(5); }
+                            }
+                        }
+
+                        if root.data.has-research: Text {
+                            text: I18n.t("generate.researchNotesHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        if root.data.has-research: Rectangle {
+                            height: 220px;
+                            border-radius: Theme.r;
+                            background: Theme.well;
+                            border-width: 1px;
+                            border-color: notes.has-focus ? Theme.accent : Theme.line;
+                            clip: true;
+
+                            Flickable {
+                                x: 10px;
+                                y: 8px;
+                                width: parent.width - 20px;
+                                height: parent.height - 16px;
+                                viewport-height: max(self.height, notes.preferred-height);
+
+                                notes := TextInput {
+                                    width: parent.width;
+                                    text <=> root.notes-draft;
+                                    color: Theme.fg;
+                                    font-size: Theme.fs;
+                                    single-line: false;
+                                    wrap: word-wrap;
+                                    selection-background-color: Theme.accent;
+                                    selection-foreground-color: Theme.on-accent;
+                                    changed has-focus => { root.notes-typing = self.has-focus; }
+                                    edited => { root.text-edited(28, self.text); }
+                                }
+                            }
+                        }
+
+                        if root.data.research-sources != "": Text {
+                            text: root.data.research-sources;
                             color: Theme.fg-dim;
                             font-size: Theme.fs-sm;
                             wrap: word-wrap;

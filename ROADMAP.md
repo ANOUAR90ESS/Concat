@@ -695,8 +695,18 @@ publishing; analytics later, asked first.
    in #42 (OpenAI, Gemini, Kling, Seedance). Not yet: a palette of more
    than one colour (la lógica's black, gold, red and blue), a voice chosen
    by its description.
-2. **Research before writing.** The notes shown, edited and kept with the
-   video; facts and opinions told apart.
+2. **Research before writing** (in progress, on the branch after #43). A
+   Research first button in the Long video sheet reads up on the idea
+   alone; its notes appear in the sheet, to read and correct, and are kept
+   with the video (`research.json`, and `research.txt` with the sources
+   to read on any device). The notes come in the video's language, under
+   FACTS, OPINIONS (each with whose it is) and DISPUTED (the sides); the
+   writer is told to say a fact as a fact, an opinion as someone's, and a
+   disputed point with its sides. The script is written from the notes
+   kept - corrected or not - and a script written again does not pay for
+   the research again. A run without Research first reads up as before
+   and keeps what it found. Not yet: a source per line checked against
+   its page, research kept per channel across videos.
 3. **Smart Shorts.** The strongest moments, each with its own hook and
    title, by the voice's seconds, the picture reframed rather than cropped.
 4. **Export center.** The long video, its Shorts, the thumbnail and the
