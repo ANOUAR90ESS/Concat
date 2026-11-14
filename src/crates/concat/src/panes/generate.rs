@@ -478,17 +478,13 @@ impl GeneratePane {
                         return;
                     }
                     9 => {
-                        let professional = index == 1;
-                        prefs.replicate_image_model = if professional {
-                            PROFESSIONAL_IMAGE_MODEL.to_owned()
-                        } else {
-                            String::new()
+                        let (model, price) = match index {
+                            1 => (PROFESSIONAL_IMAGE_MODEL, PROFESSIONAL_IMAGE_PRICE),
+                            2 => (BEST_IMAGE_MODEL, BEST_IMAGE_PRICE),
+                            _ => ("", ""),
                         };
-                        prefs.image_price = if professional {
-                            PROFESSIONAL_IMAGE_PRICE.to_owned()
-                        } else {
-                            String::new()
-                        };
+                        prefs.replicate_image_model = model.to_owned();
+                        prefs.image_price = price.to_owned();
                         studio.prefs.save(&studio.host.dirs);
                         self.tally(studio);
                         return;
@@ -2309,9 +2305,11 @@ impl GeneratePane {
             research: prefs.research.unwrap_or(true),
             visuals: prefs.visuals.min(1) as i32,
             picture_style: prefs.pictures.min(PictureStyle::ALL.len() - 1) as i32,
-            picture_quality: i32::from(
-                prefs.replicate_image_model.trim() == PROFESSIONAL_IMAGE_MODEL,
-            ),
+            picture_quality: match prefs.replicate_image_model.trim() {
+                PROFESSIONAL_IMAGE_MODEL => 1,
+                BEST_IMAGE_MODEL => 2,
+                _ => 0,
+            },
             channel_name: prefs.channel_name.as_str().into(),
             channel_audience: prefs.channel_audience.as_str().into(),
             channel_voice: prefs.channel_voice.as_str().into(),
@@ -2901,6 +2899,14 @@ fn dollars(value: f64) -> String {
 /// finer detail and truer light, at about four cents a picture.
 const PROFESSIONAL_IMAGE_MODEL: &str = "black-forest-labs/flux-1.1-pro";
 const PROFESSIONAL_IMAGE_PRICE: &str = "0.04";
+
+/// The best picture model: four times the pixels of the others - about
+/// 2750x1550 at 16:9 against their 1344x768 - so a picture is brought down
+/// to the frame rather than enlarged and softened up to it, at about six
+/// cents a picture. The owner found the pictures soft beside an image
+/// ChatGPT made.
+const BEST_IMAGE_MODEL: &str = "black-forest-labs/flux-1.1-pro-ultra";
+const BEST_IMAGE_PRICE: &str = "0.06";
 
 /// The audience level's row: general until one is chosen.
 fn level_row(prefs: &crate::prefs::GeneratePrefs) -> usize {

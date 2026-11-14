@@ -51,6 +51,8 @@ export struct ExportData {
     /// Which of them this device can encode. A phone's chip may lack
     /// HEVC or AV1; the picker says so rather than failing on Export.
     h264-encodable: bool,
+    /// This phone writes H.264 soft, whatever it is asked: HEVC keeps it.
+    h264-soft: bool,
     hevc-encodable: bool,
     av1-encodable: bool,
     ten-bit: bool,
@@ -327,8 +329,12 @@ component OutputSection inherits DialogSection {
             current: root.data.codec;
             options: ["H.264", "HEVC", "AV1"];
             details: [
-                root.data.h264-encodable ? I18n.t("export.playsEverywhere") : I18n.t("export.notOnThisDevice"),
-                root.data.hevc-encodable ? I18n.t("export.halfTheSize") : I18n.t("export.notOnThisDevice"),
+                !root.data.h264-encodable ? I18n.t("export.notOnThisDevice")
+                    : root.data.h264-soft ? I18n.t("export.softOnThisPhone")
+                    : I18n.t("export.playsEverywhere"),
+                !root.data.hevc-encodable ? I18n.t("export.notOnThisDevice")
+                    : root.data.h264-soft ? I18n.t("export.keepsQuality")
+                    : I18n.t("export.halfTheSize"),
                 root.data.av1-encodable ? I18n.t("export.smallest") : I18n.t("export.notOnThisDevice"),
             ];
             changed(index) => { root.codec-changed(index); }

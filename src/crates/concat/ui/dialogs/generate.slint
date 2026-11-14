@@ -54,7 +54,7 @@ export struct GenerateSheetData {
     research: bool,
     /// 0 pictures and animated cards, 1 animated cards only.
     visuals: int,
-    /// 0 economical pictures, 1 professional.
+    /// 0 economical pictures, 1 professional, 2 best (four megapixels).
     picture-quality: int,
     /// 0 auto, 1 photo, 2 flat illustration, 3 3D cartoon.
     picture-style: int,
@@ -751,12 +751,13 @@ export component GenerateDialog inherits Modal {
 
                         // Economical: flux-schnell, a third of a cent a
                         // picture; professional: flux-1.1-pro, finer detail
-                        // and truer light, about four cents. Sets the model
-                        // and its price below.
+                        // and truer light, about four cents; best:
+                        // flux-1.1-pro-ultra, four megapixels, about six.
+                        // Sets the model and its price below.
                         if root.data.shots == 1: DialogRow {
                             label: I18n.t("generate.pictureQuality");
                             SegmentedControl {
-                                options: [I18n.t("generate.pictureEconomy"), I18n.t("generate.pictureProfessional")];
+                                options: [I18n.t("generate.pictureEconomy"), I18n.t("generate.pictureProfessional"), I18n.t("generate.pictureBest")];
                                 current: root.data.picture-quality;
                                 changed(index) => { root.choice-changed(9, index); }
                             }

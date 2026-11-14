@@ -569,6 +569,30 @@ through and the video is given an opening made from it.
 - ⏳ The hook's picture as the thumbnail; the brief tuned on the owner's
   real runs.
 
+## Quality and craft (owner, 14 Nov, after a video went up on YouTube)
+
+The owner: the pictures look good in the app and come out compressed; the
+writing needs more creativity; a thumbnail made in ChatGPT is the quality
+wanted.
+
+- ✅ The export's codec picker on a phone whose chip keeps no quality in
+  H.264 says H.264 comes out soft there, and HEVC keeps the quality and is
+  taken by YouTube. The owner's upload was written in H.264 on such a chip.
+- ✅ A third picture quality, Best: FLUX 1.1 Pro Ultra, four megapixels,
+  about six cents a picture; the default stays FLUX Schnell.
+- ✅ The hook's picture and the thumbnail's are asked for as a striking
+  composite: a hero subject with the objects of the story around it,
+  coloured rim light, high contrast, room for words.
+- ✅ The writer's brief: an angle chosen with the outline and held to the
+  end, moments over summaries, a surprise a chapter, a narrator's voice,
+  varied rhythm, a quotable line a chapter, the end calling back to the
+  start, and the stock moves ('imagine...', a list counted out) named and
+  barred; the editor makes lines less ordinary, not only clearer; the
+  lesson ends on its opening question answered rather than on "three
+  things to remember".
+- ⏳ Thumbnail words drawn as in the owner's example: white heavy capitals,
+  the key words on a yellow plate, a line on a red one.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no
