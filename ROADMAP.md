@@ -672,6 +672,39 @@ new):
    analytics. Uploading straight to YouTube was set aside by the owner on
    9 Nov ("no real value"); to be asked again before it is built.
 
+## New features, one at a time (owner, 14 Nov)
+
+The owner: the ideas are to be added to the app as it is, in the way that
+fits it - nothing changed, nothing rebuilt. Order: 1 channels, 2 research
+before writing, 3 smart Shorts, 4 an export center, 5 a check before
+publishing; analytics later, asked first.
+
+1. **Channels** (in progress, on the branch after #42). The channel
+   profile and the series already were a channel; added to them: the
+   subjects it covers and its editorial rules, told to the writer in every
+   call and in Suggest ideas; a memory of what each channel made (the
+   last sixty titles, kept apart from the series), so a video is not made
+   twice and an earlier one can be referred back to; how many Shorts a
+   video gets, one to five; a Channel list at the top of the Long video
+   sheet that brings a channel back with one pick; and **la lógica**, the
+   channel the app comes with ready to use (Spanish, cinematic documentary
+   in 16:9, ten minutes, analytical and non-partisan, on Spanish politics,
+   philosophy, psychology, society and the economy; gold; hook on; four
+   Shorts). Picking it keeps the keys, the voice and the makers in use.
+   Also mended: bringing back a series wiped the keys of the makers added
+   in #42 (OpenAI, Gemini, Kling, Seedance). Not yet: a palette of more
+   than one colour (la lógica's black, gold, red and blue), a voice chosen
+   by its description.
+2. **Research before writing.** The notes shown, edited and kept with the
+   video; facts and opinions told apart.
+3. **Smart Shorts.** The strongest moments, each with its own hook and
+   title, by the voice's seconds, the picture reframed rather than cropped.
+4. **Export center.** The long video, its Shorts, the thumbnail and the
+   text in one go, with presets per platform.
+5. **A check before publishing.** Warnings, never a block: a claim with no
+   source, a repeat, music and picture rights, a length wrong for the
+   platform, the AI disclosure.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

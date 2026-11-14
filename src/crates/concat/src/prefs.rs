@@ -127,6 +127,7 @@ impl GeneratePrefs {
         prefs.kling_secret_key.clear();
         prefs.seedance_key.clear();
         prefs.templates.clear();
+        prefs.memory.clear();
         Template {
             name: name.trim().to_owned(),
             prefs: Box::new(prefs),
@@ -152,13 +153,101 @@ impl GeneratePrefs {
             return false;
         };
         let mut prefs = *template.prefs;
+        // Every key stays the one in use, and so do the series and what
+        // each channel has made: none of them is a series' to change.
         prefs.anthropic_key = std::mem::take(&mut self.anthropic_key);
         prefs.replicate_token = std::mem::take(&mut self.replicate_token);
         prefs.elevenlabs_key = std::mem::take(&mut self.elevenlabs_key);
+        prefs.openai_key = std::mem::take(&mut self.openai_key);
+        prefs.gemini_key = std::mem::take(&mut self.gemini_key);
+        prefs.kling_access_key = std::mem::take(&mut self.kling_access_key);
+        prefs.kling_secret_key = std::mem::take(&mut self.kling_secret_key);
+        prefs.seedance_key = std::mem::take(&mut self.seedance_key);
         prefs.templates = std::mem::take(&mut self.templates);
+        prefs.memory = std::mem::take(&mut self.memory);
         *self = prefs;
         true
     }
+
+    /// Notes that the channel in use made a video called `title`, so the
+    /// next one is told and does not make it again. Nothing is noted for a
+    /// channel without a name; a title noted before moves to the end.
+    pub fn remember(&mut self, title: &str) {
+        let (channel, title) = (memory_key(&self.channel_name), title.trim());
+        if channel.is_empty() || title.is_empty() {
+            return;
+        }
+        let made = self.memory.entry(channel).or_default();
+        made.retain(|kept| kept != title);
+        made.push(title.to_owned());
+        if made.len() > MEMORY {
+            made.drain(..made.len() - MEMORY);
+        }
+    }
+
+    /// The videos the channel in use has made, oldest first.
+    pub fn made_before(&self) -> &[String] {
+        self.memory
+            .get(&memory_key(&self.channel_name))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// How many Shorts are cut from a video: three unless chosen.
+    pub fn shorts_count(&self) -> usize {
+        self.shorts_count.unwrap_or(3).clamp(1, 5)
+    }
+
+    /// la lógica, the channel the app comes with ready to use: Spanish,
+    /// a cinematic documentary in 16:9, analytical and independent, on
+    /// Spanish politics, philosophy, psychology, society and the economy.
+    /// The keys, the voice and who makes the pictures stay as they are.
+    pub fn la_logica(&self) -> Template {
+        let mut ready = self.as_template(LA_LOGICA);
+        let prefs = &mut ready.prefs;
+        prefs.channel_name = LA_LOGICA.to_owned();
+        prefs.channel_audience = "Adultos en España que quieren entender la política, la \
+            sociedad y la mente: buscan análisis, no consignas."
+            .to_owned();
+        prefs.channel_voice = "Documental cinematográfico realista. Voz masculina grave y \
+            pausada. Analítico, independiente y no partidista; sereno, preciso, con una \
+            ironía fina."
+            .to_owned();
+        prefs.channel_topics =
+            "Política española; filosofía; psicología; sociedad y economía.".to_owned();
+        prefs.channel_rules = "Presenta cada postura en sus mejores términos antes de \
+            analizarla. Separa los hechos, con su fuente y su cifra, de las opiniones, y di \
+            cuál es cuál. Nunca insultes a personas ni a partidos. Nada de sensacionalismo. \
+            Termina con una pregunta que deje pensando."
+            .to_owned();
+        prefs.channel_opening.clear();
+        prefs.channel_closing.clear();
+        prefs.format = 0;
+        prefs.language = 3;
+        prefs.aspect = 0;
+        prefs.minutes = Some(3);
+        prefs.content_style = 0;
+        prefs.level = Some(1);
+        prefs.pictures = 1;
+        prefs.visuals = 0;
+        prefs.hook = Some(true);
+        prefs.research = Some(true);
+        prefs.brand_color = "#C9A227".to_owned();
+        prefs.shorts_count = Some(4);
+        ready
+    }
+}
+
+/// The name the ready channel goes by.
+pub const LA_LOGICA: &str = "la lógica";
+
+/// How many videos a channel's memory keeps: enough not to repeat a
+/// season, few enough to tell the writer in every call.
+const MEMORY: usize = 60;
+
+/// The name a channel's memory is kept under: its name as typed, without
+/// the spaces around it or the case.
+fn memory_key(name: &str) -> String {
+    name.trim().to_lowercase()
 }
 
 /// What the Long video sheet remembers: the services' keys, kept in this
@@ -286,6 +375,19 @@ pub struct GeneratePrefs {
     pub channel_closing: String,
     /// A few lines of a script to write like.
     pub channel_example: String,
+    /// What the channel covers, as typed: the subjects its ideas come
+    /// from.
+    pub channel_topics: String,
+    /// The channel's editorial rules, as typed: what every script keeps
+    /// to.
+    pub channel_rules: String,
+    /// How many Shorts are cut from a video, one to five; three unless
+    /// chosen.
+    pub shorts_count: Option<usize>,
+    /// What each channel has made, by its name in lower case: the titles,
+    /// oldest first, told to the writer so a video is not made twice.
+    /// Kept apart from the series, which bring back choices, not history.
+    pub memory: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Preferences {
@@ -395,6 +497,64 @@ impl Preferences {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bringing back a series keeps every key in use and what each channel
+    /// has made.
+    #[test]
+    fn a_series_keeps_every_key_and_the_memory() {
+        let mut prefs = GeneratePrefs {
+            channel_name: "Tarikh".into(),
+            ..GeneratePrefs::default()
+        };
+        prefs.keep_template(prefs.as_template("Tarikh"));
+        prefs.openai_key = "sk-open".into();
+        prefs.kling_secret_key = "kl".into();
+        prefs.remember("The fall of Granada");
+        assert!(prefs.apply_template(0));
+        assert_eq!(prefs.openai_key, "sk-open");
+        assert_eq!(prefs.kling_secret_key, "kl");
+        assert_eq!(prefs.made_before(), ["The fall of Granada"]);
+    }
+
+    /// A channel remembers its titles once each, the latest last, and no
+    /// more than it keeps; another channel's are its own.
+    #[test]
+    fn a_channel_remembers_what_it_made() {
+        let mut prefs = GeneratePrefs {
+            channel_name: " La Lógica ".into(),
+            ..GeneratePrefs::default()
+        };
+        prefs.remember("Uno");
+        prefs.remember("Dos");
+        prefs.remember("Uno");
+        assert_eq!(prefs.made_before(), ["Dos", "Uno"]);
+        for n in 0..MEMORY {
+            prefs.remember(&n.to_string());
+        }
+        assert_eq!(prefs.made_before().len(), MEMORY);
+        prefs.channel_name = "Otra".into();
+        assert!(prefs.made_before().is_empty());
+        prefs.channel_name.clear();
+        prefs.remember("Nadie");
+        assert!(prefs.made_before().is_empty());
+    }
+
+    /// The ready channel is la lógica in Spanish and 16:9, and keeps the
+    /// keys out of it.
+    #[test]
+    fn la_logica_is_ready() {
+        let prefs = GeneratePrefs {
+            anthropic_key: "sk".into(),
+            ..GeneratePrefs::default()
+        };
+        let ready = prefs.la_logica();
+        assert_eq!(ready.name, LA_LOGICA);
+        assert_eq!(ready.prefs.language, 3);
+        assert_eq!(ready.prefs.aspect, 0);
+        assert_eq!(ready.prefs.shorts_count(), 4);
+        assert!(ready.prefs.anthropic_key.is_empty());
+        assert!(!ready.prefs.channel_rules.is_empty());
+    }
 
     /// A series is saved without the keys and brought back under the keys
     /// in use; saving under a name again takes the first one's place.
