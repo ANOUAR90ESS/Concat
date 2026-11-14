@@ -64,6 +64,16 @@ export struct GenerateSheetData {
     channel-opening: string,
     channel-closing: string,
     channel-example: string,
+    /// What the channel covers, and the rules its scripts keep to.
+    channel-topics: string,
+    channel-rules: string,
+    /// How many Shorts are cut from a video, one to five.
+    shorts-count: int,
+    /// How many videos the channel remembers having made, said; empty
+    /// for none.
+    channel-memory: string,
+    /// The channels' list row of the channel in use; 0 for none.
+    channel-row: int,
     /// 0 none, 1 Concat's own voices, 2 ElevenLabs
     voice: int,
     /// 0 draft cards, 1 Replicate, 2 made by hand
@@ -263,7 +273,7 @@ export component GenerateDialog inherits Modal {
     /// 4 Replicate video model, 5 ElevenLabs key, 6 ElevenLabs voice,
     /// 7 Replicate image model, 8 spend limit, 9 price of a clip, 10 price
     /// of a still, 11-16 the channel: name, audience, voice, opening line,
-    /// closing line, a script it likes.
+    /// closing line, a script it likes; 26 its topics, 27 its rules.
     callback text-edited(field: int, text: string);
     /// Which choice: 0 minutes, 1 language, 2 aspect, 3 voice, 4 shots,
     /// 5 music, 6 clips, 7 caption look, 8 content style, 9 picture quality,
@@ -315,6 +325,24 @@ export component GenerateDialog inherits Modal {
                     DialogSection {
                         first: true;
                         title: I18n.t("generate.idea");
+
+                        // The channel the video is for: picking one brings
+                        // back everything saved with it.
+                        DialogRow {
+                            label: I18n.t("generate.channelPick");
+                            Select {
+                                options: root.template-options;
+                                current: root.data.channel-row;
+                                changed(index) => { root.choice-changed(18, index); }
+                            }
+                        }
+
+                        if root.data.channel-memory != "": Text {
+                            text: root.data.channel-memory;
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
 
                         // A kind of video made whole: picking one sets the
                         // frame, the length and the look that go with it,
@@ -995,13 +1023,40 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
+                        DialogRow {
+                            label: I18n.t("generate.channelTopics");
+                            Field {
+                                value: root.data.channel-topics;
+                                placeholder: I18n.t("generate.channelTopicsHint");
+                                edited(text) => { root.text-edited(26, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.channelRules");
+                            Field {
+                                value: root.data.channel-rules;
+                                placeholder: I18n.t("generate.channelRulesHint");
+                                edited(text) => { root.text-edited(27, text); }
+                            }
+                        }
+
+                        DialogRow {
+                            label: I18n.t("generate.shortsCount");
+                            Select {
+                                options: ["1", "2", "3", "4", "5"];
+                                current: root.data.shorts-count - 1;
+                                changed(index) => { root.choice-changed(22, index); }
+                            }
+                        }
+
                         // The choices saved under the channel's name, and
                         // brought back with one pick: a series.
                         DialogRow {
                             label: I18n.t("generate.series");
                             Select {
                                 options: root.template-options;
-                                current: 0;
+                                current: root.data.channel-row;
                                 changed(index) => { root.choice-changed(18, index); }
                             }
                         }

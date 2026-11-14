@@ -406,6 +406,8 @@ impl GeneratePane {
                     },
                     18 => prefs.brand_color = text,
                     20 => prefs.structure = text,
+                    26 => prefs.channel_topics = text,
+                    27 => prefs.channel_rules = text,
                     19 => {
                         self.source = text;
                         return;
@@ -474,6 +476,16 @@ impl GeneratePane {
                         return;
                     }
                     18 => {
+                        // The row after the series saved is the ready
+                        // channel, while none is saved under its name:
+                        // picked, it is saved, and brought back as one.
+                        let prefs = &mut studio.prefs.generate;
+                        if index.checked_sub(1) == Some(prefs.templates.len())
+                            && !has_la_logica(prefs)
+                        {
+                            let ready = prefs.la_logica();
+                            prefs.keep_template(ready);
+                        }
                         if let Some(row) = index.checked_sub(1)
                             && studio.prefs.generate.apply_template(row)
                         {
@@ -492,6 +504,7 @@ impl GeneratePane {
                         return;
                     }
                     10 => prefs.level = Some(index.min(Level::ALL.len() - 1)),
+                    22 => prefs.shorts_count = Some(index.min(4) + 1),
                     20 => {
                         prefs.picture_maker = index.min(2);
                         studio.prefs.save(&studio.host.dirs);
@@ -870,6 +883,10 @@ impl GeneratePane {
                         self.board = Some(board.clone());
                         self.dirty = false;
                         self.changed();
+                        // The channel's memory: the next script is told
+                        // this one was made.
+                        studio.prefs.generate.remember(&board.title);
+                        studio.prefs.save(&studio.host.dirs);
                         if then_make {
                             self.make(studio, board);
                         } else {
@@ -1881,17 +1898,19 @@ impl GeneratePane {
             .collect()
     }
 
-    /// The series list's rows: what to do, then each series saved.
+    /// The channels' list: what to do, then each series saved, then the
+    /// ready channel while none is saved under its name.
     pub fn template_rows(&self, studio: &Studio) -> Vec<SharedString> {
+        let prefs = &studio.prefs.generate;
         std::iter::once(t("generate.noTemplate"))
-            .chain(
-                studio
-                    .prefs
-                    .generate
-                    .templates
-                    .iter()
-                    .map(|template| template.name.clone()),
-            )
+            .chain(prefs.templates.iter().map(|template| template.name.clone()))
+            .chain((!has_la_logica(prefs)).then(|| {
+                format!(
+                    "{} · {}",
+                    crate::prefs::LA_LOGICA,
+                    t("generate.readyChannel")
+                )
+            }))
             .map(SharedString::from)
             .collect()
     }
@@ -1993,17 +2012,18 @@ impl GeneratePane {
             return;
         };
         let key = studio.prefs.generate.anthropic_key.clone();
+        let count = studio.prefs.generate.shorts_count();
         let brief = self.brief(studio);
         self.begin(t("generate.pickingShort"));
         self.phase = 3;
         spawn_in_project(
             move || {
-                let picks = writer::pick_shorts(&board, &brief, 3, &key, writer::DEFAULT_MODEL)
+                let picks = writer::pick_shorts(&board, &brief, count, &key, writer::DEFAULT_MODEL)
                     .unwrap_or_else(|error| {
-                        // Three all the same, from the start of the video
-                        // on, when the writer cannot be asked.
+                        // As many all the same, from the start of the
+                        // video on, when the writer cannot be asked.
                         log::warn!("generate: the Shorts' stretches: {error}");
-                        shorts::filled(&board, Vec::new(), 3)
+                        shorts::filled(&board, Vec::new(), count)
                     });
                 picks
                     .iter()
@@ -2393,6 +2413,14 @@ impl GeneratePane {
             sounds: prefs.sounds.unwrap_or(true),
             format: prefs.format.min(VideoFormat::ALL.len() - 1) as i32,
             structure: prefs.structure.as_str().into(),
+            channel_topics: prefs.channel_topics.as_str().into(),
+            channel_rules: prefs.channel_rules.as_str().into(),
+            shorts_count: prefs.shorts_count() as i32,
+            channel_memory: match prefs.made_before().len() {
+                0 => SharedString::new(),
+                made => tf("generate.channelMemory", &[&made.to_string()]).into(),
+            },
+            channel_row: channel_row(prefs),
             source: self.source.as_str().into(),
             also_language: self.also_language as i32,
             has_ideas: !self.ideas.is_empty(),
@@ -3043,12 +3071,63 @@ fn channel_profile(prefs: &crate::prefs::GeneratePrefs) -> String {
             "A script it likes - write in its manner, not about its subject",
             &prefs.channel_example,
         ),
+        ("The subjects it covers", &prefs.channel_topics),
+        (
+            "Its editorial rules - every script keeps to them",
+            &prefs.channel_rules,
+        ),
+        (
+            "Videos it has already made - never make one of them again, never \
+             retell its story; refer back to one only where that truly helps",
+            &made_before(prefs),
+        ),
     ]
     .iter()
     .filter(|(_, value)| !value.trim().is_empty())
     .map(|(label, value)| format!("{label}: {}", value.trim()))
     .collect::<Vec<_>>()
     .join("\n")
+}
+
+/// The videos the channel has made, as the writer is told them: every
+/// one it remembers, newest first, one after another, so the count the
+/// sheet shows is the count the writer is told not to repeat.
+fn made_before(prefs: &crate::prefs::GeneratePrefs) -> String {
+    prefs
+        .made_before()
+        .iter()
+        .rev()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Whether a series is saved under the ready channel's name.
+fn has_la_logica(prefs: &crate::prefs::GeneratePrefs) -> bool {
+    prefs
+        .templates
+        .iter()
+        .any(|template| template.name.trim().to_lowercase() == crate::prefs::LA_LOGICA)
+}
+
+/// The channels' list row of the channel in use: the series saved under
+/// its name, or the ready channel's row; 0 when it is none of them.
+fn channel_row(prefs: &crate::prefs::GeneratePrefs) -> i32 {
+    let name = prefs.channel_name.trim().to_lowercase();
+    if name.is_empty() {
+        return 0;
+    }
+    match prefs
+        .templates
+        .iter()
+        .position(|template| template.name.trim().to_lowercase() == name)
+    {
+        Some(row) => row as i32 + 1,
+        None if name == crate::prefs::LA_LOGICA && !has_la_logica(prefs) => {
+            prefs.templates.len() as i32 + 1
+        }
+        None => 0,
+    }
 }
 
 /// A card's lines as the script editor shows them: one a line, what it
