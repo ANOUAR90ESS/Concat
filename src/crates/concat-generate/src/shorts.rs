@@ -67,6 +67,51 @@ pub fn opening(board: &Storyboard) -> Pick {
     }
 }
 
+/// `picks` made up to `count` with runs of the scenes no pick holds, each
+/// as many scenes in a row as fit in [`LONGEST`], from the start of the
+/// video on: the writer may pick fewer than asked, or picks that do not
+/// fit, and the owner asked for three Shorts and got one. The hook of one
+/// made up here is the first of its scenes' stickers, else the title.
+pub fn filled(board: &Storyboard, mut picks: Vec<Pick>, count: usize) -> Vec<Pick> {
+    let taken: std::collections::HashSet<String> =
+        picks.iter().flat_map(|pick| pick.scenes.clone()).collect();
+    let all: Vec<_> = board.scenes().collect();
+    let mut run: Vec<String> = Vec::new();
+    let mut total = 0.0;
+    let close = |run: &mut Vec<String>, total: &mut f64, picks: &mut Vec<Pick>| {
+        if !run.is_empty() && picks.len() < count {
+            let hook = all
+                .iter()
+                .filter(|scene| run.contains(&scene.id))
+                .find_map(|scene| scene.sticker.clone())
+                .unwrap_or_else(|| board.title.trim().to_owned());
+            picks.push(Pick {
+                scenes: std::mem::take(run),
+                hook,
+            });
+        }
+        run.clear();
+        *total = 0.0;
+    };
+    for scene in &all {
+        if picks.len() >= count {
+            break;
+        }
+        if taken.contains(&scene.id) {
+            close(&mut run, &mut total, &mut picks);
+            continue;
+        }
+        let seconds = scene.seconds.max(0.0);
+        if !run.is_empty() && total + seconds > LONGEST {
+            close(&mut run, &mut total, &mut picks);
+        }
+        total += seconds;
+        run.push(scene.id.clone());
+    }
+    close(&mut run, &mut total, &mut picks);
+    picks
+}
+
 /// The storyboard of the Short: the picked scenes, framed 9:16, as one
 /// chapter under the hook - the long video's chapter titles and on-screen
 /// words left out, which would mean nothing a minute in.
@@ -125,6 +170,28 @@ mod tests {
         let pick = opening(&long());
         assert_eq!(pick.scenes, ["c01s01", "c01s02"]);
         assert_eq!(pick.hook, "Lost cities");
+    }
+
+    /// Fewer picks than asked are made up with runs of the scenes left,
+    /// none sharing a scene with a pick, each fitting a Short.
+    #[test]
+    fn fewer_picks_than_asked_are_made_up() {
+        let board = long();
+        let picked = Pick {
+            scenes: vec!["c01s02".into()],
+            hook: "Picked".into(),
+        };
+        let picks = filled(&board, vec![picked], 3);
+        assert_eq!(picks.len(), 3);
+        assert_eq!(picks[0].hook, "Picked");
+        assert_eq!(picks[1].scenes, ["c01s01"]);
+        assert_eq!(picks[2].scenes, ["c02s01", "c02s02"]);
+        for pick in &picks {
+            assert!(fits(&board, &pick.scenes), "{pick:?}");
+        }
+        // From nothing, as many as the video holds.
+        assert_eq!(filled(&board, Vec::new(), 3).len(), 2);
+        assert_eq!(filled(&board, Vec::new(), 1).len(), 1);
     }
 
     #[test]

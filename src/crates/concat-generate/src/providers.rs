@@ -31,22 +31,20 @@ pub enum Shots {
     Draft,
     /// Made by hand from the prompt sheet and saved in the job's `shots/`.
     Folder,
-    /// Made on Replicate, as the script says: a still from a text-to-image
+    /// Made by models, as the script says: a still from a text-to-image
     /// model, which the cut moves over, or a clip from a video model. A
     /// model that takes a picture to start from is sent a still made first
     /// from the shot's own prompt, so a clip keeps the film's look rather
     /// than the video model's; one that takes words alone is sent those.
-    Replicate {
-        /// The account's API token.
-        token: String,
-        /// The text-to-image model, "owner/name".
-        image_model: String,
-        /// The video model, "owner/name"; empty for stills only.
-        video_model: String,
-        /// The video model's input as JSON, for a model whose own
-        /// description cannot be read; strings may hold `{prompt}`,
-        /// `{seconds}` and `{aspect}`.
-        video_input: String,
+    /// Each kind from the maker the person chose; see `makers`.
+    Models {
+        /// Who makes the pictures.
+        pictures: crate::makers::Pictures,
+        /// Who makes the clips; None for stills only.
+        clips: Option<crate::makers::Clips>,
+        /// The Replicate token, when there is one: the music is made on
+        /// Replicate. Empty for none.
+        replicate: String,
     },
 }
 
@@ -271,14 +269,14 @@ pub fn true_name(path: &Path) -> PathBuf {
     renamed
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(20))
         .timeout_read(Duration::from_secs(300))
         .build()
 }
 
-fn refused(service: &str, error: ureq::Error) -> String {
+pub(crate) fn refused(service: &str, error: ureq::Error) -> String {
     match error {
         ureq::Error::Status(code, response) => {
             let body = response.into_string().unwrap_or_default();
@@ -969,7 +967,7 @@ pub fn words_of(alignment: &Value) -> Vec<Word> {
     words
 }
 
-fn fetch(agent: &ureq::Agent, url: &str, out: &Path) -> Result<(), String> {
+pub(crate) fn fetch(agent: &ureq::Agent, url: &str, out: &Path) -> Result<(), String> {
     let response = agent
         .get(url)
         .call()

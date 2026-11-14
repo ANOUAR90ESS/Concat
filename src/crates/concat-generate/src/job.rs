@@ -24,6 +24,7 @@ use concat_project::commands::NewMedia;
 use concat_project::model::MediaKind;
 
 use crate::cost::{Prices, Spend};
+use crate::makers::Clips;
 use crate::plan::{SceneFiles, Word};
 use crate::providers::{self, ModelInputs, SHOT_EXTENSIONS, Shots, VOICE_EXTENSIONS, Voice};
 use crate::storyboard::{Chapter, DEFAULT_ACCENT, Graphic, Shot, ShotKind, Storyboard, shot_stem};
@@ -736,7 +737,7 @@ impl Job {
                             n,
                         )?;
                     }
-                    Shots::Replicate { .. } => {
+                    Shots::Models { .. } => {
                         queue.push(Queued {
                             n,
                             chapter,
@@ -793,7 +794,13 @@ impl Job {
 
         // The music last, once the pictures are paid for: a run cut short
         // has spent nothing on a bed for a video it did not finish.
-        if let (Some(prompt), Shots::Replicate { token, .. }) = (music, shots)
+        if let (
+            Some(prompt),
+            Shots::Models {
+                replicate: token, ..
+            },
+        ) = (music, shots)
+            && !token.trim().is_empty()
             && self.music().is_none()
         {
             if stop() {
@@ -946,22 +953,11 @@ impl Job {
         if let Some(kept) = providers::existing(&self.dir, "thumbnail", &STILL_EXTENSIONS) {
             return Ok(kept);
         }
-        if let Shots::Replicate {
-            token, image_model, ..
-        } = shots
+        if let Shots::Models { pictures, .. } = shots
             && !prompt.trim().is_empty()
         {
             let prompt = format!("{}, {}", prompt.trim(), board.style.visual.trim());
-            let made = providers::retry(|| {
-                providers::replicate_image(
-                    token,
-                    image_model,
-                    &prompt,
-                    "16:9",
-                    &self.dir,
-                    "thumbnail",
-                )
-            })?;
+            let made = providers::retry(|| pictures.make(&prompt, "16:9", &self.dir, "thumbnail"))?;
             return Ok(providers::true_name(&made));
         }
         board
@@ -1330,8 +1326,14 @@ impl Job {
     ) -> Result<(), String> {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         // What the video model takes, read once before the workers start.
-        if let Shots::Replicate {
-            token, video_model, ..
+        if let Shots::Models {
+            clips:
+                Some(Clips::Replicate {
+                    token,
+                    model: video_model,
+                    ..
+                }),
+            ..
         } = batch.shots
             && inputs.is_none()
             && !video_model.trim().is_empty()
@@ -1714,7 +1716,7 @@ impl Job {
                     number as usize + index,
                 )?;
             }
-            Shots::Replicate { .. } => {
+            Shots::Models { .. } => {
                 let order =
                     Order::new(board, chapter, shot, shot_seconds(scene, shot), &dir, &take);
                 let refused = match self.replicate_shot(shots, &order, inputs, prices, spend)? {
@@ -1749,29 +1751,31 @@ impl Job {
         prices: &Prices,
         spend: &Spend,
     ) -> Result<Outcome, String> {
-        let Shots::Replicate {
-            token,
-            image_model,
-            video_model,
-            video_input,
+        let Shots::Models {
+            pictures, clips, ..
         } = shots
         else {
-            return Err("these shots are not made with Replicate".to_owned());
+            return Err("these shots are not made by models".to_owned());
         };
         let mut still_for_clip = None;
-        if order.kind == ShotKind::Video && !video_model.trim().is_empty() {
-            // What the video model takes, read once, when the first clip
-            // is due.
-            let inputs = inputs.get_or_insert_with(|| {
-                providers::replicate_inputs(token, video_model)
-                    .inspect_err(|error| log::warn!("{video_model}'s inputs: {error}"))
-                    .ok()
+        let clips = clips.as_ref().filter(|clips| match clips {
+            Clips::Replicate { model, .. } => !model.trim().is_empty(),
+            _ => true,
+        });
+        if order.kind == ShotKind::Video
+            && let Some(clips) = clips
+        {
+            // What a Replicate video model takes, read once, when the
+            // first clip is due.
+            let inputs = inputs.get_or_insert_with(|| match clips {
+                Clips::Replicate { token, model, .. } => providers::replicate_inputs(token, model)
+                    .inspect_err(|error| log::warn!("{model}'s inputs: {error}"))
+                    .ok(),
+                _ => None,
             });
             let clip = Clip {
-                token,
-                image_model,
-                video_model,
-                video_input,
+                pictures,
+                clips,
                 order,
             };
             match self.clip(&clip, inputs.as_ref(), prices, spend) {
@@ -1793,16 +1797,7 @@ impl Job {
         }
         spend.take(prices.still)?;
         let still = |prompt: &str| {
-            providers::retry(|| {
-                providers::replicate_image(
-                    token,
-                    image_model,
-                    prompt,
-                    order.aspect,
-                    order.dir,
-                    order.stem,
-                )
-            })
+            providers::retry(|| pictures.make(prompt, order.aspect, order.dir, order.stem))
         };
         let image = match still(&order.prompt) {
             // Refused by the model's safety filter: asked once more, gently,
@@ -1826,7 +1821,7 @@ impl Job {
             }),
             Err(error) => {
                 spend.refund(prices.still);
-                if providers::refused_for_good(&error) || error.contains("needs an API token") {
+                if providers::refused_for_good(&error) || error.contains("needs an API") {
                     // A key that is wrong or out of credit fails every
                     // shot the same way: say so now.
                     return Err(error);
@@ -1839,18 +1834,34 @@ impl Job {
 
 /// One clip to make: what [`Job::clip`] is handed.
 struct Clip<'a> {
-    token: &'a str,
-    image_model: &'a str,
-    video_model: &'a str,
-    video_input: &'a str,
+    pictures: &'a crate::makers::Pictures,
+    clips: &'a Clips,
     order: &'a Order<'a>,
 }
 
 impl Job {
+    /// The still a clip starts from, made from the shot's own prompt and
+    /// kept in `frames/`, so a clip tried again does not pay for it twice.
+    fn frame(&self, clip: &Clip, prices: &Prices, spend: &Spend) -> Result<PathBuf, String> {
+        let order = clip.order;
+        let frames = self.frames_dir();
+        std::fs::create_dir_all(&frames)
+            .map_err(|error| format!("{}: {error}", frames.display()))?;
+        if let Some(frame) = providers::existing(&frames, order.stem, &SHOT_EXTENSIONS) {
+            return Ok(frame);
+        }
+        spend.take(prices.still)?;
+        providers::retry(|| {
+            clip.pictures
+                .make(&order.prompt, order.aspect, &frames, order.stem)
+        })
+        .inspect_err(|_| spend.refund(prices.still))
+    }
+
     /// Makes one clip. A model that starts from a picture is sent a still
-    /// made first from the shot's own prompt, kept in `frames/` so a clip
-    /// tried again does not pay for it twice; one that takes words alone,
-    /// or whose inputs could not be read, is sent the words.
+    /// made first from the shot's own prompt; one that takes words alone,
+    /// or whose inputs could not be read, is sent the words. Kling and
+    /// Seedance always start from the still.
     fn clip(
         &self,
         clip: &Clip,
@@ -1859,30 +1870,34 @@ impl Job {
         spend: &Spend,
     ) -> Result<(), String> {
         let order = clip.order;
+        let (token, video_model, video_input) = match clip.clips {
+            Clips::Replicate {
+                token,
+                model,
+                input,
+            } => (token, model, input),
+            direct => {
+                let frame = self.frame(clip, prices, spend)?;
+                spend.take(prices.clip)?;
+                return providers::retry(|| {
+                    direct.make_direct(
+                        &order.video_prompt,
+                        order.seconds,
+                        order.aspect,
+                        Some(&frame),
+                        order.dir,
+                        order.stem,
+                    )
+                })
+                .inspect_err(|_| spend.refund(prices.clip))
+                .map(|_| ());
+            }
+        };
         let image = match inputs.and_then(ModelInputs::image_field) {
             Some(_) => {
-                let frames = self.frames_dir();
-                std::fs::create_dir_all(&frames)
-                    .map_err(|error| format!("{}: {error}", frames.display()))?;
-                let frame = match providers::existing(&frames, order.stem, &SHOT_EXTENSIONS) {
-                    Some(frame) => frame,
-                    None => {
-                        spend.take(prices.still)?;
-                        providers::retry(|| {
-                            providers::replicate_image(
-                                clip.token,
-                                clip.image_model,
-                                &order.prompt,
-                                order.aspect,
-                                &frames,
-                                order.stem,
-                            )
-                        })
-                        .inspect_err(|_| spend.refund(prices.still))?
-                    }
-                };
+                let frame = self.frame(clip, prices, spend)?;
                 Some(providers::retry(|| {
-                    providers::replicate_upload(clip.token, &frame)
+                    providers::replicate_upload(token, &frame)
                 })?)
             }
             None => None,
@@ -1895,7 +1910,7 @@ impl Job {
                 image.as_deref(),
             ),
             None => providers::templated_clip(
-                clip.video_input,
+                video_input,
                 &order.video_prompt,
                 order.seconds,
                 order.aspect,
@@ -1903,13 +1918,7 @@ impl Job {
         };
         spend.take(prices.clip)?;
         providers::retry(|| {
-            providers::replicate_clip(
-                clip.token,
-                clip.video_model,
-                input.clone(),
-                order.dir,
-                order.stem,
-            )
+            providers::replicate_clip(token, video_model, input.clone(), order.dir, order.stem)
         })
         .inspect_err(|_| spend.refund(prices.clip))
         .map(|_| ())
@@ -2331,11 +2340,13 @@ mod tests {
         board.tidy().unwrap();
         // No token: every shot is refused alike, and the run says so
         // rather than standing in a colour card for each.
-        let shots = Shots::Replicate {
-            token: String::new(),
-            image_model: String::new(),
-            video_model: String::new(),
-            video_input: String::new(),
+        let shots = Shots::Models {
+            pictures: crate::makers::Pictures::Replicate {
+                token: String::new(),
+                model: String::new(),
+            },
+            clips: None,
+            replicate: String::new(),
         };
         let mut started = 0;
         let error = job

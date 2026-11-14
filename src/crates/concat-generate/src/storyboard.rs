@@ -109,6 +109,11 @@ pub struct Chapter {
     pub scenes: Vec<Scene>,
 }
 
+/// The id of a video's opening scene, when it has one written for it:
+/// the hook, a few seconds at the very start, before the channel's own
+/// opening. Its files are named from it like any scene's.
+pub const HOOK: &str = "hook";
+
 /// One scene: a stretch of narration and the shots under it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -392,6 +397,11 @@ impl Storyboard {
             return Err("the storyboard has no scenes".to_owned());
         }
         Ok(())
+    }
+
+    /// Whether the video opens on a hook; see [`HOOK`].
+    pub fn hooked(&self) -> bool {
+        self.scenes().next().is_some_and(|scene| scene.id == HOOK)
     }
 
     /// Every scene in order.

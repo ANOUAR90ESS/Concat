@@ -306,11 +306,23 @@ export component PhoneEditor inherits Rectangle {
                     horizontal-alignment: center;
                     overflow: elide;
                 }
+                // A project of more than one video - a long one and the
+                // Shorts cut from it - says which is open, and a tap on it
+                // lists them all: a phone shows no timeline tabs, and the
+                // owner took the long video for lost once a Short was cut.
                 Text {
-                    text: root.status;
-                    color: Theme.fg-dim;
+                    text: Editor.timeline-tabs.length > 1
+                        ? "\{Editor.timeline-name} ▾ · \{root.status}"
+                        : root.status;
+                    color: Editor.timeline-tabs.length > 1 ? Theme.accent : Theme.fg-dim;
                     font-size: Theme.fs-xs;
                     horizontal-alignment: center;
+                    overflow: elide;
+
+                    TouchArea {
+                        enabled: Editor.timeline-tabs.length > 1;
+                        clicked => { root.show("project", false); }
+                    }
                 }
             }
 
@@ -1130,6 +1142,28 @@ export component PhoneEditor inherits Rectangle {
         if root.sheet == "project": VerticalLayout {
             padding: 16px;
             spacing: 0px;
+
+            // Every video the project holds, the open one marked: a tap
+            // opens another.
+            if Editor.timeline-tabs.length > 1: Text {
+                text: I18n.t("phone.videos");
+                color: Theme.fg-dim;
+                font-size: Theme.fs-sm;
+            }
+            if Editor.timeline-tabs.length > 1: VerticalLayout {
+                spacing: 6px;
+                padding-top: 6px;
+                padding-bottom: 14px;
+                for tab[i] in Editor.timeline-tabs: SheetButton {
+                    glyph: i == Editor.timeline-current-tab ? Glyph.check : Glyph.film;
+                    label: tab.name;
+                    primary: i == Editor.timeline-current-tab;
+                    clicked => {
+                        Editor.tab-selected(i);
+                        root.hide();
+                    }
+                }
+            }
 
             Fact { label: I18n.t("common.name"); value: Editor.project-name; }
             Fact { label: I18n.t("configPane.folder"); value: Editor.project-folder; }
