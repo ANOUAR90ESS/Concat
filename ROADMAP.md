@@ -707,6 +707,13 @@ publishing; analytics later, asked first.
    the research again. A run without Research first reads up as before
    and keeps what it found. Not yet: a source per line checked against
    its page, research kept per channel across videos.
+
+   Also in this pull request: the release of v0.2.8-alpha.33 failed twice
+   in Engine tests and lints, the runner dying mid-clippy with no log after
+   restoring the main branch's large cache, where pull requests (near-empty
+   cache) passed. The job now clears the runner's unused toolchains first
+   and prints the disk's room before and after. alpha.33 is left; the next
+   tag is cut from main once this is merged.
 3. **Smart Shorts.** The strongest moments, each with its own hook and
    title, by the voice's seconds, the picture reframed rather than cropped.
 4. **Export center.** The long video, its Shorts, the thumbnail and the

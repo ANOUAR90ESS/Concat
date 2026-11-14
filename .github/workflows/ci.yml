@@ -44,6 +44,16 @@ jobs:
       # scripts/ci/deps.lock pins the file.
       ORT_VERSION: 1.28.0
     steps:
+      # Room on the disk before anything is restored or built. A release
+      # restores the main branch's cache, many gigabytes of it; beside the
+      # runner's preinstalled toolchains the disk filled during clippy and
+      # the runner died with no log, twice (v0.2.8-alpha.33), while a pull
+      # request's near-empty cache passed. None of these is used here.
+      - name: Room on the disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
