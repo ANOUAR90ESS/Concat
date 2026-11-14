@@ -593,6 +593,25 @@ wanted.
 - ⏳ Thumbnail words drawn as in the owner's example: white heavy capitals,
   the key words on a yellow plate, a line on a red one.
 
+## More than one maker (owner, 14 Nov)
+
+"Don't hold users to Replicate alone": each person picks who makes their
+pictures and their clips, with their own key, and the owner will try each.
+
+- ✅ Pictures by Replicate, OpenAI (`gpt-image-1`, high quality) or Google
+  Gemini (`gemini-2.5-flash-image`; an `imagen-…` model runs as Imagen).
+- ✅ Clips by Replicate, Kling (its own API, a JWT signed with the secret
+  key) or Seedance (BytePlus ModelArk). Kling and Seedance start from a
+  picture the picture maker makes first, as Replicate's image-to-video
+  models do; a clip asked for and not yet saved is followed on the next
+  run rather than paid for again.
+- ✅ Each maker's key and model in the sheet; the keys are left out of a
+  saved series. The sum and the spend limit use an estimate of each
+  service's price.
+- ⏳ Tried on real keys by the owner: the endpoints and model names are
+  from the services' documentation and third-party examples, untested.
+- ⏳ Video from OpenAI (Sora) and Google (Veo); music without Replicate.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

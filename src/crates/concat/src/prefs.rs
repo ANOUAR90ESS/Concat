@@ -121,6 +121,11 @@ impl GeneratePrefs {
         prefs.anthropic_key.clear();
         prefs.replicate_token.clear();
         prefs.elevenlabs_key.clear();
+        prefs.openai_key.clear();
+        prefs.gemini_key.clear();
+        prefs.kling_access_key.clear();
+        prefs.kling_secret_key.clear();
+        prefs.seedance_key.clear();
         prefs.templates.clear();
         Template {
             name: name.trim().to_owned(),
@@ -171,6 +176,30 @@ pub struct GeneratePrefs {
     pub replicate_model: String,
     /// The Replicate text-to-image model; empty for the default.
     pub replicate_image_model: String,
+    /// Who makes the pictures: 0 Replicate, 1 OpenAI, 2 Google Gemini.
+    pub picture_maker: usize,
+    /// Who makes the clips: 0 Replicate, 1 Kling, 2 Seedance.
+    pub clip_maker: usize,
+    /// OpenAI, when it makes the pictures: the key, and the model, empty
+    /// for the default.
+    pub openai_key: String,
+    /// The OpenAI picture model; empty for the default.
+    pub openai_image_model: String,
+    /// Google Gemini, when it makes the pictures.
+    pub gemini_key: String,
+    /// The Gemini picture model; empty for the default.
+    pub gemini_image_model: String,
+    /// Kling, when it makes the clips: the access key and the secret key
+    /// its requests are signed with, and the model.
+    pub kling_access_key: String,
+    /// Kling's secret key.
+    pub kling_secret_key: String,
+    /// The Kling model; empty for the default.
+    pub kling_model: String,
+    /// Seedance on BytePlus ModelArk, when it makes the clips.
+    pub seedance_key: String,
+    /// The Seedance model; empty for the default.
+    pub seedance_model: String,
     /// Export the finished cut without being asked; None is yes.
     pub auto_export: Option<bool>,
     /// The cut's own sounds - a whoosh into a scene, a pop, a chime - and

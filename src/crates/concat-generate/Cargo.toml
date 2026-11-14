@@ -29,6 +29,10 @@ serde_json.workspace = true
 ureq = { version = "2", features = ["json"] }
 # ElevenLabs answers with timings as JSON, the audio in it as base64.
 base64 = "0.22"
+# Kling's API takes a token signed with the account's secret key: a JWT,
+# HMAC-SHA256. The versions the workspace already locks.
+hmac = "0.12"
+sha2 = "0.10"
 # Draft shots are colour cards, written as PNGs: no service, no cost.
 png = "0.17"
 # What an unattended run had to work around - a retry, a stand-in shot -

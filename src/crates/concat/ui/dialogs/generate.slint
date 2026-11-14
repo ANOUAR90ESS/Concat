@@ -102,6 +102,20 @@ export struct GenerateSheetData {
     replicate-model: string,
     /// The image model; empty for the default.
     replicate-image-model: string,
+    /// Who makes the pictures: 0 Replicate, 1 OpenAI, 2 Gemini.
+    picture-maker: int,
+    /// Who makes the clips: 0 Replicate, 1 Kling, 2 Seedance.
+    clip-maker: int,
+    /// The chosen picture maker's key and model, and its default model.
+    picture-key: string,
+    picture-model: string,
+    picture-model-default: string,
+    /// The chosen clip maker's key, Kling's secret, the model and its
+    /// default.
+    clip-key: string,
+    clip-secret: string,
+    clip-model: string,
+    clip-model-default: string,
     /// Export the finished cut without being asked.
     auto-export: bool,
     elevenlabs-key: string,
@@ -738,6 +752,85 @@ export component GenerateDialog inherits Modal {
                             wrap: word-wrap;
                         }
 
+                        // Who makes the pictures and who the clips: each
+                        // with the person's own key, none held to one
+                        // service.
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.picturesBy");
+                            Select {
+                                options: ["Replicate", "OpenAI", "Google Gemini"];
+                                current: root.data.picture-maker;
+                                changed(index) => { root.choice-changed(20, index); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.picture-maker != 0: DialogRow {
+                            label: I18n.t("generate.apiKey");
+                            Field {
+                                value: root.data.picture-key;
+                                secret: true;
+                                technical: true;
+                                placeholder: root.data.picture-maker == 1 ? "sk-..." : "AIza...";
+                                edited(text) => { root.text-edited(21, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.picture-maker != 0: DialogRow {
+                            label: I18n.t("generate.imageModel");
+                            Field {
+                                value: root.data.picture-model;
+                                technical: true;
+                                placeholder: root.data.picture-model-default;
+                                edited(text) => { root.text-edited(22, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.clipsBy");
+                            Select {
+                                options: ["Replicate", "Kling", "Seedance"];
+                                current: root.data.clip-maker;
+                                changed(index) => { root.choice-changed(21, index); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.clip-maker != 0: DialogRow {
+                            label: root.data.clip-maker == 1 ? I18n.t("generate.accessKey") : I18n.t("generate.apiKey");
+                            Field {
+                                value: root.data.clip-key;
+                                secret: true;
+                                technical: true;
+                                edited(text) => { root.text-edited(23, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.clip-maker == 1: DialogRow {
+                            label: I18n.t("generate.secretKey");
+                            Field {
+                                value: root.data.clip-secret;
+                                secret: true;
+                                technical: true;
+                                edited(text) => { root.text-edited(24, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.clip-maker != 0: DialogRow {
+                            label: I18n.t("generate.videoModel");
+                            Field {
+                                value: root.data.clip-model;
+                                technical: true;
+                                placeholder: root.data.clip-model-default;
+                                edited(text) => { root.text-edited(25, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1: Text {
+                            text: I18n.t("generate.makersHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
                         if root.data.shots == 1: DialogRow {
                             label: I18n.t("generate.apiKey");
                             Field {
@@ -754,7 +847,7 @@ export component GenerateDialog inherits Modal {
                         // and truer light, about four cents; best:
                         // flux-1.1-pro-ultra, four megapixels, about six.
                         // Sets the model and its price below.
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.picture-maker == 0: DialogRow {
                             label: I18n.t("generate.pictureQuality");
                             SegmentedControl {
                                 options: [I18n.t("generate.pictureEconomy"), I18n.t("generate.pictureProfessional"), I18n.t("generate.pictureBest")];
@@ -786,7 +879,7 @@ export component GenerateDialog inherits Modal {
                             wrap: word-wrap;
                         }
 
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.picture-maker == 0: DialogRow {
                             label: I18n.t("generate.imageModel");
                             Field {
                                 value: root.data.replicate-image-model;
@@ -796,7 +889,7 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.clip-maker == 0: DialogRow {
                             label: I18n.t("generate.videoModel");
                             Field {
                                 value: root.data.replicate-model;
@@ -806,7 +899,7 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.clip-maker == 0: DialogRow {
                             label: I18n.t("generate.clipPrice");
                             Field {
                                 value: root.data.clip-price;
@@ -816,7 +909,7 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.picture-maker == 0: DialogRow {
                             label: I18n.t("generate.imagePrice");
                             Field {
                                 value: root.data.image-price;
