@@ -626,6 +626,52 @@ and the long video seemed gone - the project opened on the Short alone.
   stretches longer than a minute that are refused; the rest are made up
   from the scenes left, each a run that fits.
 
+## Audit and priorities (owner, 14 Nov)
+
+The owner, after planning with ChatGPT: build the new on the engines that
+work, never rebuild one without a specific, proven technical problem. Long
+videos up to 60 minutes and the ElevenLabs voice work and stay as they are.
+
+Where each engine stands (existing and working / existing, to improve /
+new):
+
+1. **Research.** Working: `writer::research` reads up on the web before
+   writing (8 searches, 4 pages read in full), gives sources, and makes a
+   video from one source (a page, a PDF, a text file); the editor checks
+   every figure against the notes. To improve: the notes are not shown or
+   kept to read and edit; Suggest ideas does not search the web. New: what
+   is rising on a topic, what the channels in the niche have already made,
+   a library of research kept per channel.
+2. **Channel.** Working: one channel profile (name, audience, voice,
+   opening and closing lines, example script), its colour, logo, opening
+   and closing cards, and series - the sheet's choices saved under a name,
+   the ElevenLabs voice among them. To improve: one channel only; a voice
+   per channel only by way of a series. New: several channels, each with
+   its own voice, look, formats and history of videos.
+3. **Script.** Working: outline, chapters, the editor's pass, fact check,
+   Arabic vowel marks, formats and the person's own, the angle, the hook
+   written last (#42), explainers. To improve: the briefs tuned on real
+   runs (owner found the writing not creative enough; #42 is the first
+   answer).
+4. **Smart Shorts.** Working and automatic: from a finished long video the
+   writer picks up to three stretches of a minute at most, scenes in a
+   row, each with a hook, and each is cut on a 9:16 timeline of its own
+   from the files already made, nothing paid again. To improve: three
+   always come out (#42), the phone could not go back to the long video
+   (#42), the pick goes by written seconds not the voice's, the wide
+   pictures are filled by a centre crop, each Short is exported by hand.
+   New: Shorts from any footage, not only a generated video.
+5. **Export.** Working: the export sheet, a phone's constant-quality HEVC,
+   export in the background with a notification, share. To improve: a
+   phone's export of drawn shots is slow and the app ends in the
+   background (#41 measures it); H.264 soft on some chips (#42 says so).
+   New: a queue that exports a long video and its Shorts in one go,
+   presets per platform.
+6. **Publishing and analytics.** Working: title, description with
+   chapters, tags, thumbnail words and picture, a thumbnail timeline. New:
+   analytics. Uploading straight to YouTube was set aside by the owner on
+   9 Nov ("no real value"); to be asked again before it is built.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no
