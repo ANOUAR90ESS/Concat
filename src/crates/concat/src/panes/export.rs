@@ -647,6 +647,11 @@ impl ExportPane {
                 .position(|codec| *codec == self.codec(studio))
                 .unwrap_or(0) as i32,
             h264_encodable: concat_media::VideoCodec::H264.encodable(),
+            // A phone whose chip keeps no quality in H.264 writes it at a
+            // tenth of what is asked: the owner's video came out soft on
+            // YouTube from such an export. The picker says so where it
+            // said the codec plays everywhere.
+            h264_soft: platform::phone() && concat_media::encode::phone_prefers_hevc(),
             hevc_encodable: concat_media::VideoCodec::Hevc.encodable(),
             av1_encodable: concat_media::VideoCodec::Av1.encodable(),
             ten_bit: self.ten_bit,

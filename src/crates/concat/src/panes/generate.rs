@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use concat_generate::budget::{self, Totals};
 use concat_generate::cost::{self, Estimate, Prices};
 use concat_generate::job::{Costs, Idea, Job, Made, Remade, Status, Step};
+use concat_generate::makers;
 use concat_generate::plan::{self, CaptionLook, Editing, Options};
 use concat_generate::providers::{self, DEFAULT_VIDEO_MODEL, Shots, Voice};
 use concat_generate::review;
@@ -383,6 +384,26 @@ impl GeneratePane {
                     15 => prefs.channel_closing = text,
                     16 => prefs.channel_example = text,
                     17 => prefs.pronunciation = text,
+                    // The chosen picture maker's key and model, and the
+                    // chosen clip maker's: one pair of fields in the sheet
+                    // for whichever is picked.
+                    21 => match prefs.picture_maker {
+                        1 => prefs.openai_key = text,
+                        _ => prefs.gemini_key = text,
+                    },
+                    22 => match prefs.picture_maker {
+                        1 => prefs.openai_image_model = text,
+                        _ => prefs.gemini_image_model = text,
+                    },
+                    23 => match prefs.clip_maker {
+                        1 => prefs.kling_access_key = text,
+                        _ => prefs.seedance_key = text,
+                    },
+                    24 => prefs.kling_secret_key = text,
+                    25 => match prefs.clip_maker {
+                        1 => prefs.kling_model = text,
+                        _ => prefs.seedance_model = text,
+                    },
                     18 => prefs.brand_color = text,
                     20 => prefs.structure = text,
                     19 => {
@@ -471,6 +492,18 @@ impl GeneratePane {
                         return;
                     }
                     10 => prefs.level = Some(index.min(Level::ALL.len() - 1)),
+                    20 => {
+                        prefs.picture_maker = index.min(2);
+                        studio.prefs.save(&studio.host.dirs);
+                        self.tally(studio);
+                        return;
+                    }
+                    21 => {
+                        prefs.clip_maker = index.min(2);
+                        studio.prefs.save(&studio.host.dirs);
+                        self.tally(studio);
+                        return;
+                    }
                     11 => {
                         prefs.visuals = index.min(1);
                         studio.prefs.save(&studio.host.dirs);
@@ -478,17 +511,13 @@ impl GeneratePane {
                         return;
                     }
                     9 => {
-                        let professional = index == 1;
-                        prefs.replicate_image_model = if professional {
-                            PROFESSIONAL_IMAGE_MODEL.to_owned()
-                        } else {
-                            String::new()
+                        let (model, price) = match index {
+                            1 => (PROFESSIONAL_IMAGE_MODEL, PROFESSIONAL_IMAGE_PRICE),
+                            2 => (BEST_IMAGE_MODEL, BEST_IMAGE_PRICE),
+                            _ => ("", ""),
                         };
-                        prefs.image_price = if professional {
-                            PROFESSIONAL_IMAGE_PRICE.to_owned()
-                        } else {
-                            String::new()
-                        };
+                        prefs.replicate_image_model = model.to_owned();
+                        prefs.image_price = price.to_owned();
                         studio.prefs.save(&studio.host.dirs);
                         self.tally(studio);
                         return;
@@ -514,6 +543,10 @@ impl GeneratePane {
                 }
                 5 => {
                     studio.prefs.generate.brand_bumpers = on;
+                    studio.prefs.save(&studio.host.dirs);
+                }
+                6 => {
+                    studio.prefs.generate.hook = Some(on);
                     studio.prefs.save(&studio.host.dirs);
                 }
                 _ => {}
@@ -1193,6 +1226,7 @@ impl GeneratePane {
             source: self.source.trim().to_owned(),
             format: VideoFormat::ALL[prefs.format.min(VideoFormat::ALL.len() - 1)],
             structure: prefs.structure.trim().to_owned(),
+            hook: prefs.hook.unwrap_or(true),
         }
     }
 
@@ -1432,6 +1466,7 @@ impl GeneratePane {
                                 tf("generate.designingExplainer", &[&n, &of]),
                                 String::new(),
                             ),
+                            Writing::Hook => (0.98, t("generate.writingHook"), String::new()),
                         };
                         on_ui_in_project(epoch, move |studio, _, _| {
                             studio.handle(Msg::Generate(GenerateMsg::Progress(
@@ -1666,7 +1701,7 @@ impl GeneratePane {
         // come from Replicate, which makes it; described by the writer
         // once, before the first bed is paid for.
         let ai_music = self.music == AI_MUSIC
-            && matches!(shots, Shots::Replicate { .. })
+            && matches!(&shots, Shots::Models { replicate, .. } if !replicate.trim().is_empty())
             && job.music().is_none();
         let writer_key = prefs.anthropic_key.clone();
         let speaker = studio.prefs.tts_voice.unwrap_or(DEFAULT_SPEAKER);
@@ -1965,8 +2000,10 @@ impl GeneratePane {
             move || {
                 let picks = writer::pick_shorts(&board, &brief, 3, &key, writer::DEFAULT_MODEL)
                     .unwrap_or_else(|error| {
+                        // Three all the same, from the start of the video
+                        // on, when the writer cannot be asked.
                         log::warn!("generate: the Shorts' stretches: {error}");
-                        vec![shorts::opening(&board)]
+                        shorts::filled(&board, Vec::new(), 3)
                     });
                 picks
                     .iter()
@@ -2303,9 +2340,11 @@ impl GeneratePane {
             research: prefs.research.unwrap_or(true),
             visuals: prefs.visuals.min(1) as i32,
             picture_style: prefs.pictures.min(PictureStyle::ALL.len() - 1) as i32,
-            picture_quality: i32::from(
-                prefs.replicate_image_model.trim() == PROFESSIONAL_IMAGE_MODEL,
-            ),
+            picture_quality: match prefs.replicate_image_model.trim() {
+                PROFESSIONAL_IMAGE_MODEL => 1,
+                BEST_IMAGE_MODEL => 2,
+                _ => 0,
+            },
             channel_name: prefs.channel_name.as_str().into(),
             channel_audience: prefs.channel_audience.as_str().into(),
             channel_voice: prefs.channel_voice.as_str().into(),
@@ -2317,6 +2356,39 @@ impl GeneratePane {
             replicate_token: prefs.replicate_token.as_str().into(),
             replicate_model: prefs.replicate_model.as_str().into(),
             replicate_image_model: prefs.replicate_image_model.as_str().into(),
+            picture_maker: prefs.picture_maker.min(2) as i32,
+            clip_maker: prefs.clip_maker.min(2) as i32,
+            picture_key: match prefs.picture_maker {
+                1 => prefs.openai_key.as_str(),
+                _ => prefs.gemini_key.as_str(),
+            }
+            .into(),
+            picture_model: match prefs.picture_maker {
+                1 => prefs.openai_image_model.as_str(),
+                _ => prefs.gemini_image_model.as_str(),
+            }
+            .into(),
+            picture_model_default: match prefs.picture_maker {
+                1 => makers::OPENAI_IMAGE_MODEL,
+                _ => makers::GEMINI_IMAGE_MODEL,
+            }
+            .into(),
+            clip_key: match prefs.clip_maker {
+                1 => prefs.kling_access_key.as_str(),
+                _ => prefs.seedance_key.as_str(),
+            }
+            .into(),
+            clip_secret: prefs.kling_secret_key.as_str().into(),
+            clip_model: match prefs.clip_maker {
+                1 => prefs.kling_model.as_str(),
+                _ => prefs.seedance_model.as_str(),
+            }
+            .into(),
+            clip_model_default: match prefs.clip_maker {
+                1 => makers::KLING_MODEL,
+                _ => makers::SEEDANCE_MODEL,
+            }
+            .into(),
             auto_export: prefs.auto_export.unwrap_or(true),
             sounds: prefs.sounds.unwrap_or(true),
             format: prefs.format.min(VideoFormat::ALL.len() - 1) as i32,
@@ -2331,6 +2403,7 @@ impl GeneratePane {
                 .position(|path| *path == prefs.brand_logo)
                 .map_or(0, |row| row as i32 + 1),
             bumpers: prefs.brand_bumpers,
+            hook: prefs.hook.unwrap_or(true),
             elevenlabs_key: prefs.elevenlabs_key.as_str().into(),
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
             voice_model: prefs.elevenlabs_model.min(1) as i32,
@@ -2788,11 +2861,38 @@ fn clock(seconds: f64) -> String {
 /// Where the shots come from, as the sheet's choices say.
 fn shots_of(prefs: &crate::prefs::GeneratePrefs) -> Shots {
     match prefs.shots {
-        1 => Shots::Replicate {
-            token: prefs.replicate_token.clone(),
-            image_model: prefs.replicate_image_model.clone(),
-            video_model: video_model(&prefs.replicate_model).to_owned(),
-            video_input: REPLICATE_INPUT.to_owned(),
+        1 => Shots::Models {
+            pictures: match prefs.picture_maker {
+                1 => makers::Pictures::OpenAi {
+                    key: prefs.openai_key.clone(),
+                    model: prefs.openai_image_model.clone(),
+                },
+                2 => makers::Pictures::Gemini {
+                    key: prefs.gemini_key.clone(),
+                    model: prefs.gemini_image_model.clone(),
+                },
+                _ => makers::Pictures::Replicate {
+                    token: prefs.replicate_token.clone(),
+                    model: prefs.replicate_image_model.clone(),
+                },
+            },
+            clips: Some(match prefs.clip_maker {
+                1 => makers::Clips::Kling {
+                    access_key: prefs.kling_access_key.clone(),
+                    secret_key: prefs.kling_secret_key.clone(),
+                    model: prefs.kling_model.clone(),
+                },
+                2 => makers::Clips::Seedance {
+                    key: prefs.seedance_key.clone(),
+                    model: prefs.seedance_model.clone(),
+                },
+                _ => makers::Clips::Replicate {
+                    token: prefs.replicate_token.clone(),
+                    model: video_model(&prefs.replicate_model).to_owned(),
+                    input: REPLICATE_INPUT.to_owned(),
+                },
+            }),
+            replicate: prefs.replicate_token.clone(),
         },
         2 => Shots::Folder,
         _ => Shots::Draft,
@@ -2869,9 +2969,22 @@ const AI_MUSIC: usize = 1;
 fn prices(studio: &Studio) -> Prices {
     let prefs = &studio.prefs.generate;
     let defaults = Prices::default();
+    // A service reached directly has its own price, whatever was typed
+    // for Replicate's models; about what each charges for one picture at
+    // the size asked, and one five-second clip.
+    let still = match prefs.picture_maker {
+        1 => OPENAI_IMAGE_PRICE,
+        2 => GEMINI_IMAGE_PRICE,
+        _ => amount(&prefs.image_price).unwrap_or(defaults.still),
+    };
+    let clip = match prefs.clip_maker {
+        1 => KLING_CLIP_PRICE,
+        2 => SEEDANCE_CLIP_PRICE,
+        _ => amount(&prefs.clip_price).unwrap_or(defaults.clip),
+    };
     Prices {
-        still: amount(&prefs.image_price).unwrap_or(defaults.still),
-        clip: amount(&prefs.clip_price).unwrap_or(defaults.clip),
+        still,
+        clip,
         ..defaults
     }
 }
@@ -2890,10 +3003,27 @@ fn dollars(value: f64) -> String {
     }
 }
 
+/// About what one picture costs from OpenAI at high quality, and from
+/// Gemini; one five-second clip from Kling at standard, and from Seedance
+/// Pro at 1080p. Estimates for the sheet's sum and the spend limit, not
+/// what the services bill.
+const OPENAI_IMAGE_PRICE: f64 = 0.25;
+const GEMINI_IMAGE_PRICE: f64 = 0.04;
+const KLING_CLIP_PRICE: f64 = 0.30;
+const SEEDANCE_CLIP_PRICE: f64 = 0.60;
+
 /// The professional picture model, beside the default economical one:
 /// finer detail and truer light, at about four cents a picture.
 const PROFESSIONAL_IMAGE_MODEL: &str = "black-forest-labs/flux-1.1-pro";
 const PROFESSIONAL_IMAGE_PRICE: &str = "0.04";
+
+/// The best picture model: four times the pixels of the others - about
+/// 2750x1550 at 16:9 against their 1344x768 - so a picture is brought down
+/// to the frame rather than enlarged and softened up to it, at about six
+/// cents a picture. The owner found the pictures soft beside an image
+/// ChatGPT made.
+const BEST_IMAGE_MODEL: &str = "black-forest-labs/flux-1.1-pro-ultra";
+const BEST_IMAGE_PRICE: &str = "0.06";
 
 /// The audience level's row: general until one is chosen.
 fn level_row(prefs: &crate::prefs::GeneratePrefs) -> usize {

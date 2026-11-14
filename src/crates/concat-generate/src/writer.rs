@@ -52,6 +52,21 @@ rather than a new image every time. Say the bottom line before the detail. Teach
 a time, in at most three steps a chapter. Prefer one vivid example to three general ones, and \
 a comparison the viewer can picture - 'as tall as a ten-storey building' - to a bare number.
 
+Clear is the floor, not the ceiling: a video that only explains is one of a hundred on the \
+topic, and nobody shares it. Write it as no one else would. Find the angle - the way into the \
+subject a dozen other videos on it did not take - and hold it to the end. Tell it through \
+moments, not summaries: a particular person, a place, an hour, what was seen and heard, then \
+what it meant. Surprise the viewer at least once a chapter: the detail nobody mentions, the \
+consequence nobody expects, the fact that turns the obvious around. Let the narrator have a \
+voice - curiosity, wonder, dry wit or irony where the subject allows it, gravity where it does \
+not - and the same voice from the first line to the last. Vary the rhythm: a run of short \
+sentences, then one that opens out; a line of three words where it should land. Give every \
+chapter one sentence worth quoting, and let the end call back to an image from the beginning. \
+Never open two scenes the same way, and never lean on the stock moves - 'imagine...', 'have \
+you ever wondered', 'but here is the thing', 'the answer may surprise you', 'let's break it \
+down', a list counted out 'one... two... three...' - when a scene, a figure or a question of \
+your own would do.
+
 Join scenes by cause, not by sequence: the story moves on 'but' and 'so', never on 'and \
 then'. Each scene gives a reason for the next.
 
@@ -258,8 +273,9 @@ impl VideoFormat {
                  - Wherever the narration says how something works, the shot is an \
                  explainer that draws it as it is said.\n\
                  - Half way, ask the viewer to predict what happens next, then show it.\n\
-                 - End on the three things to remember, as a list card, and the one \
-                 misconception this video has just corrected.\n\
+                 - End by returning to the everyday question of the opening, now answered, \
+                 and the one misconception this video has just corrected; the points to \
+                 remember go on a list card, said in a fresh line rather than counted out.\n\
                  - Give the video a guide: one character who asks the questions the viewer \
                  would, and is in the pictures that are not drawings."
             }
@@ -374,6 +390,9 @@ pub struct Brief {
     /// it is made of, how it ends: a format of their own, for any kind of
     /// video the app has no format for. Empty for none.
     pub structure: String,
+    /// Open on a hook: a few seconds written last, from the whole script,
+    /// with a picture of its own, before anything else.
+    pub hook: bool,
 }
 
 impl Brief {
@@ -454,6 +473,8 @@ pub enum Writing {
         /// Of how many in the chapter.
         of: usize,
     },
+    /// The opening hook is being written, from the finished script.
+    Hook,
 }
 
 /// Writes a storyboard for `brief`, reporting each call before it is made.
@@ -500,6 +521,15 @@ pub fn write(
             shape.chapters[0].seconds.round()
         ),
     )?;
+    // The angle the outline chose, told to every chapter after it, so
+    // the video is told one way from its first line to its last.
+    let angle = text(&outline["angle"]);
+    if !angle.trim().is_empty() {
+        brief_text += &format!(
+            "The video's angle, chosen with its outline - tell every chapter through it:\n{}\n",
+            angle.trim()
+        );
+    }
     let outlined = outline["chapters"].as_array().cloned().unwrap_or_default();
     if outlined.is_empty() {
         return Err("the writer returned an outline with no chapters".to_owned());
@@ -622,7 +652,134 @@ pub fn write(
         });
     }
     board.tidy()?;
+
+    // The hook last, from the script as it came out: an opening written
+    // first promises what the plan was, and this one what the video has.
+    // A video of cards alone has no picture to open on, and none is made.
+    if brief.hook && !brief.cards_only {
+        progress(Writing::Hook);
+        match ask(&hook_tool(), hook_prompt(&board, &brief_text)) {
+            Ok(got) => match hook_scene(&got) {
+                Some(mut scene) => {
+                    if needs_marks(&brief.language) {
+                        let scenes = std::slice::from_mut(&mut scene);
+                        match ask(&reading_tool(), reading_prompt(scenes)) {
+                            Ok(read) => apply_readings(scenes, &read),
+                            Err(error) => log::warn!("the hook's vowel marks failed: {error}"),
+                        }
+                    }
+                    board.chapters[0].scenes.insert(0, scene);
+                    board.tidy()?;
+                }
+                None => log::warn!("the hook came back without a line or a picture; none is used"),
+            },
+            // The video is whole without it.
+            Err(error) => log::warn!("the hook could not be written: {error}"),
+        }
+    }
     Ok(board)
+}
+
+/// How long a hook is planned to hold; its voice decides in the end.
+const HOOK_SECONDS: f64 = 4.0;
+
+/// What the hook's call may read of the script, in characters: past it
+/// each scene is given by its opening words.
+const HOOK_READS: usize = 60_000;
+
+/// The ask for the hook: the whole script, and what a hook is.
+fn hook_prompt(board: &Storyboard, brief_text: &str) -> String {
+    let whole = |words: usize| -> String {
+        board
+            .chapters
+            .iter()
+            .map(|chapter| {
+                let scenes: String = chapter
+                    .scenes
+                    .iter()
+                    .map(|scene| format!("{}\n", short(scene.narration.trim(), words)))
+                    .collect();
+                format!("## {}\n{scenes}", chapter.title.trim())
+            })
+            .collect()
+    };
+    let mut script = whole(usize::MAX);
+    if script.len() > HOOK_READS {
+        script = whole(30);
+    }
+    format!(
+        "{brief_text}\nThe video \"{}\" is written. This is all of its narration, in order:\n\n\
+         {script}\n\
+         Now write its HOOK: the three to five seconds a viewer sees before anything else, \
+         which decide whether they stay. Read the whole script and take the strongest thing \
+         it really holds - the number nobody expects, the contradiction, the question it \
+         answers, what is at stake - and open on that.\n\
+         - line: one spoken sentence in {}, at most 16 words, said to the viewer. It promises \
+         only what the video delivers, gives away no answer, and uses none of the first \
+         scene's own words. No greeting, no channel name, no \"in this video\", no \"did you \
+         know\".\n\
+         - words: two to four words in {} shown very large over the picture while the line \
+         is said - the hook at a glance with the sound off, not the line again.\n\
+         - keywords: one or two words of the line, exactly as written in it, for the caption \
+         to colour.\n\
+         - picture: in English, 50 to 80 words, the one image the video opens on. {}\n\
+         - voice: how the line is said, in a few words.",
+        board.title.trim(),
+        board.language,
+        board.language,
+        striking(&board.style.visual),
+    )
+}
+
+/// How the hook's picture and the thumbnail's are to look, after what the
+/// owner showed as the quality they want: an image a top channel would
+/// open on, not a plain photograph of the subject.
+fn striking(visual: &str) -> String {
+    format!(
+        "Make it a bold composite in the manner of a top YouTube thumbnail: one hero subject \
+         large in the foreground, and one or two objects or figures from the video around it \
+         that tell the story at a glance - the contrast or the danger the video is about. \
+         Dramatic coloured light: a hot colour against a cold one (red against blue, orange \
+         against teal), a rim light on every edge, glow, smoke or sparks where they belong; \
+         deep shadows, rich saturated colour, razor-sharp focus, high contrast, readable on a \
+         phone at a glance. Leave one side clear for large words. No text, letters or logos \
+         in the picture. Keep to the film's medium: {}",
+        visual.trim()
+    )
+}
+
+/// The hook as the video's first scene, or None when it came back
+/// without a line or without a picture.
+fn hook_scene(got: &Value) -> Option<Scene> {
+    let line = text(&got["line"]).trim().to_owned();
+    let picture = text(&got["picture"]).trim().to_owned();
+    if line.is_empty() || picture.is_empty() {
+        return None;
+    }
+    let words = text(&got["words"]).trim().to_owned();
+    Some(Scene {
+        id: crate::storyboard::HOOK.to_owned(),
+        narration: line,
+        voice: text(&got["voice"]).trim().to_owned(),
+        seconds: HOOK_SECONDS,
+        shots: vec![crate::storyboard::Shot {
+            kind: ShotKind::Image,
+            prompt: picture,
+            ..Default::default()
+        }],
+        keywords: got["keywords"]
+            .as_array()
+            .map(|words| {
+                words
+                    .iter()
+                    .map(|word| text(word).trim().to_owned())
+                    .filter(|word| !word.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        sticker: (!words.is_empty()).then_some(words),
+        ..Scene::default()
+    })
 }
 
 /// Whether a voice reads `language` better with its words marked: Arabic,
@@ -1065,10 +1222,13 @@ pub fn pick_shorts(
     );
     let got = crate::providers::retry(|| call(key, model, &shorts_tool(), &prompt))?;
     let picks = picks_of(board, &got["shorts"], count);
-    if picks.is_empty() {
-        return Err("the writer picked no stretch that is a minute in a row".to_owned());
+    if picks.len() < count {
+        log::info!(
+            "the writer picked {} stretches of {count} that fit; the rest are made up",
+            picks.len()
+        );
     }
-    Ok(picks)
+    Ok(crate::shorts::filled(board, picks, count))
 }
 
 /// The picks a `shorts` answer holds that are runs of `board`'s scenes
@@ -1542,14 +1702,12 @@ fn publishing_ask(board: &Storyboard) -> String {
          - 10 to 15 search tags, in {} and in English, each a few words;\n\
          - the thumbnail's words: at most four, large and bold, that the title does not \
          already say;\n\
-         - the thumbnail's picture, in English, as an image prompt: one striking subject \
-         from the video, close and clear, with empty space on one side for the words, \
-         high contrast, no text in the picture. Visual style: {}",
+         - the thumbnail's picture, in English, as an image prompt. {}",
         board.title.trim(),
         board.language,
         board.language,
         board.language,
-        board.style.visual.trim(),
+        striking(&board.style.visual),
     )
 }
 
@@ -1788,7 +1946,11 @@ fn edit_prompt(board: &Storyboard, brief_text: &str, i: usize) -> String {
          Edit it the way a senior editor edits a first draft for a channel that lives on \
          retention: a stronger first line, sharper verbs, concrete detail where it is vague, \
          every phrase from the list you never write taken out, nothing said twice, the turn at \
-         the end kept. Check it as a viewer new to the subject would hear it: a term left \
+         the end kept. Make it less ordinary, not only clearer: a line any video on the topic \
+         could say is rewritten as only this one would; a stock move ('imagine', 'have you \
+         ever wondered', a list counted out) is replaced by a scene or a fact; two scenes that \
+         open the same way are made to open differently; the narrator's voice is kept, and \
+         its one quotable line in the chapter made sharper. Check it as a viewer new to the subject would hear it: a term left \
          unexplained gets its plain words, a step that is skipped is put back, a sentence too \
          long for one breath is split. Check every number, date, name and quote against the \
          research notes above, where there are any: one the notes do not support is corrected \
@@ -2358,6 +2520,10 @@ fn outline_tool() -> Value {
                     "description": "One line in English appended to every shot prompt so all shots look like one film, chosen for this topic and this kind of video: the medium (cinematic photograph, photojournalism, archival film, 3D render, illustration), the lens and film or sensor look, the light and the grade. No palette: each chapter brings its own."
                 },
                 "voice_style": {"type": "string", "description": "How the narrator sounds."},
+                "angle": {
+                    "type": "string",
+                    "description": "In the video's language, two or three sentences: the way into this topic that other videos on it do not take - the person, the moment, the question or the contradiction the whole video is told through - and the image it opens and closes on."
+                },
                 "cast": {
                     "type": "array",
                     "description": "The recurring characters the viewer follows from picture to picture, when the video has any - a guide, a family, a scientist, a soldier, an everyman who stands for the viewer. Each is drawn the same in every picture that names them. Up to four; none for a video of places and objects.",
@@ -2597,6 +2763,24 @@ fn short_tool() -> Value {
     })
 }
 
+fn hook_tool() -> Value {
+    json!({
+        "name": "hook",
+        "description": "The video's opening hook.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "line": {"type": "string", "description": "The spoken sentence, at most 16 words."},
+                "words": {"type": "string", "description": "Two to four words shown large."},
+                "keywords": {"type": "array", "items": {"type": "string"}},
+                "picture": {"type": "string", "description": "The opening image's prompt, in English."},
+                "voice": {"type": "string", "description": "How the line is said."}
+            },
+            "required": ["line", "words", "picture"]
+        }
+    })
+}
+
 fn translation_tool() -> Value {
     let strings = json!({"type": "array", "items": {"type": "string"}});
     json!({
@@ -2728,6 +2912,46 @@ fn revise_tool() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hook is the video's first scene under its own id: its line read,
+    /// its words stuck large, one picture; without a line or a picture
+    /// there is none.
+    #[test]
+    fn a_hook_is_a_scene_of_its_own() {
+        let got = json!({
+            "line": " Una bomba del tamaño de una piña borró una ciudad. ",
+            "words": "UNA SOLA BOMBA",
+            "keywords": ["piña", " "],
+            "picture": "a pineapple-sized metal sphere on a desert floor at dawn",
+            "voice": "low, urgent"
+        });
+        let scene = hook_scene(&got).expect("a hook");
+        assert_eq!(scene.id, crate::storyboard::HOOK);
+        assert_eq!(
+            scene.narration,
+            "Una bomba del tamaño de una piña borró una ciudad."
+        );
+        assert_eq!(scene.sticker.as_deref(), Some("UNA SOLA BOMBA"));
+        assert_eq!(scene.keywords, ["piña"]);
+        assert_eq!(scene.shots.len(), 1);
+        assert_eq!(scene.shots[0].made_as(), ShotKind::Image);
+        assert!(hook_scene(&json!({"line": "x", "words": "y", "picture": " "})).is_none());
+        assert!(hook_scene(&json!({"words": "y", "picture": "z"})).is_none());
+
+        // It goes in first, and the storyboard still tidies with it there.
+        let mut board: Storyboard = serde_json::from_str(
+            r#"{"title":"T","language":"Spanish","chapters":[{"title":"One","scenes":[
+                {"narration":"First.","seconds":5,"shots":[{"prompt":"a red kite"}]}]}]}"#,
+        )
+        .unwrap();
+        board.tidy().unwrap();
+        board.chapters[0].scenes.insert(0, scene);
+        board.tidy().unwrap();
+        assert!(board.hooked());
+        assert_eq!(board.chapters[0].scenes[1].id, "c01s01");
+        let ask = hook_prompt(&board, "Topic: bombs\n");
+        assert!(ask.contains("First.") && ask.contains("in Spanish"));
+    }
 
     #[test]
     fn the_music_is_asked_for_in_english_from_the_moods() {

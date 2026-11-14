@@ -33,6 +33,7 @@ pub mod cost;
 pub mod director;
 pub mod explainer;
 pub mod job;
+pub mod makers;
 pub mod motion;
 pub mod plan;
 pub mod providers;

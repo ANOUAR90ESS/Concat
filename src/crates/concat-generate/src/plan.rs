@@ -413,13 +413,17 @@ pub fn plan(
         low: false,
         emphasis: String::new(),
     };
-    // The channel's opening first: every scene starts after it.
-    if let Some(intro) = options.intro.as_ref().filter(|clip| clip.1 > 0.1) {
+    // The channel's opening first: every scene starts after it. A video
+    // that opens on a hook shows the hook before anything - a viewer
+    // decides in its first seconds - and the channel's opening after it.
+    let hooked = board.hooked();
+    let intro = options.intro.as_ref().filter(|clip| clip.1 > 0.1);
+    if let Some(intro) = intro.filter(|_| !hooked) {
         out.push(bumper(intro, 0.0));
         t = intro.1;
     }
-    let opened = t;
-    for scene in board.scenes() {
+    let mut opened = t;
+    for (n, scene) in board.scenes().enumerate() {
         let made = files.get(&scene.id).cloned().unwrap_or_default();
         if made.shots.is_empty() {
             return Err(format!("scene {} has no shots", scene.id));
@@ -626,6 +630,14 @@ pub fn plan(
             }
         }
         t += length;
+        if n == 0 && hooked {
+            if let Some(intro) = intro {
+                out.push(bumper(intro, t));
+                t += intro.1;
+            }
+            // The logo is the channel's, over its video: not over the hook.
+            opened = t;
+        }
     }
 
     // A sound with no room left to ring is left out.
@@ -1004,9 +1016,14 @@ pub fn cut(
     let opens = placements
         .iter()
         .any(|p| p.kind == Kind::Bumper && p.start < 1e-6);
+    // The closing is the card after the last shot; one between two
+    // shots is the opening of a video that starts on its hook.
+    let ended = shots.last().map_or(0.0, |shot| shot.start + shot.length);
     let closes = placements
         .iter()
-        .any(|p| p.kind == Kind::Bumper && p.start > 1e-6);
+        .any(|p| p.kind == Kind::Bumper && p.start > ended - 1e-6);
+    // A hook is there at once: it does not come up from black.
+    let hooked = board.hooked();
     let voiced: Vec<(f64, f64)> = placements
         .iter()
         .filter(|p| p.kind == Kind::Voice)
@@ -1133,7 +1150,7 @@ pub fn cut(
                             &clip,
                             p.length,
                             options.fade_seconds,
-                            n == 0 && !opens,
+                            n == 0 && !opens && !hooked,
                             n + 1 == shots.len() && !closes,
                         );
                     } else if kind == Kind::Music {
@@ -1168,7 +1185,8 @@ pub fn cut(
                         // The opening comes up from black, the closing
                         // goes down to it.
                         let first = p.start < 1e-6;
-                        fade(editor, &clip, p.length, options.fade_seconds, first, !first);
+                        let last = p.start > ended - 1e-6;
+                        fade(editor, &clip, p.length, options.fade_seconds, first, last);
                     } else if kind == Kind::Logo {
                         // Small, in the top corner at the line's end side.
                         editor.apply(Command::SetClipTransform {
@@ -1747,6 +1765,44 @@ mod tests {
             origin: None,
             color_space: Default::default(),
         }
+    }
+
+    /// A video that opens on a hook shows the hook first: the channel's
+    /// opening comes after it, the logo starts after that, and the rest of
+    /// the video is as long as it was.
+    #[test]
+    fn a_hook_goes_before_the_channels_opening() {
+        let mut board = board();
+        board.chapters[0].scenes[0].id = crate::storyboard::HOOK.to_owned();
+        assert!(board.hooked());
+        let mut files = files();
+        let first = files.remove("c01s01").unwrap();
+        files.insert(crate::storyboard::HOOK.to_owned(), first);
+        let plain = Options {
+            titles: false,
+            ..Options::default()
+        };
+        let branded = Options {
+            intro: Some(("/intro.mp4".into(), 2.4)),
+            logo: Some("/logo.png".into()),
+            ..plain.clone()
+        };
+        let before = plan(&board, &files, &plain, None).unwrap();
+        let placements = plan(&board, &files, &branded, None).unwrap();
+        let shots = of(&placements, Kind::Shot);
+        assert_eq!(shots[0].start, 0.0);
+        // The hook's own length: where its last shot ends without the
+        // opening, which is where the opening now starts.
+        let hook = of(&before, Kind::Shot)[2].start;
+        let bumpers = of(&placements, Kind::Bumper);
+        assert_eq!(bumpers.len(), 1);
+        assert!((bumpers[0].start - hook).abs() < 1e-9);
+        assert!((shots[2].start - (hook + 2.4)).abs() < 1e-9);
+        let logo = of(&placements, Kind::Logo)[0];
+        assert!((logo.start - (hook + 2.4)).abs() < 1e-9);
+        assert!((total_length(&placements) - (total_length(&before) + 2.4)).abs() < 1e-9);
+        // Without an opening the hook is the first scene and nothing more.
+        assert_eq!(of(&before, Kind::Bumper).len(), 0);
     }
 
     /// A channel's opening goes before the first scene and its closing

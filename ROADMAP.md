@@ -539,6 +539,139 @@ and that is the difference from tools that are dear and capped.
 - ⏳ A library of example scripts per format; prompt caching for the
   writer's standing briefs.
 
+## After alpha.32 (owner's test, 12 Nov)
+
+The owner's phone exported a five-minute lesson of drawn shots at 1.8
+frames a second, the window stalling for seconds, and the app ended each
+time it was left for another during an export.
+
+- ✅ A report of how far publishes the export's sheet and its pill, not
+  the whole window (#41).
+- ✅ The export's timings split the reading - moving clips, stills,
+  sought - name what reads each clip, and carry the memory (#41).
+- ⏳ The slow reading itself, and the app ending in the background:
+  from the log the build with #41 gives.
+
+## The hook (owner, 13 Nov)
+
+"The base of any successful video": once the script is whole, it is read
+through and the video is given an opening made from it.
+
+- ✅ A last call reads all the narration and writes the hook: one spoken
+  line, two to four words shown large, key words to colour, and the
+  picture the video opens on. It is the video's first scene under the id
+  `hook`, so its voice and picture are made, shown in the script editor
+  and made again like any other.
+- ✅ The cut shows it before the channel's opening, with no fade up from
+  black; the logo starts after the opening.
+- ✅ A switch in the sheet, on unless turned off. Not made for a video of
+  cards alone, which has no picture to open on.
+- ⏳ The hook's picture as the thumbnail; the brief tuned on the owner's
+  real runs.
+
+## Quality and craft (owner, 14 Nov, after a video went up on YouTube)
+
+The owner: the pictures look good in the app and come out compressed; the
+writing needs more creativity; a thumbnail made in ChatGPT is the quality
+wanted.
+
+- ✅ The export's codec picker on a phone whose chip keeps no quality in
+  H.264 says H.264 comes out soft there, and HEVC keeps the quality and is
+  taken by YouTube. The owner's upload was written in H.264 on such a chip.
+- ✅ A third picture quality, Best: FLUX 1.1 Pro Ultra, four megapixels,
+  about six cents a picture; the default stays FLUX Schnell.
+- ✅ The hook's picture and the thumbnail's are asked for as a striking
+  composite: a hero subject with the objects of the story around it,
+  coloured rim light, high contrast, room for words.
+- ✅ The writer's brief: an angle chosen with the outline and held to the
+  end, moments over summaries, a surprise a chapter, a narrator's voice,
+  varied rhythm, a quotable line a chapter, the end calling back to the
+  start, and the stock moves ('imagine...', a list counted out) named and
+  barred; the editor makes lines less ordinary, not only clearer; the
+  lesson ends on its opening question answered rather than on "three
+  things to remember".
+- ⏳ Thumbnail words drawn as in the owner's example: white heavy capitals,
+  the key words on a yellow plate, a line on a red one.
+
+## More than one maker (owner, 14 Nov)
+
+"Don't hold users to Replicate alone": each person picks who makes their
+pictures and their clips, with their own key, and the owner will try each.
+
+- ✅ Pictures by Replicate, OpenAI (`gpt-image-1`, high quality) or Google
+  Gemini (`gemini-2.5-flash-image`; an `imagen-…` model runs as Imagen).
+- ✅ Clips by Replicate, Kling (its own API, a JWT signed with the secret
+  key) or Seedance (BytePlus ModelArk). Kling and Seedance start from a
+  picture the picture maker makes first, as Replicate's image-to-video
+  models do; a clip asked for and not yet saved is followed on the next
+  run rather than paid for again.
+- ✅ Each maker's key and model in the sheet; the keys are left out of a
+  saved series. The sum and the spend limit use an estimate of each
+  service's price.
+- ⏳ Tried on real keys by the owner: the endpoints and model names are
+  from the services' documentation and third-party examples, untested.
+- ⏳ Video from OpenAI (Sora) and Google (Veo); music without Replicate.
+
+## Shorts from a long video, on a phone (owner, 14 Nov)
+
+The owner asked for three Shorts from a five-minute video: one came out,
+and the long video seemed gone - the project opened on the Short alone.
+
+- ✅ Nothing was deleted: each Short is a timeline of its own in the same
+  project, beside the long video. A phone showed no timeline tabs, so
+  there was no way back to it. The phone's top bar now says which video
+  is open when the project holds more than one, and the project sheet
+  lists them all, a tap opening another.
+- ✅ Three Shorts when three are asked for: the writer may pick fewer, or
+  stretches longer than a minute that are refused; the rest are made up
+  from the scenes left, each a run that fits.
+
+## Audit and priorities (owner, 14 Nov)
+
+The owner, after planning with ChatGPT: build the new on the engines that
+work, never rebuild one without a specific, proven technical problem. Long
+videos up to 60 minutes and the ElevenLabs voice work and stay as they are.
+
+Where each engine stands (existing and working / existing, to improve /
+new):
+
+1. **Research.** Working: `writer::research` reads up on the web before
+   writing (8 searches, 4 pages read in full), gives sources, and makes a
+   video from one source (a page, a PDF, a text file); the editor checks
+   every figure against the notes. To improve: the notes are not shown or
+   kept to read and edit; Suggest ideas does not search the web. New: what
+   is rising on a topic, what the channels in the niche have already made,
+   a library of research kept per channel.
+2. **Channel.** Working: one channel profile (name, audience, voice,
+   opening and closing lines, example script), its colour, logo, opening
+   and closing cards, and series - the sheet's choices saved under a name,
+   the ElevenLabs voice among them. To improve: one channel only; a voice
+   per channel only by way of a series. New: several channels, each with
+   its own voice, look, formats and history of videos.
+3. **Script.** Working: outline, chapters, the editor's pass, fact check,
+   Arabic vowel marks, formats and the person's own, the angle, the hook
+   written last (#42), explainers. To improve: the briefs tuned on real
+   runs (owner found the writing not creative enough; #42 is the first
+   answer).
+4. **Smart Shorts.** Working and automatic: from a finished long video the
+   writer picks up to three stretches of a minute at most, scenes in a
+   row, each with a hook, and each is cut on a 9:16 timeline of its own
+   from the files already made, nothing paid again. To improve: three
+   always come out (#42), the phone could not go back to the long video
+   (#42), the pick goes by written seconds not the voice's, the wide
+   pictures are filled by a centre crop, each Short is exported by hand.
+   New: Shorts from any footage, not only a generated video.
+5. **Export.** Working: the export sheet, a phone's constant-quality HEVC,
+   export in the background with a notification, share. To improve: a
+   phone's export of drawn shots is slow and the app ends in the
+   background (#41 measures it); H.264 soft on some chips (#42 says so).
+   New: a queue that exports a long video and its Shorts in one go,
+   presets per platform.
+6. **Publishing and analytics.** Working: title, description with
+   chapters, tags, thumbnail words and picture, a thumbnail timeline. New:
+   analytics. Uploading straight to YouTube was set aside by the owner on
+   9 Nov ("no real value"); to be asked again before it is built.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

@@ -1246,12 +1246,14 @@ dependencies = [
  "concat-media",
  "concat-project",
  "concat-text",
+ "hmac",
  "kurbo",
  "log",
  "png 0.17.16",
  "resvg",
  "serde",
  "serde_json",
+ "sha2",
  "ureq 2.12.1",
 ]
 

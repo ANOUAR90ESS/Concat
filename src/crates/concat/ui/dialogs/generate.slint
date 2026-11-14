@@ -54,7 +54,7 @@ export struct GenerateSheetData {
     research: bool,
     /// 0 pictures and animated cards, 1 animated cards only.
     visuals: int,
-    /// 0 economical pictures, 1 professional.
+    /// 0 economical pictures, 1 professional, 2 best (four megapixels).
     picture-quality: int,
     /// 0 auto, 1 photo, 2 flat illustration, 3 3D cartoon.
     picture-style: int,
@@ -94,12 +94,28 @@ export struct GenerateSheetData {
     logo: int,
     /// The channel's opening and closing on every video.
     bumpers: bool,
+    /// Open on a hook written last, from the whole script.
+    hook: bool,
     anthropic-key: string,
     replicate-token: string,
     /// The video model; empty for stills only.
     replicate-model: string,
     /// The image model; empty for the default.
     replicate-image-model: string,
+    /// Who makes the pictures: 0 Replicate, 1 OpenAI, 2 Gemini.
+    picture-maker: int,
+    /// Who makes the clips: 0 Replicate, 1 Kling, 2 Seedance.
+    clip-maker: int,
+    /// The chosen picture maker's key and model, and its default model.
+    picture-key: string,
+    picture-model: string,
+    picture-model-default: string,
+    /// The chosen clip maker's key, Kling's secret, the model and its
+    /// default.
+    clip-key: string,
+    clip-secret: string,
+    clip-model: string,
+    clip-model-default: string,
     /// Export the finished cut without being asked.
     auto-export: bool,
     elevenlabs-key: string,
@@ -736,6 +752,85 @@ export component GenerateDialog inherits Modal {
                             wrap: word-wrap;
                         }
 
+                        // Who makes the pictures and who the clips: each
+                        // with the person's own key, none held to one
+                        // service.
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.picturesBy");
+                            Select {
+                                options: ["Replicate", "OpenAI", "Google Gemini"];
+                                current: root.data.picture-maker;
+                                changed(index) => { root.choice-changed(20, index); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.picture-maker != 0: DialogRow {
+                            label: I18n.t("generate.apiKey");
+                            Field {
+                                value: root.data.picture-key;
+                                secret: true;
+                                technical: true;
+                                placeholder: root.data.picture-maker == 1 ? "sk-..." : "AIza...";
+                                edited(text) => { root.text-edited(21, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.picture-maker != 0: DialogRow {
+                            label: I18n.t("generate.imageModel");
+                            Field {
+                                value: root.data.picture-model;
+                                technical: true;
+                                placeholder: root.data.picture-model-default;
+                                edited(text) => { root.text-edited(22, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1: DialogRow {
+                            label: I18n.t("generate.clipsBy");
+                            Select {
+                                options: ["Replicate", "Kling", "Seedance"];
+                                current: root.data.clip-maker;
+                                changed(index) => { root.choice-changed(21, index); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.clip-maker != 0: DialogRow {
+                            label: root.data.clip-maker == 1 ? I18n.t("generate.accessKey") : I18n.t("generate.apiKey");
+                            Field {
+                                value: root.data.clip-key;
+                                secret: true;
+                                technical: true;
+                                edited(text) => { root.text-edited(23, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.clip-maker == 1: DialogRow {
+                            label: I18n.t("generate.secretKey");
+                            Field {
+                                value: root.data.clip-secret;
+                                secret: true;
+                                technical: true;
+                                edited(text) => { root.text-edited(24, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1 && root.data.clip-maker != 0: DialogRow {
+                            label: I18n.t("generate.videoModel");
+                            Field {
+                                value: root.data.clip-model;
+                                technical: true;
+                                placeholder: root.data.clip-model-default;
+                                edited(text) => { root.text-edited(25, text); }
+                            }
+                        }
+
+                        if root.data.shots == 1: Text {
+                            text: I18n.t("generate.makersHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
                         if root.data.shots == 1: DialogRow {
                             label: I18n.t("generate.apiKey");
                             Field {
@@ -749,12 +844,13 @@ export component GenerateDialog inherits Modal {
 
                         // Economical: flux-schnell, a third of a cent a
                         // picture; professional: flux-1.1-pro, finer detail
-                        // and truer light, about four cents. Sets the model
-                        // and its price below.
-                        if root.data.shots == 1: DialogRow {
+                        // and truer light, about four cents; best:
+                        // flux-1.1-pro-ultra, four megapixels, about six.
+                        // Sets the model and its price below.
+                        if root.data.shots == 1 && root.data.picture-maker == 0: DialogRow {
                             label: I18n.t("generate.pictureQuality");
                             SegmentedControl {
-                                options: [I18n.t("generate.pictureEconomy"), I18n.t("generate.pictureProfessional")];
+                                options: [I18n.t("generate.pictureEconomy"), I18n.t("generate.pictureProfessional"), I18n.t("generate.pictureBest")];
                                 current: root.data.picture-quality;
                                 changed(index) => { root.choice-changed(9, index); }
                             }
@@ -783,7 +879,7 @@ export component GenerateDialog inherits Modal {
                             wrap: word-wrap;
                         }
 
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.picture-maker == 0: DialogRow {
                             label: I18n.t("generate.imageModel");
                             Field {
                                 value: root.data.replicate-image-model;
@@ -793,7 +889,7 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.clip-maker == 0: DialogRow {
                             label: I18n.t("generate.videoModel");
                             Field {
                                 value: root.data.replicate-model;
@@ -803,7 +899,7 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.clip-maker == 0: DialogRow {
                             label: I18n.t("generate.clipPrice");
                             Field {
                                 value: root.data.clip-price;
@@ -813,7 +909,7 @@ export component GenerateDialog inherits Modal {
                             }
                         }
 
-                        if root.data.shots == 1: DialogRow {
+                        if root.data.shots == 1 && root.data.picture-maker == 0: DialogRow {
                             label: I18n.t("generate.imagePrice");
                             Field {
                                 value: root.data.image-price;
@@ -1058,6 +1154,32 @@ export component GenerateDialog inherits Modal {
                                     toggled(on) => { root.toggled(4, on); }
                                 }
                             }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.hook");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.hook;
+                                    toggled(on) => { root.toggled(6, on); }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: I18n.t("generate.hookHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
                         }
                     }
 
