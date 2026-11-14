@@ -612,6 +612,20 @@ pictures and their clips, with their own key, and the owner will try each.
   from the services' documentation and third-party examples, untested.
 - ⏳ Video from OpenAI (Sora) and Google (Veo); music without Replicate.
 
+## Shorts from a long video, on a phone (owner, 14 Nov)
+
+The owner asked for three Shorts from a five-minute video: one came out,
+and the long video seemed gone - the project opened on the Short alone.
+
+- ✅ Nothing was deleted: each Short is a timeline of its own in the same
+  project, beside the long video. A phone showed no timeline tabs, so
+  there was no way back to it. The phone's top bar now says which video
+  is open when the project holds more than one, and the project sheet
+  lists them all, a tap opening another.
+- ✅ Three Shorts when three are asked for: the writer may pick fewer, or
+  stretches longer than a minute that are refused; the rest are made up
+  from the scenes left, each a run that fits.
+
 ## Done since alpha.14
 
 - ✅ Pictures saved as clips (#23): Replicate's image addresses carry no

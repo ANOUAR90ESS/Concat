@@ -518,6 +518,7 @@
   "phone.noEffectYet": "这个片段上还没有任何效果。点按下方的效果即可添加。",
   "phone.noMediaYet": "素材库还是空的。导入一段视频、音频或图片开始吧。",
   "phone.project": "项目",
+  "phone.videos": "Videos in this project - tap one to open it",
   "phone.redo": "重做",
   "phone.selectClipFirst": "请先点按时间线上的片段：这会应用到所选片段。",
   "phone.speak": "朗读",

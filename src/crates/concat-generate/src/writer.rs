@@ -1222,10 +1222,13 @@ pub fn pick_shorts(
     );
     let got = crate::providers::retry(|| call(key, model, &shorts_tool(), &prompt))?;
     let picks = picks_of(board, &got["shorts"], count);
-    if picks.is_empty() {
-        return Err("the writer picked no stretch that is a minute in a row".to_owned());
+    if picks.len() < count {
+        log::info!(
+            "the writer picked {} stretches of {count} that fit; the rest are made up",
+            picks.len()
+        );
     }
-    Ok(picks)
+    Ok(crate::shorts::filled(board, picks, count))
 }
 
 /// The picks a `shorts` answer holds that are runs of `board`'s scenes

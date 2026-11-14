@@ -2000,8 +2000,10 @@ impl GeneratePane {
             move || {
                 let picks = writer::pick_shorts(&board, &brief, 3, &key, writer::DEFAULT_MODEL)
                     .unwrap_or_else(|error| {
+                        // Three all the same, from the start of the video
+                        // on, when the writer cannot be asked.
                         log::warn!("generate: the Shorts' stretches: {error}");
-                        vec![shorts::opening(&board)]
+                        shorts::filled(&board, Vec::new(), 3)
                     });
                 picks
                     .iter()
