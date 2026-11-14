@@ -3089,14 +3089,14 @@ fn channel_profile(prefs: &crate::prefs::GeneratePrefs) -> String {
     .join("\n")
 }
 
-/// The videos the channel has made, as the writer is told them: the
-/// latest thirty, newest first, one after another.
+/// The videos the channel has made, as the writer is told them: every
+/// one it remembers, newest first, one after another, so the count the
+/// sheet shows is the count the writer is told not to repeat.
 fn made_before(prefs: &crate::prefs::GeneratePrefs) -> String {
     prefs
         .made_before()
         .iter()
         .rev()
-        .take(30)
         .map(String::as_str)
         .collect::<Vec<_>>()
         .join("; ")
