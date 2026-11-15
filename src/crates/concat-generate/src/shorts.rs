@@ -28,19 +28,25 @@ pub struct Pick {
     pub title: String,
 }
 
-/// `board` with each scene as long as its narration is when it was read:
-/// the voice's seconds, not the written ones, which run long or short by a
-/// good part - what a Short's minute is measured in. A scene whose voice
-/// `lengths` does not hold keeps its written seconds.
-pub fn timed(board: &Storyboard, lengths: &std::collections::HashMap<String, f64>) -> Storyboard {
+/// `board` with each scene as long as the cut lays it out from what was
+/// made for it: the voice as read, with the pad after it and never less
+/// than the shortest scene, by the same sums as [`crate::plan::timing`] -
+/// not the written seconds, which run long or short by a good part. What
+/// a Short's minute is measured in. A scene `made` holds no voice for
+/// keeps its written seconds.
+pub fn timed(
+    board: &Storyboard,
+    made: &std::collections::HashMap<String, crate::plan::SceneFiles>,
+) -> Storyboard {
+    let options = crate::plan::Options::default();
     let mut board = board.clone();
     for chapter in &mut board.chapters {
         for scene in &mut chapter.scenes {
-            if let Some(&seconds) = lengths
-                .get(&scene.id)
-                .filter(|s| s.is_finite() && **s > 0.0)
-            {
-                scene.seconds = seconds;
+            if let Some(files) = made.get(&scene.id).filter(|files| files.voice.is_some()) {
+                let length = crate::plan::timing(scene, files, &options).length;
+                if length.is_finite() && length > 0.0 {
+                    scene.seconds = length;
+                }
             }
         }
     }
@@ -270,14 +276,22 @@ mod tests {
         let board = long();
         let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert!(fits(&board, &ids(&["c02s01", "c02s02"])));
-        let lengths = std::collections::HashMap::from([
-            ("c02s01".to_owned(), 38.0),
-            ("c02s02".to_owned(), 31.0),
-            ("c01s01".to_owned(), f64::NAN),
+        let voiced = |seconds: f64| crate::plan::SceneFiles {
+            voice: Some(("/v.mp3".to_owned(), seconds)),
+            ..crate::plan::SceneFiles::default()
+        };
+        let made = std::collections::HashMap::from([
+            ("c02s01".to_owned(), voiced(38.0)),
+            ("c02s02".to_owned(), voiced(31.0)),
+            // Read in a second: the cut still gives it the shortest scene.
+            ("c01s02".to_owned(), voiced(1.0)),
+            ("c01s01".to_owned(), crate::plan::SceneFiles::default()),
         ]);
-        let timed = timed(&board, &lengths);
+        let timed = timed(&board, &made);
         assert!(!fits(&timed, &ids(&["c02s01", "c02s02"])));
+        let options = crate::plan::Options::default();
         let seconds: Vec<f64> = timed.scenes().map(|s| s.seconds).collect();
-        assert_eq!(seconds, [25.0, 25.0, 38.0, 31.0]);
+        let padded = |s: f64| (s + options.scene_pad).max(options.min_scene);
+        assert_eq!(seconds, [25.0, padded(1.0), padded(38.0), padded(31.0)]);
     }
 }

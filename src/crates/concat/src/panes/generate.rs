@@ -3213,19 +3213,14 @@ fn made_before(prefs: &crate::prefs::GeneratePrefs) -> String {
         .join("; ")
 }
 
-/// `board` with its scenes as long as their voices read, where the voice
-/// was made: a Short's minute is measured in the voice's seconds.
+/// `board` with its scenes as long as the cut lays them out from their
+/// voices, where the voice was made: a Short's minute is measured so.
 fn voice_timed(job: &Job, board: &Storyboard) -> Storyboard {
-    let lengths: HashMap<String, f64> = job
+    let made = job
         .gather(board, true)
-        .map(|made| {
-            made.files
-                .into_iter()
-                .filter_map(|(id, files)| files.voice.map(|(_, seconds)| (id, seconds)))
-                .collect()
-        })
+        .map(|made| made.files)
         .unwrap_or_default();
-    shorts::timed(board, &lengths)
+    shorts::timed(board, &made)
 }
 
 /// Whether a series is saved under the ready channel's name.
