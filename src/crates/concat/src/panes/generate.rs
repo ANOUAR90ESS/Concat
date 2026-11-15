@@ -2029,7 +2029,7 @@ impl GeneratePane {
     /// Keeps what goes up with each Short beside the video: its title, its
     /// hook and its hashtags - the video's tags, and #Shorts - in
     /// `shorts.txt`, one after another, added to what is already there.
-    fn keep_shorts_text(&self, studio: &Studio, boards: impl Iterator<Item = &Storyboard>) {
+    fn keep_shorts_text<'a>(&self, studio: &Studio, boards: impl Iterator<Item = &'a Storyboard>) {
         let Some(job) = self.job(studio) else { return };
         let tags = self
             .publishing
