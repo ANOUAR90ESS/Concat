@@ -912,6 +912,39 @@ impl Job {
         Ok(())
     }
 
+    /// Where the research done for the video is kept.
+    pub fn research_file(&self) -> PathBuf {
+        self.dir.join("research.json")
+    }
+
+    /// The research done for the video, as the person last left it.
+    pub fn research(&self) -> Option<crate::writer::Research> {
+        let text = std::fs::read_to_string(self.research_file()).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    /// Keeps the research with the video, and its notes and sources as
+    /// text beside it, `research.txt`, to read on any device; empty notes
+    /// take both away.
+    pub fn keep_research(&self, research: &crate::writer::Research) -> Result<(), String> {
+        let text = self.dir.join("research.txt");
+        if research.notes.trim().is_empty() {
+            let _ = std::fs::remove_file(self.research_file());
+            let _ = std::fs::remove_file(text);
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|error| format!("{}: {error}", self.dir.display()))?;
+        let json = serde_json::to_string_pretty(research).map_err(|error| error.to_string())?;
+        let file = self.research_file();
+        std::fs::write(&file, json).map_err(|error| format!("{}: {error}", file.display()))?;
+        let mut sheet = research.notes.trim().to_owned();
+        for (n, source) in research.sources.iter().enumerate() {
+            sheet += &format!("\n[{}] {} {}", n + 1, source.title, source.url);
+        }
+        std::fs::write(&text, sheet + "\n").map_err(|error| format!("{}: {error}", text.display()))
+    }
+
     /// The music bed made for this video, when there is one.
     pub fn music(&self) -> Option<PathBuf> {
         providers::existing(&self.dir, "music", &MUSIC_EXTENSIONS)
@@ -1928,6 +1961,32 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The research is kept with the video, as JSON and as text with its
+    /// sources; empty notes take both away.
+    #[test]
+    fn the_research_is_kept_with_the_video() {
+        let root =
+            std::env::temp_dir().join(format!("concat-generate-research-{}", std::process::id()));
+        let job = Job::new(&root, "la memoria");
+        assert!(job.research().is_none());
+        let research = crate::writer::Research {
+            notes: "FACTS:\nUno [1]".into(),
+            sources: vec![crate::storyboard::Source {
+                title: "INE".into(),
+                url: "https://ine.es".into(),
+            }],
+        };
+        job.keep_research(&research).unwrap();
+        assert_eq!(job.research(), Some(research));
+        let text = std::fs::read_to_string(job.dir.join("research.txt")).unwrap();
+        assert!(text.contains("[1] INE https://ine.es"));
+        job.keep_research(&crate::writer::Research::default())
+            .unwrap();
+        assert!(job.research().is_none());
+        assert!(!job.dir.join("research.txt").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     /// A video made again in another language starts with the pictures of
     /// the first, its music and its notes, and none of its voice; what it

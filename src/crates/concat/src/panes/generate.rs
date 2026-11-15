@@ -29,8 +29,8 @@ use concat_generate::review;
 use concat_generate::shorts;
 use concat_generate::storyboard::{Scene, ShotKind, Storyboard, shot_stem};
 use concat_generate::writer::{
-    self, Brief, ContentStyle, Level, PictureStyle, Publishing, Suggestion, VideoFormat, VideoIdea,
-    Writing,
+    self, Brief, ContentStyle, Level, PictureStyle, Publishing, Research, Suggestion, VideoFormat,
+    VideoIdea, Writing,
 };
 use concat_project::Command;
 use concat_project::commands::NewMedia;
@@ -140,10 +140,13 @@ pub enum GenerateMsg {
     ShortReady(Box<Result<(Storyboard, Made), String>>),
     /// One of the sheet's buttons: 0 suggest ideas, 1 make every idea,
     /// 2 make the video again in another language, 3 save the choices as
-    /// a series, 4 cut several Shorts.
+    /// a series, 4 cut several Shorts, 5 research first, to read and
+    /// correct the notes before the script is written from them.
     Act(i32),
     /// The writer's ideas, or why there are none.
     Ideas(Box<Result<Vec<VideoIdea>, String>>),
+    /// The research done on its own, or why not.
+    Researched(Box<Result<Research, String>>),
     /// The next idea of a batch is due, once nothing is running.
     Next,
     /// The video translated: its new idea, its storyboard and its
@@ -242,6 +245,9 @@ pub struct GeneratePane {
     /// The shots whose pictures read as ones already used, by stem:
     /// worked out when the storyboard changes, not on every publish.
     repeats: HashSet<String>,
+    /// The research done for the idea, as kept with the video: read and
+    /// corrected in the sheet, and the script written from it.
+    research: Option<Research>,
     /// The script editor is showing.
     pub script_open: bool,
     /// The scene being written again, if one is.
@@ -293,6 +299,7 @@ impl Default for GeneratePane {
             thumbs: HashMap::new(),
             likeness: HashMap::new(),
             publishing: None,
+            research: None,
             publishing_busy: false,
             lookalikes: HashSet::new(),
             remaking: HashSet::new(),
@@ -408,6 +415,22 @@ impl GeneratePane {
                     20 => prefs.structure = text,
                     26 => prefs.channel_topics = text,
                     27 => prefs.channel_rules = text,
+                    28 => {
+                        // The notes as the person corrects them, kept with
+                        // the video as they go; emptied, they are gone.
+                        let job = self.job(studio);
+                        let research = self.research.get_or_insert_with(Research::default);
+                        research.notes = text;
+                        if let Some(job) = job
+                            && let Err(error) = job.keep_research(research)
+                        {
+                            log::warn!("generate: the research notes: {error}");
+                        }
+                        if research.notes.trim().is_empty() {
+                            self.research = None;
+                        }
+                        return;
+                    }
                     19 => {
                         self.source = text;
                         return;
@@ -698,8 +721,16 @@ impl GeneratePane {
                     studio.notify(&tf("generate.seriesSaved", &[&name]), false);
                 }
                 4 => self.shorts(studio),
+                5 => self.research_first(studio),
                 _ => {}
             },
+            GenerateMsg::Researched(result) => {
+                self.running = false;
+                match *result {
+                    Ok(research) => self.research = Some(research),
+                    Err(error) => self.failed(error),
+                }
+            }
             GenerateMsg::Ideas(result) => {
                 self.running = false;
                 match *result {
@@ -887,6 +918,10 @@ impl GeneratePane {
                         // this one was made.
                         studio.prefs.generate.remember(&board.title);
                         studio.prefs.save(&studio.host.dirs);
+                        // The research it was written from, kept with it.
+                        if let Some(job) = self.job(studio) {
+                            self.research = job.research();
+                        }
                         if then_make {
                             self.make(studio, board);
                         } else {
@@ -953,6 +988,10 @@ impl GeneratePane {
             .as_ref()
             .and(self.job(studio))
             .and_then(|job| job.publishing());
+        self.research = self
+            .job(studio)
+            .filter(|_| !self.topic.trim().is_empty())
+            .and_then(|job| job.research());
         self.dirty = false;
         self.stale_voices.clear();
         self.stale_shots.clear();
@@ -1243,6 +1282,10 @@ impl GeneratePane {
             source: self.source.trim().to_owned(),
             format: VideoFormat::ALL[prefs.format.min(VideoFormat::ALL.len() - 1)],
             structure: prefs.structure.trim().to_owned(),
+            researched: self
+                .research
+                .clone()
+                .filter(|research| !research.notes.trim().is_empty()),
             hook: prefs.hook.unwrap_or(true),
         }
     }
@@ -1457,12 +1500,40 @@ impl GeneratePane {
         }
         let Some(job) = self.job(studio) else { return };
         self.remember(studio, &job);
-        let brief = self.brief(studio);
+        let mut brief = self.brief(studio);
         self.begin(t("generate.writingOutline"));
         self.phase = 0;
         let epoch = crate::host::project_epoch();
         spawn_in_project(
             move || {
+                // Read up first, when the research is wanted and none is
+                // kept, and keep it with the video: the person can read it
+                // after, and a script written again is written from it
+                // without paying for it again.
+                if brief.researched.is_none() && (brief.research || !brief.source.trim().is_empty())
+                {
+                    on_ui_in_project(epoch, |studio, _, _| {
+                        studio.handle(Msg::Generate(GenerateMsg::Progress(
+                            0.01,
+                            t("generate.researching"),
+                            String::new(),
+                        )));
+                    });
+                    match writer::research(&brief, &prefs.anthropic_key, writer::DEFAULT_MODEL) {
+                        Ok(found) => {
+                            if let Err(error) = job.keep_research(&found) {
+                                log::warn!("generate: the research: {error}");
+                            }
+                            brief.researched = Some(found);
+                        }
+                        // Written from what the writer knows, as before.
+                        Err(error) => {
+                            log::warn!("research: {error}; writing without it");
+                            brief.research = false;
+                            brief.source.clear();
+                        }
+                    }
+                }
                 let board =
                     writer::write(&brief, &prefs.anthropic_key, writer::DEFAULT_MODEL, |at| {
                         let (fraction, stage, detail) = match at {
@@ -1868,6 +1939,33 @@ impl GeneratePane {
 
     /// Asks the writer for videos worth making next: about what is typed,
     /// or whatever suits the channel when nothing is.
+    fn research_first(&mut self, studio: &mut Studio) {
+        let key = studio.prefs.generate.anthropic_key.clone();
+        if self.topic.trim().is_empty() {
+            self.message = t("generate.describeIdeaFirst");
+            return;
+        }
+        if key.trim().is_empty() {
+            self.message = t("generate.needAnthropicKey");
+            return;
+        }
+        let Some(job) = self.job(studio) else { return };
+        self.remember(studio, &job);
+        let brief = self.brief(studio);
+        self.begin(t("generate.researching"));
+        self.phase = 0;
+        spawn_in_project(
+            move || {
+                let found = writer::research(&brief, &key, writer::DEFAULT_MODEL)?;
+                job.keep_research(&found)?;
+                Ok(found)
+            },
+            |studio, _, _, result| {
+                studio.handle(Msg::Generate(GenerateMsg::Researched(Box::new(result))))
+            },
+        );
+    }
+
     fn suggest_ideas(&mut self, studio: &mut Studio) {
         let key = studio.prefs.generate.anthropic_key.clone();
         if key.trim().is_empty() {
@@ -2421,6 +2519,17 @@ impl GeneratePane {
                 made => tf("generate.channelMemory", &[&made.to_string()]).into(),
             },
             channel_row: channel_row(prefs),
+            research_notes: self
+                .research
+                .as_ref()
+                .map(|research| research.notes.as_str())
+                .unwrap_or_default()
+                .into(),
+            research_sources: match self.research.as_ref().map_or(0, |r| r.sources.len()) {
+                0 => SharedString::new(),
+                n => tf("generate.researchSources", &[&n]).into(),
+            },
+            has_research: self.research.is_some(),
             source: self.source.as_str().into(),
             also_language: self.also_language as i32,
             has_ideas: !self.ideas.is_empty(),

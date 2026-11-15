@@ -390,6 +390,10 @@ pub struct Brief {
     /// it is made of, how it ends: a format of their own, for any kind of
     /// video the app has no format for. Empty for none.
     pub structure: String,
+    /// Research already done for the video - read and maybe edited by the
+    /// person - to write from instead of reading up again. None reads up
+    /// as `research` says.
+    pub researched: Option<Research>,
     /// Open on a hook: a few seconds written last, from the whole script,
     /// with a picture of its own, before anything else.
     pub hook: bool,
@@ -491,21 +495,21 @@ pub fn write(
         |tool: &Value, prompt: String| crate::providers::retry(|| call(key, model, tool, &prompt));
     let mut brief_text = brief.text();
     let mut sources = Vec::new();
-    if brief.research || !brief.source.trim().is_empty() {
-        progress(Writing::Research);
-        match research(brief, key, model) {
-            Ok(found) => {
-                brief_text += &format!(
-                    "\nResearch notes, read on the web for this video. Build on these facts; \
-                     give no number, date, name or quote that is not here or certain:\n{}\n",
-                    found.notes
-                );
-                sources = found.sources;
-            }
-            // Written from what the writer knows, as before: the research
-            // is a help, not a condition.
-            Err(error) => log::warn!("research: {error}; writing without it"),
+    let found = match &brief.researched {
+        Some(ready) if !ready.notes.trim().is_empty() => Some(ready.clone()),
+        _ if brief.research || !brief.source.trim().is_empty() => {
+            progress(Writing::Research);
+            research(brief, key, model)
+                // Written from what the writer knows, as before: the
+                // research is a help, not a condition.
+                .inspect_err(|error| log::warn!("research: {error}; writing without it"))
+                .ok()
         }
+        _ => None,
+    };
+    if let Some(found) = found {
+        brief_text += &research_brief(&found.notes);
+        sources = found.sources;
     }
 
     progress(Writing::Outline);
@@ -865,9 +869,23 @@ pub(crate) fn list_text(value: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// The research notes as every call is told them: what to build on, and
+/// how a fact, an opinion and a disputed point are each to be said.
+fn research_brief(notes: &str) -> String {
+    format!(
+        "\nResearch notes for this video. Build on them; give no number, date, name or quote \
+         that is not here or certain. Say a fact as a fact. Say an opinion as someone's - name \
+         who holds it - never as a fact. Where a point is disputed, give the sides fairly \
+         before any judgement:\n{}\n",
+        notes.trim()
+    )
+}
+
 /// What the writer read up on before writing: its notes, and the pages
-/// they came from.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// they came from. Kept with the video, where the person reads it and
+/// may correct it before the script is written from it.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Research {
     /// The facts, in English, each with the number of its source.
     pub notes: String,
@@ -895,10 +913,14 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
          or little known, where experts disagree, and the latest developments; and how the \
          best teachers explain it - the plain-language explanation, the analogies they use \
          and the misconceptions people commonly have. Prefer primary and reputable sources, \
-         and read the two or three most important pages in full rather than their snippets. Write the notes in English as short factual lines, each ending \
+         and read the two or three most important pages in full rather than their snippets. Write the notes in the video's language as short lines, each ending \
          with the number of its source in brackets, like [2]; list the sources in that order. \
-         End the notes with a line 'Explain it like this:' giving the clearest analogy you \
-         found, and a line 'Common misconception:'.",
+         Keep facts and opinions apart, under these headings, each on a line of its own: \
+         'FACTS:' - what is established, with numbers and dates; 'OPINIONS:' - each one as \
+         who holds it, then what they hold; 'DISPUTED:' - each point where sources or experts \
+         disagree, with the sides. Leave out a heading with nothing under it. End with a line \
+         'Explain it like this:' giving the clearest analogy you found, and a line 'Common \
+         misconception:'.",
         brief.text()
     );
     let search = |kind: &str| json!({"type": kind, "name": "web_search", "max_uses": SEARCHES});
@@ -3056,6 +3078,16 @@ mod tests {
             listed,
             "Sources:\nIMF outlook - https://imf.org/a\nhttps://example.org/b"
         );
+    }
+
+    /// The notes are told with how facts, opinions and disputed points
+    /// are each to be said.
+    #[test]
+    fn research_notes_tell_facts_from_opinions() {
+        let told = research_brief("  OPINIONS:\nUn ministro: sube [1]  ");
+        assert!(told.contains("OPINIONS:\nUn ministro: sube [1]\n"));
+        assert!(told.contains("never as a fact"));
+        assert!(told.contains("give the sides fairly"));
     }
 
     /// The channel the person described is in every call's brief.

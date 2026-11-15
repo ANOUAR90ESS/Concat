@@ -695,8 +695,27 @@ publishing; analytics later, asked first.
    in #42 (OpenAI, Gemini, Kling, Seedance). Not yet: a palette of more
    than one colour (la lógica's black, gold, red and blue), a voice chosen
    by its description.
-2. **Research before writing.** The notes shown, edited and kept with the
-   video; facts and opinions told apart.
+2. **Research before writing** (in progress, on the branch after #43). A
+   Research first button in the Long video sheet reads up on the idea
+   alone; its notes appear in the sheet, to read and correct, and are kept
+   with the video (`research.json`, and `research.txt` with the sources
+   to read on any device). The notes come in the video's language, under
+   FACTS, OPINIONS (each with whose it is) and DISPUTED (the sides); the
+   writer is told to say a fact as a fact, an opinion as someone's, and a
+   disputed point with its sides. The script is written from the notes
+   kept - corrected or not - and a script written again does not pay for
+   the research again. A run without Research first reads up as before
+   and keeps what it found. Not yet: a source per line checked against
+   its page, research kept per channel across videos.
+
+   Also in this pull request: the release of v0.2.8-alpha.33 failed twice
+   in Engine tests and lints, the runner dying mid-clippy with no log after
+   restoring the main branch's large cache, where pull requests (near-empty
+   cache) passed. Clearing disk room did not help: the same death came on
+   this pull request once its cache was warm, so it is memory - with a warm
+   cache every crate, the app's Slint code among them, is checked at once.
+   The job now adds 8 GB of swap and runs clippy two crates at a time.
+   alpha.33 is left; the next tag is cut from main once this is merged.
 3. **Smart Shorts.** The strongest moments, each with its own hook and
    title, by the voice's seconds, the picture reframed rather than cropped.
 4. **Export center.** The long video, its Shorts, the thumbnail and the
