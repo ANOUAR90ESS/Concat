@@ -1107,6 +1107,14 @@ pub fn cut(
                     } else {
                         1.0
                     };
+                    // A picture wider than the frame it fills: a wide shot
+                    // on a tall Short, whose sides the fill leaves out.
+                    let wider = fill > 1.001
+                        && media_of_path(file).is_some_and(|item| {
+                            matches!((item.width, item.height), (Some(w), Some(h))
+                                if h > 0 && height > 0
+                                    && w as f64 / h as f64 > width as f64 / height as f64)
+                        });
                     fit(editor, &clip, &media, &track, p, fill);
                     let mut patch = ClipPatch::default();
                     if kind == Kind::Shot {
@@ -1128,7 +1136,24 @@ pub fn cut(
                                 duration: options.transition_seconds,
                             }));
                         }
-                        if p.source.is_none() && options.ken_burns {
+                        if p.source.is_none() && options.ken_burns && wider && !punch {
+                            // Reframed, not cropped: the frame travels
+                            // across the wide picture, one way and then
+                            // the other by turns, so more of it is seen
+                            // than its middle.
+                            let reach = PAN * (fill - 1.0) / 2.0;
+                            let (from, to) = if n % 2 == 0 {
+                                (reach, -reach)
+                            } else {
+                                (-reach, reach)
+                            };
+                            key(
+                                editor,
+                                &clip,
+                                KeyProperty::OffsetX,
+                                &[(0.0, from), (1.0, to)],
+                            );
+                        } else if p.source.is_none() && options.ken_burns {
                             let (from, to) = match (punch, n % 2 == 0) {
                                 // Tighter than the piece before ended, then
                                 // wide again, by turns: each jump reads as
@@ -1474,6 +1499,10 @@ fn caption_style(content: String) -> TextStyle {
         ..TextStyle::default()
     }
 }
+
+/// How much of a wide picture's hidden width the frame travels across on a
+/// tall Short: most of it, short of its very edges.
+const PAN: f64 = 0.6;
 
 /// How much larger than fitted a picture of `item`'s shape is drawn to fill
 /// a `frame` - the ratio of the two shapes, either way round; 1 for the
@@ -2512,7 +2541,8 @@ mod tests {
         };
         assert_eq!(cover(&unknown, tall), 1.0);
 
-        // On the cut: the still's push-in keys are scaled by the fill.
+        // On the cut: the still fills the frame and the frame travels
+        // across it, rather than pushing in on its middle.
         let board = board();
         let mut files = HashMap::new();
         files.insert(
@@ -2547,13 +2577,21 @@ mod tests {
             .iter()
             .min_by(|a, b| a.start.total_cmp(&b.start))
             .unwrap();
-        let scale: Vec<f64> = first
-            .keys
-            .iter()
-            .filter(|k| k.property == KeyProperty::Scale)
-            .map(|k| k.value)
-            .collect();
-        assert!((scale[0] - expected).abs() < 1e-6, "{scale:?}");
+        let keys = |clip: &concat_project::model::Clip, property| -> Vec<f64> {
+            clip.keys
+                .iter()
+                .filter(|k| k.property == property)
+                .map(|k| k.value)
+                .collect()
+        };
+        assert!(keys(first, KeyProperty::Scale).is_empty());
+        let pan = keys(first, KeyProperty::OffsetX);
+        let reach = PAN * (expected - 1.0) / 2.0;
+        assert_eq!(pan.len(), 2, "{pan:?}");
+        assert!(
+            (pan[0] - reach).abs() < 1e-6 && (pan[1] + reach).abs() < 1e-6,
+            "{pan:?}"
+        );
         assert!((first.scale - expected).abs() < 1e-6, "{}", first.scale);
     }
 

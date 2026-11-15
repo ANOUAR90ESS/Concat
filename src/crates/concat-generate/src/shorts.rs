@@ -14,13 +14,37 @@ use crate::storyboard::{Chapter, Storyboard};
 /// The longest a Short runs, in seconds: what the platforms take.
 pub const LONGEST: f64 = 60.0;
 
-/// The minute picked: which scenes, in order, and the line over its start.
-#[derive(Clone, Debug, PartialEq)]
+/// The minute picked: which scenes, in order, the line over its start and
+/// the Short's own title.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Pick {
     /// The scenes' ids, a run of them in a row.
     pub scenes: Vec<String>,
     /// A few words over the first second, to stop the thumb.
     pub hook: String,
+    /// The Short's title, its own and not the long video's: its timeline
+    /// is named by it, and it goes up with it. Empty for the long video's
+    /// title with "Short" after it.
+    pub title: String,
+}
+
+/// `board` with each scene as long as its narration is when it was read:
+/// the voice's seconds, not the written ones, which run long or short by a
+/// good part - what a Short's minute is measured in. A scene whose voice
+/// `lengths` does not hold keeps its written seconds.
+pub fn timed(board: &Storyboard, lengths: &std::collections::HashMap<String, f64>) -> Storyboard {
+    let mut board = board.clone();
+    for chapter in &mut board.chapters {
+        for scene in &mut chapter.scenes {
+            if let Some(&seconds) = lengths
+                .get(&scene.id)
+                .filter(|s| s.is_finite() && **s > 0.0)
+            {
+                scene.seconds = seconds;
+            }
+        }
+    }
+    board
 }
 
 /// Every scene, in order, with its written length.
@@ -64,6 +88,7 @@ pub fn opening(board: &Storyboard) -> Pick {
     Pick {
         scenes: ids,
         hook: board.title.trim().to_owned(),
+        title: String::new(),
     }
 }
 
@@ -88,6 +113,7 @@ pub fn filled(board: &Storyboard, mut picks: Vec<Pick>, count: usize) -> Vec<Pic
             picks.push(Pick {
                 scenes: std::mem::take(run),
                 hook,
+                title: String::new(),
             });
         }
         run.clear();
@@ -134,7 +160,10 @@ pub fn board(long: &Storyboard, pick: &Pick) -> Storyboard {
         .map(|chapter| chapter.mood.clone())
         .unwrap_or_default();
     Storyboard {
-        title: format!("{} - Short", long.title.trim()),
+        title: match pick.title.trim() {
+            "" => format!("{} - Short", long.title.trim()),
+            title => title.to_owned(),
+        },
         aspect: "9:16".to_owned(),
         chapters: vec![Chapter {
             title: String::new(),
@@ -180,6 +209,7 @@ mod tests {
         let picked = Pick {
             scenes: vec!["c01s02".into()],
             hook: "Picked".into(),
+            ..Pick::default()
         };
         let picks = filled(&board, vec![picked], 3);
         assert_eq!(picks.len(), 3);
@@ -211,9 +241,10 @@ mod tests {
 
     #[test]
     fn the_short_is_tall_one_chapter_under_its_hook() {
-        let pick = Pick {
+        let mut pick = Pick {
             scenes: vec!["c01s02".into(), "c02s01".into()],
             hook: "Why did they vanish?".into(),
+            ..Pick::default()
         };
         let short = board(&long(), &pick);
         assert_eq!(short.aspect, "9:16");
@@ -225,5 +256,28 @@ mod tests {
         assert_eq!(words, [Some("Why did they vanish?".into()), None]);
         assert_eq!(short.chapters[0].mood, "dawn");
         assert!(short.title.ends_with("- Short"));
+        pick.title = "The city that drowned in a night".into();
+        assert_eq!(
+            board(&long(), &pick).title,
+            "The city that drowned in a night"
+        );
+    }
+
+    /// A Short's minute is the voice's: a scene read longer than written
+    /// no longer fits where its written seconds did.
+    #[test]
+    fn the_voice_s_seconds_measure_a_short() {
+        let board = long();
+        let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(fits(&board, &ids(&["c02s01", "c02s02"])));
+        let lengths = std::collections::HashMap::from([
+            ("c02s01".to_owned(), 38.0),
+            ("c02s02".to_owned(), 31.0),
+            ("c01s01".to_owned(), f64::NAN),
+        ]);
+        let timed = timed(&board, &lengths);
+        assert!(!fits(&timed, &ids(&["c02s01", "c02s02"])));
+        let seconds: Vec<f64> = timed.scenes().map(|s| s.seconds).collect();
+        assert_eq!(seconds, [25.0, 25.0, 38.0, 31.0]);
     }
 }

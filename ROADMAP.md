@@ -716,8 +716,19 @@ publishing; analytics later, asked first.
    cache every crate, the app's Slint code among them, is checked at once.
    The job now adds 8 GB of swap and runs clippy two crates at a time.
    alpha.33 is left; the next tag is cut from main once this is merged.
-3. **Smart Shorts.** The strongest moments, each with its own hook and
-   title, by the voice's seconds, the picture reframed rather than cropped.
+3. **Smart Shorts** (in progress, on the branch after #44). The writer is
+   asked for the strongest moments, not the start: each standing alone
+   (nothing it leans on unexplained), opening on a grip and ending on a
+   payoff or a line worth quoting, one idea each and a different idea per
+   Short. Each Short now has a title of its own as well as its hook; its
+   timeline is named by it. The minute is measured in the voice's
+   seconds - the scenes' lengths as read, where the voice was made - not
+   the written ones, so a Short no longer runs past a minute or stops
+   short. A wide still on a tall Short is reframed: the frame travels
+   across the picture, one way then the other by turns, instead of
+   pushing in on its middle, so most of the picture is seen. Not yet: a
+   moving clip reframed (it stays centred), each Short's own description
+   and hashtags (with the export center).
 4. **Export center.** The long video, its Shorts, the thumbnail and the
    text in one go, with presets per platform.
 5. **A check before publishing.** Warnings, never a block: a claim with no

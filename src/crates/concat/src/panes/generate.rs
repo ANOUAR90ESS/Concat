@@ -2116,6 +2116,7 @@ impl GeneratePane {
         self.phase = 3;
         spawn_in_project(
             move || {
+                let board = voice_timed(&job, &board);
                 let picks = writer::pick_shorts(&board, &brief, count, &key, writer::DEFAULT_MODEL)
                     .unwrap_or_else(|error| {
                         // As many all the same, from the start of the
@@ -2152,6 +2153,7 @@ impl GeneratePane {
         self.phase = 3;
         spawn_in_project(
             move || {
+                let board = voice_timed(&job, &board);
                 let pick = if key.trim().is_empty() {
                     shorts::opening(&board)
                 } else {
@@ -3209,6 +3211,21 @@ fn made_before(prefs: &crate::prefs::GeneratePrefs) -> String {
         .map(String::as_str)
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+/// `board` with its scenes as long as their voices read, where the voice
+/// was made: a Short's minute is measured in the voice's seconds.
+fn voice_timed(job: &Job, board: &Storyboard) -> Storyboard {
+    let lengths: HashMap<String, f64> = job
+        .gather(board, true)
+        .map(|made| {
+            made.files
+                .into_iter()
+                .filter_map(|(id, files)| files.voice.map(|(_, seconds)| (id, seconds)))
+                .collect()
+        })
+        .unwrap_or_default();
+    shorts::timed(board, &lengths)
 }
 
 /// Whether a series is saved under the ready channel's name.

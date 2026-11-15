@@ -1219,6 +1219,7 @@ pub fn pick_short(
     Ok(crate::shorts::Pick {
         scenes,
         hook: text(&got["hook"]),
+        title: text(&got["title"]),
     })
 }
 
@@ -1239,7 +1240,8 @@ pub fn pick_shorts(
     let count = count.clamp(1, 5);
     let prompt = format!(
         "{}\nPick {count} such stretches, the {count} best, no scene in more than one of them, \
-         each with its own hook; fewer where the video does not hold that many.",
+         each with its own hook and title, each a different idea of the video; fewer where the \
+         video does not hold that many good ones.",
         short_prompt(board, brief)
     );
     let got = crate::providers::retry(|| call(key, model, &shorts_tool(), &prompt))?;
@@ -1273,6 +1275,7 @@ fn picks_of(board: &Storyboard, shorts: &Value, count: usize) -> Vec<crate::shor
         picks.push(crate::shorts::Pick {
             scenes,
             hook: text(&short["hook"]),
+            title: text(&short["title"]),
         });
     }
     picks
@@ -1786,10 +1789,16 @@ fn short_prompt(board: &Storyboard, brief: &Brief) -> String {
     format!(
         "{}\nThe video \"{}\", scene by scene, with each scene's length:\n{scenes}\n\
          Pick the stretch of it most worth a Short for TikTok, Reels and YouTube Shorts: \
-         scenes in a row, together {:.0} seconds at most, that make sense on their own and \
-         grip from the first line - a surprise, a question, a turn. Give their ids in order, \
-         and a hook: at most six words over the first second that make a scroller stop, in \
-         the narration's language.",
+         scenes in a row, together {:.0} seconds at most by the lengths above, the strongest \
+         moment of the video and not merely its start. It must stand alone to someone who \
+         never saw the rest - no \"as we saw\", no name or idea it leans on unexplained; \
+         its first line must grip - a surprise, a striking number, a question, a turn - and \
+         its last must land - a payoff, a reveal or a line worth quoting - rather than trail \
+         off mid-thought. Prefer a stretch with one clear idea over one that covers several. \
+         Give their ids in order; a hook: at most six words over the first second that make \
+         a scroller stop; and a title for the Short of its own, at most sixty characters, \
+         that promises what this minute delivers, not the long video's - both in the \
+         narration's language.",
         brief.text(),
         board.title,
         crate::shorts::LONGEST,
@@ -2778,9 +2787,10 @@ fn short_tool() -> Value {
             "properties": {
                 "scenes": {"type": "array", "items": {"type": "string"},
                            "description": "The scenes' ids, in order, in a row."},
-                "hook": {"type": "string", "description": "At most six words."}
+                "hook": {"type": "string", "description": "At most six words."},
+                "title": {"type": "string", "description": "The Short's own title, at most sixty characters."}
             },
-            "required": ["scenes", "hook"]
+            "required": ["scenes", "hook", "title"]
         }
     })
 }
@@ -2856,9 +2866,10 @@ fn shorts_tool() -> Value {
                         "properties": {
                             "scenes": {"type": "array", "items": {"type": "string"},
                                        "description": "The scenes' ids, in order, in a row."},
-                            "hook": {"type": "string", "description": "At most six words."}
+                            "hook": {"type": "string", "description": "At most six words."},
+                            "title": {"type": "string", "description": "The Short's own title, at most sixty characters."}
                         },
-                        "required": ["scenes", "hook"]
+                        "required": ["scenes", "hook", "title"]
                     }
                 }
             },
