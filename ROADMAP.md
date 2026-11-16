@@ -742,6 +742,9 @@ publishing; analytics later, asked first.
    own frame (16:9 for YouTube, 9:16 for Shorts, TikTok and Reels) with
    the export sheet's settings. Not yet: one setting per platform beyond
    the frame, a Short's own description written by the writer.
+   The release of alpha.35 died the same way once more with clippy at two
+   crates at a time (alpha.34 passed with it): clippy now runs one crate
+   at a time, as it does on a 16 GB machine without fail, with 75 minutes.
 5. **A check before publishing.** Warnings, never a block: a claim with no
    source, a repeat, music and picture rights, a length wrong for the
    platform, the AI disclosure.

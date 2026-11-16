@@ -35,10 +35,10 @@ jobs:
   engine:
     name: Engine tests and lints
     runs-on: ubuntu-24.04
-    # The steps that can run long have timeouts of their own, 165 minutes
+    # The steps that can run long have timeouts of their own, 195 minutes
     # between them, so a stuck step is named by its own timeout; this is
     # for a job stuck anywhere else. A warm run takes about twenty minutes.
-    timeout-minutes: 185
+    timeout-minutes: 215
     env:
       # See build-app.yml: the version the ort crate is built against.
       # scripts/ci/deps.lock pins the file.
@@ -164,10 +164,13 @@ jobs:
       # public item without documentation fails here, not in review. Lints
       # before tests: they finish in a fraction of the time and catch the
       # most.
-      # Two crates at a time: all of them at once outgrew the runner's
-      # memory with a warm cache (see the first step).
-      - run: cargo clippy --workspace --all-targets --jobs 2 -- -D warnings
-        timeout-minutes: 45
+      # One crate at a time: all of them at once outgrew the runner's
+      # memory with a warm cache (see the first step), and two at a time
+      # still did once (v0.2.8-alpha.35), the runner swapping until it
+      # stopped answering. One at a time is how the app crate is checked
+      # on a 16 GB machine without fail.
+      - run: cargo clippy --workspace --all-targets --jobs 1 -- -D warnings
+        timeout-minutes: 75
         working-directory: src
 
       # The tests are compiled in a step of their own, so a slow compile
