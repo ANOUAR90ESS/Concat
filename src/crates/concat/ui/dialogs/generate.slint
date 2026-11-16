@@ -296,7 +296,7 @@ export component GenerateDialog inherits Modal {
     callback make-short();
     /// One of the sheet's buttons: 0 suggest ideas, 1 make every idea,
     /// 2 make the video in another language, 3 save the choices as a
-    /// series, 4 cut several Shorts, 5 research first.
+    /// series, 4 cut several Shorts, 5 research first, 6 export everything.
     callback act(kind: int);
     callback publish();
     callback cancel();
@@ -714,6 +714,26 @@ export component GenerateDialog inherits Modal {
                                 glyph: Glyph.film;
                                 clicked => { root.act(4); }
                             }
+                        }
+
+                        // Export everything: the long video and every
+                        // Short, one after another, into the video's
+                        // folder beside what goes up with each.
+                        if root.data.can-short: HorizontalLayout {
+                            alignment: start;
+
+                            Button {
+                                label: I18n.t("generate.exportAll");
+                                glyph: Glyph.film;
+                                clicked => { root.act(6); }
+                            }
+                        }
+
+                        if root.data.can-short: Text {
+                            text: I18n.t("generate.exportAllHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
                         }
 
                         // The same video again in another language: the

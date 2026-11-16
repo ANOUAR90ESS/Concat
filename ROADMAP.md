@@ -729,8 +729,19 @@ publishing; analytics later, asked first.
    pushing in on its middle, so most of the picture is seen. Not yet: a
    moving clip reframed (it stays centred), each Short's own description
    and hashtags (with the export center).
-4. **Export center.** The long video, its Shorts, the thumbnail and the
-   text in one go, with presets per platform.
+4. **Export center** (in progress, on the branch after #45). Export
+   everything, in the Long video sheet once a video is made: every
+   timeline of the project that holds anything - the long video and each
+   Short - written one after another into the video's folder (a phone
+   moves each to its gallery as any export), the timeline that was open
+   brought back at the end; a file that fails stops the rest. Beside them
+   are what goes up with each: publishing.txt (YouTube's title,
+   description with chapters, tags) and the thumbnail as before, and now
+   shorts.txt - each Short's title, hook and hashtags (the video's tags
+   and #Shorts), kept as the Shorts are cut. Each file is written at its
+   own frame (16:9 for YouTube, 9:16 for Shorts, TikTok and Reels) with
+   the export sheet's settings. Not yet: one setting per platform beyond
+   the frame, a Short's own description written by the writer.
 5. **A check before publishing.** Warnings, never a block: a claim with no
    source, a repeat, music and picture rights, a length wrong for the
    platform, the AI disclosure.

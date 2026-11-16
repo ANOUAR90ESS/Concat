@@ -141,12 +141,17 @@ pub enum GenerateMsg {
     /// One of the sheet's buttons: 0 suggest ideas, 1 make every idea,
     /// 2 make the video again in another language, 3 save the choices as
     /// a series, 4 cut several Shorts, 5 research first, to read and
-    /// correct the notes before the script is written from them.
+    /// correct the notes before the script is written from them, 6 export
+    /// every video of the project - the long one and its Shorts - into the
+    /// video's folder, one after another.
     Act(i32),
     /// The writer's ideas, or why there are none.
     Ideas(Box<Result<Vec<VideoIdea>, String>>),
     /// The research done on its own, or why not.
     Researched(Box<Result<Research, String>>),
+    /// The next video of Export everything is due, once the one before is
+    /// written.
+    ExportNext,
     /// The next idea of a batch is due, once nothing is running.
     Next,
     /// The video translated: its new idea, its storyboard and its
@@ -248,6 +253,12 @@ pub struct GeneratePane {
     /// The research done for the idea, as kept with the video: read and
     /// corrected in the sheet, and the script written from it.
     research: Option<Research>,
+    /// Export everything: the timelines still to write, each its id and
+    /// name, and the one that was open before, to go back to at the end.
+    exports: Vec<(String, String)>,
+    export_back: Option<String>,
+    /// Export everything has started a file of its own.
+    export_started: bool,
     /// The script editor is showing.
     pub script_open: bool,
     /// The scene being written again, if one is.
@@ -300,6 +311,9 @@ impl Default for GeneratePane {
             likeness: HashMap::new(),
             publishing: None,
             research: None,
+            exports: Vec::new(),
+            export_back: None,
+            export_started: false,
             publishing_busy: false,
             lookalikes: HashSet::new(),
             remaking: HashSet::new(),
@@ -696,6 +710,7 @@ impl GeneratePane {
                                 studio.notify(&tf("generate.noThumbnail", &[&error]), true);
                             }
                         }
+                        self.refresh_shorts_tags(studio, &publishing.tags);
                         self.publishing = Some(publishing);
                     }
                     Err(error) => self.failed(error),
@@ -722,8 +737,10 @@ impl GeneratePane {
                 }
                 4 => self.shorts(studio),
                 5 => self.research_first(studio),
+                6 => self.export_all(studio),
                 _ => {}
             },
+            GenerateMsg::ExportNext => self.export_next(studio),
             GenerateMsg::Researched(result) => {
                 self.running = false;
                 match *result {
@@ -767,6 +784,7 @@ impl GeneratePane {
                             self.cut(studio, board, made, true);
                         }
                         self.hold_export = false;
+                        self.keep_shorts_text(studio, shorts.iter().map(|(board, _)| board));
                     }
                     Err(error) => self.failed(error),
                 }
@@ -774,7 +792,10 @@ impl GeneratePane {
             GenerateMsg::ShortReady(result) => {
                 self.running = false;
                 match *result {
-                    Ok((board, made)) => self.cut(studio, &board, &made, true),
+                    Ok((board, made)) => {
+                        self.cut(studio, &board, &made, true);
+                        self.keep_shorts_text(studio, std::iter::once(&board));
+                    }
                     Err(error) => self.failed(error),
                 }
             }
@@ -1939,6 +1960,145 @@ impl GeneratePane {
 
     /// Asks the writer for videos worth making next: about what is typed,
     /// or whatever suits the channel when nothing is.
+    /// Export everything: every timeline of the project that holds
+    /// anything - the long video and its Shorts - written one after
+    /// another into the video's folder, beside what goes up with each.
+    fn export_all(&mut self, studio: &mut Studio) {
+        let Some(job) = self.job(studio) else { return };
+        if studio.export.phase == crate::ui::ExportPhase::Running || !self.exports.is_empty() {
+            studio.notify(&t("generate.exportBusy"), true);
+            return;
+        }
+        let project = studio.project();
+        // The thumbnail's timeline is a picture, saved as one, not a video.
+        let thumbnail = format!(" · {}", t("generate.thumbnail"));
+        let mut taken = HashSet::new();
+        let exports: Vec<(String, String)> = project
+            .timelines
+            .iter()
+            .filter(|timeline| !timeline.clips.is_empty() && !timeline.name.ends_with(&thumbnail))
+            .map(|timeline| (timeline.id.clone(), unique_name(&timeline.name, &mut taken)))
+            .collect();
+        if exports.is_empty() {
+            studio.notify(&t("export.nothingTimelineExport"), true);
+            return;
+        }
+        self.export_back = Some(project.active_timeline_id.clone());
+        studio.notify(&tf("generate.exportingAll", &[&exports.len()]), false);
+        self.exports = exports;
+        let _ = std::fs::create_dir_all(&job.dir);
+        self.export_next(studio);
+    }
+
+    /// Starts the next video of Export everything once the one before is
+    /// written; looks again in a moment while it is not. A file that
+    /// failed stops the rest; the export sheet says why.
+    fn export_next(&mut self, studio: &mut Studio) {
+        if studio.export.phase == crate::ui::ExportPhase::Running {
+            spawn_in_project(
+                || std::thread::sleep(std::time::Duration::from_secs(3)),
+                |studio, _, _, ()| studio.handle(Msg::Generate(GenerateMsg::ExportNext)),
+            );
+            return;
+        }
+        // A file that failed, or one cancelled - the sheet back on its form
+        // rather than done - stops the rest.
+        let failed = self.export_started
+            && matches!(
+                studio.export.phase,
+                crate::ui::ExportPhase::Failed | crate::ui::ExportPhase::Idle
+            );
+        let job = self.job(studio);
+        if failed || self.exports.is_empty() || job.is_none() {
+            // Done, or stopped: back on the timeline that was open.
+            let written = self.export_started && !failed;
+            self.exports.clear();
+            self.export_started = false;
+            if let Some(id) = self.export_back.take()
+                && studio.project().timelines.iter().any(|t| t.id == id)
+            {
+                studio.apply(concat_project::Command::SelectTimeline { timeline_id: id });
+            }
+            if written {
+                studio.notify(&t("generate.exportedAll"), false);
+            }
+            return;
+        }
+        let (Some(job), (id, name)) = (job, self.exports.remove(0)) else {
+            return;
+        };
+        // A timeline taken away since: passed over, not the open one
+        // exported under its name.
+        if !studio.project().timelines.iter().any(|t| t.id == id) {
+            self.export_next(studio);
+            return;
+        }
+        studio.apply(concat_project::Command::SelectTimeline { timeline_id: id });
+        export(job.dir.clone(), &name);
+        self.export_started = true;
+        spawn_in_project(
+            || std::thread::sleep(std::time::Duration::from_secs(3)),
+            |studio, _, _, ()| studio.handle(Msg::Generate(GenerateMsg::ExportNext)),
+        );
+    }
+
+    /// Keeps what goes up with each Short beside the video: its title, its
+    /// hook and its hashtags - the video's tags, and #Shorts - in
+    /// `shorts.txt`, one after another, added to what is already there.
+    fn keep_shorts_text<'a>(&self, studio: &Studio, boards: impl Iterator<Item = &'a Storyboard>) {
+        let Some(job) = self.job(studio) else { return };
+        let tags = self
+            .publishing
+            .as_ref()
+            .map(|publishing| hashtags(&publishing.tags))
+            .unwrap_or_default();
+        let mut text = std::fs::read_to_string(job.dir.join("shorts.txt")).unwrap_or_default();
+        for board in boards {
+            let hook = board
+                .scenes()
+                .next()
+                .and_then(|scene| scene.on_screen_text.clone())
+                .unwrap_or_default();
+            // Kept already when a line of the file is its title.
+            if text.lines().any(|line| line == board.title.trim()) {
+                continue;
+            }
+            text += &format!(
+                "{}\n{}\n{} #Shorts\n\n",
+                board.title.trim(),
+                hook.trim(),
+                tags
+            );
+        }
+        let _ = std::fs::create_dir_all(&job.dir);
+        if let Err(error) = std::fs::write(job.dir.join("shorts.txt"), text) {
+            log::warn!("generate: the Shorts' text: {error}");
+        }
+    }
+
+    /// Gives the Shorts kept before the video's tags were written the
+    /// hashtags they lacked: each line that is #Shorts alone.
+    fn refresh_shorts_tags(&self, studio: &Studio, tags: &[String]) {
+        let Some(job) = self.job(studio) else { return };
+        let file = job.dir.join("shorts.txt");
+        let (Ok(text), tags) = (std::fs::read_to_string(&file), hashtags(tags)) else {
+            return;
+        };
+        if tags.is_empty() {
+            return;
+        }
+        let mended: Vec<String> = text
+            .lines()
+            .map(|line| match line.trim() {
+                "#Shorts" => format!("{tags} #Shorts"),
+                _ => line.to_owned(),
+            })
+            .collect();
+        if let Err(error) = std::fs::write(&file, mended.join("\n") + "\n") {
+            log::warn!("generate: the Shorts' text: {error}");
+        }
+    }
+
     fn research_first(&mut self, studio: &mut Studio) {
         let key = studio.prefs.generate.anthropic_key.clone();
         if self.topic.trim().is_empty() {
@@ -2732,23 +2892,7 @@ impl GeneratePane {
 /// a run nobody has to watch. Posted for the next turn, so it starts once
 /// the cut is published and the sheet's own state is its to change.
 fn export(folder: PathBuf, title: &str) {
-    let name: String = title
-        .chars()
-        .map(|c| {
-            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
-                '-'
-            } else {
-                c
-            }
-        })
-        .collect::<String>()
-        .trim()
-        .to_owned();
-    let name = if name.is_empty() {
-        "video".to_owned()
-    } else {
-        name
-    };
+    let name = file_stem(title);
     let folder = folder.to_string_lossy().into_owned();
     on_ui(move |studio, _, _| {
         studio.handle(Msg::Export(ExportMsg::Open));
@@ -3223,6 +3367,53 @@ fn voice_timed(job: &Job, board: &Storyboard) -> Storyboard {
     shorts::timed(board, &made)
 }
 
+/// The file name a video's title is written under: what a file system
+/// refuses made a dash, and "video" for none.
+fn file_stem(title: &str) -> String {
+    let name: String = title
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    if name.is_empty() {
+        "video".to_owned()
+    } else {
+        name
+    }
+}
+
+/// `name`, or `name (2)`, `name (3)`... the first that `taken` does not
+/// hold, its file name compared without case: each video of Export
+/// everything writes a file of its own.
+fn unique_name(name: &str, taken: &mut HashSet<String>) -> String {
+    let base = name.trim();
+    let mut candidate = base.to_owned();
+    let mut n = 2;
+    while !taken.insert(file_stem(&candidate).to_lowercase()) {
+        candidate = format!("{base} ({n})");
+        n += 1;
+    }
+    candidate
+}
+
+/// The video's tags as hashtags: the first eight, each one word, joined.
+fn hashtags(tags: &[String]) -> String {
+    tags.iter()
+        .map(|tag| tag.split_whitespace().collect::<String>())
+        .filter(|tag| !tag.is_empty())
+        .take(8)
+        .map(|tag| format!("#{}", tag.trim_start_matches('#')))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Whether a series is saved under the ready channel's name.
 fn has_la_logica(prefs: &crate::prefs::GeneratePrefs) -> bool {
     prefs
@@ -3286,6 +3477,31 @@ fn read_card_lines(text: &str) -> Vec<concat_generate::storyboard::GraphicItem> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each video of Export everything gets a file name of its own, two
+    /// names that come to the same file told apart.
+    #[test]
+    fn export_names_are_made_unique() {
+        let mut taken = HashSet::new();
+        assert_eq!(unique_name("La mente", &mut taken), "La mente");
+        assert_eq!(unique_name("la mente ", &mut taken), "la mente (2)");
+        assert_eq!(unique_name("a/b", &mut taken), "a/b");
+        assert_eq!(unique_name("a-b", &mut taken), "a-b (2)");
+        assert_eq!(file_stem(" / "), "-");
+        assert_eq!(file_stem("  "), "video");
+    }
+
+    /// The video's tags as hashtags, one word each, eight at most.
+    #[test]
+    fn tags_become_hashtags() {
+        let tags: Vec<String> = ["Spanish politics", "#logic", ""]
+            .iter()
+            .map(|t| t.to_string())
+            .collect();
+        assert_eq!(hashtags(&tags), "#Spanishpolitics #logic");
+        let many: Vec<String> = (0..12).map(|n| n.to_string()).collect();
+        assert_eq!(hashtags(&many).split(' ').count(), 8);
+    }
     use image::{DynamicImage, Rgb, RgbImage};
 
     /// A sun over hills on a striped ground, `sun_x` across: detail
