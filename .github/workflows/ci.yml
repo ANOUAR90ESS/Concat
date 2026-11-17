@@ -22,6 +22,13 @@ on:
         description: The ref to test, when it is not the one this runs on
         type: string
         default: ""
+      # A release builds and starts the app on macOS itself (build-app.yml),
+      # so it leaves out this check's compile there: one macOS runner fewer
+      # to wait for, and a missing one no longer holds back every bundle.
+      skip-macos:
+        description: Leave out the macOS compile
+        type: boolean
+        default: false
 
 # Keyed on what is tested, so a release testing its tag and a push to
 # main never cancel each other. Only a pull request's run is cancelled by
@@ -244,14 +251,10 @@ jobs:
     name: ${{ matrix.verb }} on ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Both rows, unless release.yml asks to leave macOS out (`exclude`
+      # cannot: it is applied before an `include` list, which this is).
       matrix:
-        include:
-          - os: macos-15
-            sherpa: osx-arm64
-            verb: Compiles
-          - os: windows-2022
-            sherpa: win-x64
-            verb: Tests
+        include: ${{ fromJSON(inputs.skip-macos && '[{"os":"windows-2022","sherpa":"win-x64","verb":"Tests"}]' || '[{"os":"macos-15","sherpa":"osx-arm64","verb":"Compiles"},{"os":"windows-2022","sherpa":"win-x64","verb":"Tests"}]') }}
     runs-on: ${{ matrix.os }}
     # Windows' steps that can run long have timeouts of their own, 115
     # minutes between them, so whichever is stuck is named by its own

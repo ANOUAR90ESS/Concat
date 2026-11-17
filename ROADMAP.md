@@ -749,7 +749,12 @@ publishing; analytics later, asked first.
    four tries for a macOS runner) and then its notes stopped the
    publish: its only commit was a CI fix, which the notes leave out, and
    an empty list failed the script. A tag with nothing to list now gets
-   notes with the downloads alone; alpha.37 carries the fix.
+   notes with the downloads alone; alpha.38 carries the fix (#48).
+   alpha.38 then waited on a macOS runner again, twice. A release no longer
+   waits on one: it leaves CI's macOS compile out (its own macOS build
+   compiles and starts the app), and publishes without a macOS or iOS
+   bundle whose job did not pass, naming it in the notes; every other job
+   must still pass.
 5. **A check before publishing.** Warnings, never a block: a claim with no
    source, a repeat, music and picture rights, a length wrong for the
    platform, the AI disclosure.
