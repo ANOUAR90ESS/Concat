@@ -135,8 +135,10 @@ jobs:
       actions: read
     steps:
       # Every job of this run but this one must have passed, except those
-      # that build or start a macOS or iOS bundle. Those are let through
-      # and named in the notes.
+      # that build or start a macOS or iOS bundle. Those are let through;
+      # the bundle they build or check is left out of the release, even
+      # when it was uploaded (an .ipa whose simulator start failed), and
+      # the notes name it.
       - name: Every job but an Apple one passed
         id: jobs
         env:
@@ -149,14 +151,20 @@ jobs:
             --jq '.jobs[] | [.name, (.conclusion // .status)] | @tsv' > jobs.tsv
           cat jobs.tsv
           bad=0
+          drop=()
           while IFS=$'\t' read -r name result; do
             case "$name" in
               "Publish release") continue ;;
             esac
             [ "$result" = success ] && continue
             case "$name" in
-              "build / macos-"* | "phones / iOS"*)
+              "build / macos-"*)
                 echo "::warning::$name: $result - published without it"
+                drop+=("macos-${name#build / macos-}.dmg")
+                ;;
+              "phones / iOS"*)
+                echo "::warning::$name: $result - published without the iOS bundle"
+                drop+=("ios-arm64.ipa")
                 ;;
               *)
                 echo "::error::$name: $result"
@@ -164,6 +172,7 @@ jobs:
                 ;;
             esac
           done < jobs.tsv
+          echo "drop=${drop[*]}" >> "$GITHUB_OUTPUT"
           exit "$bad"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -171,6 +180,16 @@ jobs:
           path: bundles
           pattern: LongCut-*
           merge-multiple: true
+
+      - name: Leave out the Apple bundles whose jobs did not pass
+        if: steps.jobs.outputs.drop != ''
+        env:
+          DROP: ${{ steps.jobs.outputs.drop }}
+        run: |
+          set -euo pipefail
+          for kind in $DROP; do
+            rm -fv bundles/LongCut-*-"$kind"
+          done
 
       # The tree the release is cut from: the notes are read out of its
       # history, and the manifest out of its model table.
