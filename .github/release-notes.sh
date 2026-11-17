@@ -45,13 +45,17 @@ type='^[a-z0-9]+(\([^)]*\))?!?: '
 # fix at a glance, and the text rows stand apart from the timeline's. A
 # subject with neither carries no mark rather than a wrong one.
 marks='text=📝 speech=🗣️ enhance=🗣️ keyframes=🎞️ effects=✨ render=✨ colour=✨ color=✨ timeline=✂️ media=📁 export=📤 settings=⚙️ i18n=🌍 locales=🌍 api=🤖 server=🤖 android=📱 ios=📱 models=📦 inspector=🖥️ window=🖥️ workspace=🖥️ ui=🖥️ start=🖥️ feat=✨ fix=🐛 perf=⚡'
+# grep exits 1 when it prints nothing - a tag whose commits are all left out,
+# a CI fix alone - which pipefail would turn into the script's failure; any
+# other failure in the pipeline, git log's on a bad range among them, stays one.
+keep() { grep "$@" || [ $? -eq 1 ]; }
 changes=$(git log "$since..$until" --no-merges --format='%s' 2>/dev/null \
-  | grep -Ev '^((Create|Update) [^ ]+\.[a-z]+|Version [0-9]|Lock the flake|Format the workspace|Changelog for|Merge )' \
-  | grep -Ev 'in the (export|pool) tests$' \
-  | grep -Eiv '^(test|chore|ci|build|refactor|style|docs)(\([^)]*\))?!?: ' \
-  | grep -Eiv '^[a-z0-9]+\((release|ci)\)!?: ' \
-  | grep -Eiv "${type}.*(clippy|lint|rustfmt|(unused|duplicate|missing) [A-Za-z]* ?import|non-existent|does not compile|before test module|green again)" \
-  | grep -Eiv '^(updates?|wip|fixes?|cleanup)\.?$' \
+  | keep -Ev '^((Create|Update) [^ ]+\.[a-z]+|Version [0-9]|Lock the flake|Format the workspace|Changelog for|Merge )' \
+  | keep -Ev 'in the (export|pool) tests$' \
+  | keep -Eiv '^(test|chore|ci|build|refactor|style|docs)(\([^)]*\))?!?: ' \
+  | keep -Eiv '^[a-z0-9]+\((release|ci)\)!?: ' \
+  | keep -Eiv "${type}.*(clippy|lint|rustfmt|(unused|duplicate|missing) [A-Za-z]* ?import|non-existent|does not compile|before test module|green again)" \
+  | keep -Eiv '^(updates?|wip|fixes?|cleanup)\.?$' \
   | awk -v marks="$marks" '
       BEGIN {
         n = split(marks, pairs, " ")
