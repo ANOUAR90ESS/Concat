@@ -45,6 +45,8 @@ type='^[a-z0-9]+(\([^)]*\))?!?: '
 # fix at a glance, and the text rows stand apart from the timeline's. A
 # subject with neither carries no mark rather than a wrong one.
 marks='text=📝 speech=🗣️ enhance=🗣️ keyframes=🎞️ effects=✨ render=✨ colour=✨ color=✨ timeline=✂️ media=📁 export=📤 settings=⚙️ i18n=🌍 locales=🌍 api=🤖 server=🤖 android=📱 ios=📱 models=📦 inspector=🖥️ window=🖥️ workspace=🖥️ ui=🖥️ start=🖥️ feat=✨ fix=🐛 perf=⚡'
+# A tag whose commits are all filtered out (a CI fix alone) leaves grep with
+# nothing to print, which pipefail would turn into the script's failure.
 changes=$(git log "$since..$until" --no-merges --format='%s' 2>/dev/null \
   | grep -Ev '^((Create|Update) [^ ]+\.[a-z]+|Version [0-9]|Lock the flake|Format the workspace|Changelog for|Merge )' \
   | grep -Ev 'in the (export|pool) tests$' \
@@ -71,7 +73,7 @@ changes=$(git log "$since..$until" --no-merges --format='%s' 2>/dev/null \
         print prefix toupper(substr($0, 1, 1)) substr($0, 2)
       }' \
   | awk '!seen[$0]++' \
-  | sed 's/^/- /')
+  | sed 's/^/- /' || true)
 
 echo "## $title"
 echo

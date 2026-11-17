@@ -745,6 +745,11 @@ publishing; analytics later, asked first.
    The release of alpha.35 died the same way once more with clippy at two
    crates at a time (alpha.34 passed with it): clippy now runs one crate
    at a time, as it does on a 16 GB machine without fail, with 75 minutes.
+   alpha.36 built on every platform (its two Apple silicon jobs waited
+   four tries for a macOS runner) and then its notes stopped the
+   publish: its only commit was a CI fix, which the notes leave out, and
+   an empty list failed the script. A tag with nothing to list now gets
+   notes with the downloads alone; alpha.37 carries the fix.
 5. **A check before publishing.** Warnings, never a block: a claim with no
    source, a repeat, music and picture rights, a length wrong for the
    platform, the AI disclosure.
