@@ -20,6 +20,12 @@ name: Release
 # x86_64 under an emulated Ivy Bridge) before it uploads it, and a bundle
 # that does not start fails its job, which `publish` needs.
 #
+# Apple's are the exception. GitHub's macOS runners at times give no
+# machine for hours, and the jobs are cancelled unstarted; that held the
+# APK and every other bundle back for a day (alpha.36). A release now goes
+# out without a macOS or iOS bundle that could not be built, and its notes
+# say which; every other job must still have passed.
+#
 # The release is created as a draft. A person looks it over - the notes,
 # the files - and publishes it from the Releases page; nothing reaches
 # the updater or the downloads page before then.
@@ -91,6 +97,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.check.outputs.tag }}
+      skip-macos: true
 
   # Both builds are told the tag too. Left to themselves they build the
   # ref the run started on, and a run started by hand starts on main:
@@ -115,11 +122,50 @@ jobs:
   publish:
     name: Publish release
     needs: [check, build, phones]
+    # Also when an Apple job failed or was cancelled: the first step below
+    # decides. Not when the builds never ran (CI failed) or the run was
+    # cancelled.
+    if: >-
+      ${{ !cancelled() && needs.check.result == 'success'
+      && needs.build.result != 'skipped' && needs.phones.result != 'skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write
+      actions: read
     steps:
+      # Every job of this run but this one must have passed, except those
+      # that build or start a macOS or iOS bundle. Those are let through
+      # and named in the notes.
+      - name: Every job but an Apple one passed
+        id: jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/actions/runs/$RUN/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | [.name, (.conclusion // .status)] | @tsv' > jobs.tsv
+          cat jobs.tsv
+          bad=0
+          while IFS=$'\t' read -r name result; do
+            case "$name" in
+              "Publish release") continue ;;
+            esac
+            [ "$result" = success ] && continue
+            case "$name" in
+              "build / macos-"* | "phones / iOS"*)
+                echo "::warning::$name: $result - published without it"
+                ;;
+              *)
+                echo "::error::$name: $result"
+                bad=1
+                ;;
+            esac
+          done < jobs.tsv
+          exit "$bad"
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: bundles
@@ -183,6 +229,19 @@ jobs:
           esac
           previous=$(git describe --tags --abbrev=0 --match 'v*' "${candidates[@]}" "$tag^" 2>/dev/null || git rev-list --max-parents=0 HEAD | tail -1)
           .github/release-notes.sh "$previous" "$tag" "${tag#v}" > "$RUNNER_TEMP/notes.md"
+          # The Apple bundles that could not be built, if any (see the top).
+          missing=()
+          for kind in macos-arm64.dmg macos-x86_64.dmg ios-arm64.ipa; do
+            compgen -G "../bundles/LongCut-*-$kind" > /dev/null || missing+=("\`$kind\`")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            {
+              echo
+              echo "### Not in this release"
+              echo
+              echo "$(IFS=,; echo "${missing[*]}" | sed 's/,/, /g'): not built this time - their job did not pass, most often because GitHub had no macOS machine for it. They come with a later release."
+            } >> "$RUNNER_TEMP/notes.md"
+          fi
           cat "$RUNNER_TEMP/notes.md"
 
       # A draft: a person publishes it. See the top of this file.
