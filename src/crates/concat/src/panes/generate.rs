@@ -2036,8 +2036,8 @@ impl GeneratePane {
         // Photographs or footage made by a model: pictures by a model, not
         // cards alone, in the automatic or the photo style, or any clips.
         let by_model = prefs.shots == 1 && prefs.visuals == 0;
-        let realistic = by_model
-            && (prefs.pictures <= 1 || CLIP_SHARES[self.clips_row(studio)] > 0.0);
+        let realistic =
+            by_model && (prefs.pictures <= 1 || CLIP_SHARES[self.clips_row(studio)] > 0.0);
         let thumbnail = format!(" · {}", t("generate.thumbnail"));
         let cuts: Vec<checklist::Cut> = studio
             .project()
@@ -2052,7 +2052,10 @@ impl GeneratePane {
             .collect();
         let found: Vec<String> = checklist::check(&checklist::Before {
             board,
-            notes: self.research.as_ref().map(|research| research.notes.as_str()),
+            notes: self
+                .research
+                .as_ref()
+                .map(|research| research.notes.as_str()),
             made_before: prefs.made_before(),
             music,
             realistic,

@@ -244,7 +244,11 @@ mod tests {
     fn figures_without_a_source_are_flagged() {
         let mut video = board(
             "Rome",
-            &["Rome had a million people in 100 AD.", "قُتل ٢٣ شخصًا", "It fell."],
+            &[
+                "Rome had a million people in 100 AD.",
+                "قُتل ٢٣ شخصًا",
+                "It fell.",
+            ],
         );
         assert_eq!(check(&before(&video, &[])), vec![Warning::Unsourced(2)]);
         video.sources.push(Source {
