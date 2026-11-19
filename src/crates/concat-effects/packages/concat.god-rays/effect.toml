@@ -1,0 +1,69 @@
+format = 2
+
+[effect]
+id = "concat.god-rays"
+name = "God Rays"
+kind = "effect"
+category = "Light"
+shelves = ["Light & Shadow"]
+order = 15
+intensity = "amount"
+description = "Shafts of light streaming from a bright point across the picture, as through a window or a break in the clouds."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 50
+step = 1
+unit = "%"
+animate = true
+
+[[param]]
+key = "x"
+label = "Light X"
+min = 0
+max = 100
+default = 50
+step = 1
+unit = "%"
+animate = true
+
+[[param]]
+key = "y"
+label = "Light Y"
+min = 0
+max = 100
+default = 20
+step = 1
+unit = "%"
+animate = true
+
+[[param]]
+key = "length"
+label = "Length"
+min = 5
+max = 95
+default = 60
+step = 1
+unit = "%"
+
+[[param]]
+key = "threshold"
+label = "Threshold"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+# Thirty-two steps towards the light at half the layer's pixels, then
+# thirty-two of those along the whole ray: a thousand and twenty-four along
+# each, soft as light through haze is.
+[[wgsl.pass]]
+target = "near"
+shrink = ["2", "2"]

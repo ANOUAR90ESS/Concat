@@ -1,0 +1,36 @@
+# A flat picture gathers its own light along every ray: below the threshold
+# it casts none and comes out as it went in; above it, its own colour is
+# added by the amount; between, by how far through the fade it is. Light
+# past white is carried on, and the alpha is left as it was.
+
+[[probe]]
+name = "default, a grey below the threshold"
+input = [0.18, 0.18, 0.18, 1]
+expect = [0.18, 0.18, 0.18, 1]
+
+[[probe]]
+name = "default, an orange below the threshold"
+input = [0.8, 0.3, 0.05, 1]
+expect = [0.8, 0.3, 0.05, 1]
+
+[[probe]]
+name = "default, a grey halfway through the fade"
+input = [0.8, 0.8, 0.8, 1]
+expect = [1.0, 1.0, 1.0, 1]
+
+[[probe]]
+name = "default, a highlight past white"
+input = [4, 1, 0.05, 1]
+expect = [6, 1.5, 0.075, 1]
+
+[[probe]]
+name = "minimum, a highlight past white"
+at = "min"
+input = [4, 1, 0.05, 1]
+expect = [4, 1, 0.05, 1]
+
+[[probe]]
+name = "maximum, a highlight past white"
+at = "max"
+input = [4, 1, 0.05, 1]
+expect = [8, 2, 0.1, 1]

@@ -786,6 +786,17 @@ publishing; analytics later, asked first.
    pictures and a source PDF as input items. Who writes stays the
    person's when a series is brought back. Not yet tried against the
    real API: the default model's name could not be checked from here.
+7. 🚧 **Effects from pmndrs/postprocessing (owner, 19 Nov).** The owner
+   asked whether react-postprocessing could serve the app. It cannot be
+   used as it is - React and three.js in a browser, WebGL - and most of
+   its effects the app already has (bloom, vignette, chromatic
+   aberration, glitch, grain, pixelate, halftone, LUT, blur, scanlines in
+   VHS, tone mapping); SSAO, outline and antialiasing need a 3D scene.
+   Two it lacks are ported as WGSL packages (zlib, credited in the
+   shaders): God Rays - shafts of light from a bright point, the
+   picture's own highlights as the light - and Shock Wave - a ring that
+   bends the picture as it spreads from a point over the clip's first
+   moments. Tilt-shift and a grid or scanline overlay could follow.
 
 ## Done since alpha.14
 

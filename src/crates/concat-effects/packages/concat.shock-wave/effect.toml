@@ -1,0 +1,60 @@
+format = 2
+
+[effect]
+id = "concat.shock-wave"
+name = "Shock Wave"
+kind = "effect"
+category = "Distort"
+shelves = ["Distortion & Glitch"]
+order = 56
+intensity = "amount"
+description = "A ring that bends the picture as it spreads out from a point and fades, the moment something lands."
+
+[[param]]
+key = "amount"
+label = "Strength"
+min = 0
+max = 100
+default = 50
+step = 1
+unit = "%"
+animate = true
+
+[[param]]
+key = "x"
+label = "Centre X"
+min = 0
+max = 100
+default = 50
+step = 1
+unit = "%"
+
+[[param]]
+key = "y"
+label = "Centre Y"
+min = 0
+max = 100
+default = 50
+step = 1
+unit = "%"
+
+[[param]]
+key = "duration"
+label = "Duration"
+min = 0.2
+max = 3
+default = 0.8
+step = 0.1
+unit = "s"
+
+[[param]]
+key = "width"
+label = "Width"
+min = 5
+max = 100
+default = 30
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
