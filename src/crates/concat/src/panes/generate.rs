@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_generate::budget::{self, Totals};
+use concat_generate::checklist;
 use concat_generate::cost::{self, Estimate, Prices};
 use concat_generate::job::{Costs, Idea, Job, Made, Remade, Status, Step};
 use concat_generate::makers;
@@ -259,6 +260,9 @@ pub struct GeneratePane {
     export_back: Option<String>,
     /// Export everything has started a file of its own.
     export_started: bool,
+    /// What the last check before publishing found, in the interface's
+    /// language; None until it has run.
+    checked: Option<Vec<String>>,
     /// The script editor is showing.
     pub script_open: bool,
     /// The scene being written again, if one is.
@@ -314,6 +318,7 @@ impl Default for GeneratePane {
             exports: Vec::new(),
             export_back: None,
             export_started: false,
+            checked: None,
             publishing_busy: false,
             lookalikes: HashSet::new(),
             remaking: HashSet::new(),
@@ -738,6 +743,13 @@ impl GeneratePane {
                 4 => self.shorts(studio),
                 5 => self.research_first(studio),
                 6 => self.export_all(studio),
+                7 => {
+                    let found = self.check_before_publishing(studio);
+                    match found.is_empty() {
+                        true => studio.notify(&t("generate.checkClean"), false),
+                        false => studio.notify(&tf("generate.checkFound", &[&found.len()]), true),
+                    }
+                }
                 _ => {}
             },
             GenerateMsg::ExportNext => self.export_next(studio),
@@ -766,6 +778,7 @@ impl GeneratePane {
                         studio.prefs.save(&studio.host.dirs);
                         self.board = Some(board.clone());
                         self.dirty = false;
+                        self.checked = None;
                         self.changed();
                         self.mended = false;
                         self.make(studio, board);
@@ -934,6 +947,7 @@ impl GeneratePane {
                     Ok(board) => {
                         self.board = Some(board.clone());
                         self.dirty = false;
+                        self.checked = None;
                         self.changed();
                         // The channel's memory: the next script is told
                         // this one was made.
@@ -1013,6 +1027,8 @@ impl GeneratePane {
             .job(studio)
             .filter(|_| !self.topic.trim().is_empty())
             .and_then(|job| job.research());
+        // The findings were for the video loaded before.
+        self.checked = None;
         self.dirty = false;
         self.stale_voices.clear();
         self.stale_shots.clear();
@@ -1984,10 +2000,83 @@ impl GeneratePane {
             return;
         }
         self.export_back = Some(project.active_timeline_id.clone());
+        // Looked over first: said, never held back on.
+        let found = self.check_before_publishing(studio);
+        if !found.is_empty() {
+            studio.notify(&tf("generate.checkFound", &[&found.len()]), true);
+        }
         studio.notify(&tf("generate.exportingAll", &[&exports.len()]), false);
         self.exports = exports;
         let _ = std::fs::create_dir_all(&job.dir);
         self.export_next(studio);
+    }
+
+    /// What to look at before the videos go up - figures with no source,
+    /// disputed points, a title made before, the music's rights, an
+    /// upright video too long for Shorts, realistic AI pictures - kept for
+    /// the sheet to list and returned. Warnings only: nothing waits on it.
+    fn check_before_publishing(&mut self, studio: &Studio) -> Vec<String> {
+        let Some(board) = self.board.as_ref() else {
+            self.checked = Some(Vec::new());
+            return Vec::new();
+        };
+        let prefs = &studio.prefs.generate;
+        let music = match self.music {
+            0 => checklist::Music::None,
+            // Only when a bed was made: without Replicate's shots there is
+            // none, and the cut carries no music.
+            AI_MUSIC => match self.job(studio).and_then(|job| job.music()) {
+                Some(_) => checklist::Music::Made,
+                None => checklist::Music::None,
+            },
+            row => row
+                .checked_sub(AI_MUSIC + 1)
+                .and_then(|row| music_items(studio).into_iter().nth(row))
+                .map(|(path, _)| {
+                    let name = Path::new(&path)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or(path);
+                    checklist::Music::Own(name)
+                })
+                .unwrap_or(checklist::Music::None),
+        };
+        // Photographs or footage made by a model: pictures by a model, not
+        // cards alone, in the automatic or the photo style, or any clips.
+        let by_model = prefs.shots == 1 && prefs.visuals == 0;
+        let realistic =
+            by_model && (prefs.pictures <= 1 || CLIP_SHARES[self.clips_row(studio)] > 0.0);
+        let thumbnail = format!(" · {}", t("generate.thumbnail"));
+        let cuts: Vec<checklist::Cut> = studio
+            .project()
+            .timelines
+            .iter()
+            .filter(|timeline| !timeline.clips.is_empty() && !timeline.name.ends_with(&thumbnail))
+            .map(|timeline| checklist::Cut {
+                name: timeline.name.clone(),
+                seconds: timeline.duration(),
+                upright: timeline.video.height > timeline.video.width,
+            })
+            .collect();
+        let found: Vec<String> = checklist::check(&checklist::Before {
+            board,
+            notes: self
+                .research
+                .as_ref()
+                .map(|research| research.notes.as_str()),
+            made_before: prefs.made_before(),
+            music,
+            realistic,
+            cuts: &cuts,
+        })
+        .iter()
+        .map(warning_text)
+        .collect();
+        for line in &found {
+            log::info!("generate: before publishing: {line}");
+        }
+        self.checked = Some(found.clone());
+        found
     }
 
     /// Starts the next video of Export everything once the one before is
@@ -2681,6 +2770,16 @@ impl GeneratePane {
                 made => tf("generate.channelMemory", &[&made.to_string()]).into(),
             },
             channel_row: channel_row(prefs),
+            publish_check: match &self.checked {
+                None => SharedString::new(),
+                Some(found) if found.is_empty() => t("generate.checkClean").into(),
+                Some(found) => found
+                    .iter()
+                    .map(|line| format!("• {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into(),
+            },
             research_notes: self
                 .research
                 .as_ref()
@@ -3132,6 +3231,22 @@ fn finding_text(finding: &review::Finding) -> String {
             "generate.reviewSilence",
             &[&format!("{seconds:.0}"), &clock(*at)],
         ),
+    }
+}
+
+/// What the check before publishing found, in the interface's language.
+fn warning_text(warning: &checklist::Warning) -> String {
+    use checklist::Warning;
+    match warning {
+        Warning::Unsourced(n) => tf("generate.checkUnsourced", &[n]),
+        Warning::Disputed(n) => tf("generate.checkDisputed", &[n]),
+        Warning::MadeBefore(title) => tf("generate.checkMadeBefore", &[title]),
+        Warning::OwnMusic(name) => tf("generate.checkOwnMusic", &[name]),
+        Warning::MadeMusic => t("generate.checkMadeMusic"),
+        Warning::TooLong { name, seconds } => {
+            tf("generate.checkTooLong", &[name, &clock(*seconds)])
+        }
+        Warning::AiLabel => t("generate.checkAiLabel"),
     }
 }
 

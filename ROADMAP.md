@@ -755,9 +755,27 @@ publishing; analytics later, asked first.
    compiles and starts the app), and publishes without a macOS or iOS
    bundle whose job did not pass, naming it in the notes; every other job
    must still pass.
-5. **A check before publishing.** Warnings, never a block: a claim with no
+5. 🚧 **A check before publishing.** Warnings, never a block: a claim with no
    source, a repeat, music and picture rights, a length wrong for the
-   platform, the AI disclosure.
+   platform, the AI disclosure. Done on the branch (`checklist.rs`): a
+   Check before publishing button beside Export everything, which also
+   runs it first and goes on. It says scenes that state figures when the
+   video lists no source; the research's disputed points; a title close
+   to one the channel made (its memory); music from the bin (whether it
+   may be used) or made by MusicGen (a non-commercial licence); an
+   upright video past the 3 minutes Shorts and Reels take; and realistic
+   AI pictures or clips (YouTube's altered or synthetic content, TikTok's
+   AI-generated label). Pictures are AI-made, so no stock rights apply.
+   On 17 November Microsoft's ONNX Runtime repository vanished from
+   GitHub, releases and all, and every build that fetched the runtime from
+   it failed. Its NuGet package carries the same native builds for every
+   desktop platform: `scripts/ci/onnxruntime.sh` takes the one a job needs
+   from it, pinned by digest in deps.lock, laid out as the release
+   archives were.
+6. **ChatGPT as a writer (owner, 19 Nov).** A friend testing the app uses
+   the OpenAI API: the script and the picture prompts may be written by
+   ChatGPT as well as Claude, picked in the sheet, each with its own key.
+   Next after 5.
 
 ## Done since alpha.14
 
