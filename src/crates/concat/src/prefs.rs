@@ -163,6 +163,9 @@ impl GeneratePrefs {
         prefs.kling_access_key = std::mem::take(&mut self.kling_access_key);
         prefs.kling_secret_key = std::mem::take(&mut self.kling_secret_key);
         prefs.seedance_key = std::mem::take(&mut self.seedance_key);
+        // Who writes goes with the keys: it is the person's, not a series'.
+        prefs.writer = self.writer;
+        prefs.writer_model = std::mem::take(&mut self.writer_model);
         prefs.templates = std::mem::take(&mut self.templates);
         prefs.memory = std::mem::take(&mut self.memory);
         *self = prefs;
@@ -190,6 +193,24 @@ impl GeneratePrefs {
         self.memory
             .get(&memory_key(&self.channel_name))
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// Who writes: the key, and the model, Claude's or ChatGPT's as the
+    /// sheet's choice says.
+    pub fn writer(&self) -> (String, String) {
+        match self.writer {
+            1 => (
+                self.openai_key.clone(),
+                match self.writer_model.trim() {
+                    "" => concat_generate::chatgpt::DEFAULT_MODEL.to_owned(),
+                    model => model.to_owned(),
+                },
+            ),
+            _ => (
+                self.anthropic_key.clone(),
+                concat_generate::writer::DEFAULT_MODEL.to_owned(),
+            ),
+        }
     }
 
     /// How many Shorts are cut from a video: three unless chosen.
@@ -258,6 +279,12 @@ fn memory_key(name: &str) -> String {
 pub struct GeneratePrefs {
     /// Claude, which writes the script.
     pub anthropic_key: String,
+    /// Who writes the script and the picture prompts: 0 Claude, with the
+    /// Anthropic key; 1 ChatGPT, with the OpenAI key.
+    pub writer: usize,
+    /// The OpenAI model that writes when ChatGPT does; empty for the
+    /// default.
+    pub writer_model: String,
     /// Replicate, which makes the shots.
     pub replicate_token: String,
     /// The Replicate text-to-video model, "owner/name"; empty for stills
@@ -514,6 +541,39 @@ mod tests {
         assert_eq!(prefs.openai_key, "sk-open");
         assert_eq!(prefs.kling_secret_key, "kl");
         assert_eq!(prefs.made_before(), ["The fall of Granada"]);
+    }
+
+    /// Claude writes with the Anthropic key unless ChatGPT is picked, which
+    /// writes with the OpenAI key and its default model unless one is
+    /// named; a series brought back keeps who writes.
+    #[test]
+    fn who_writes_picks_the_key_and_the_model() {
+        let mut prefs = GeneratePrefs {
+            anthropic_key: "sk-ant".into(),
+            openai_key: "sk-open".into(),
+            ..GeneratePrefs::default()
+        };
+        assert_eq!(
+            prefs.writer(),
+            (
+                "sk-ant".to_owned(),
+                concat_generate::writer::DEFAULT_MODEL.to_owned()
+            )
+        );
+        prefs.writer = 1;
+        assert_eq!(
+            prefs.writer(),
+            (
+                "sk-open".to_owned(),
+                concat_generate::chatgpt::DEFAULT_MODEL.to_owned()
+            )
+        );
+        prefs.writer_model = " gpt-6 ".into();
+        assert_eq!(prefs.writer().1, "gpt-6");
+        prefs.keep_template(GeneratePrefs::default().as_template("Plain"));
+        assert!(prefs.apply_template(0));
+        assert_eq!(prefs.writer, 1);
+        assert_eq!(prefs.writer().1, "gpt-6");
     }
 
     /// A channel remembers its titles once each, the latest last, and no

@@ -772,10 +772,20 @@ publishing; analytics later, asked first.
    desktop platform: `scripts/ci/onnxruntime.sh` takes the one a job needs
    from it, pinned by digest in deps.lock, laid out as the release
    archives were.
-6. **ChatGPT as a writer (owner, 19 Nov).** A friend testing the app uses
+6. 🚧 **ChatGPT as a writer (owner, 19 Nov).** A friend testing the app uses
    the OpenAI API: the script and the picture prompts may be written by
    ChatGPT as well as Claude, picked in the sheet, each with its own key.
-   Next after 5.
+   Done on the branch: Script writer has a Written by choice, Claude or
+   ChatGPT; ChatGPT writes with the OpenAI key (the pictures' key too)
+   and a model field, `gpt-5.4` unless another is typed. Every call the
+   writer makes - research, outline, chapters, the editor's pass, hooks,
+   picture prompts, explainers and their review, Shorts, publishing,
+   translation, ideas - goes through `chatgpt.rs` when the model is
+   OpenAI's: the Responses API, the answer's tool as a function, OpenAI's
+   web search for the research (no web fetch; the search opens pages),
+   pictures and a source PDF as input items. Who writes stays the
+   person's when a series is brought back. Not yet tried against the
+   real API: the default model's name could not be checked from here.
 
 ## Done since alpha.14
 
