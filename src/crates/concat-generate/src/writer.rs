@@ -489,7 +489,7 @@ pub fn write(
     mut progress: impl FnMut(Writing),
 ) -> Result<Storyboard, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to write the script".to_owned());
+        return Err(needs_key(model, "write the script"));
     }
     let ask =
         |tool: &Value, prompt: String| crate::providers::retry(|| call(key, model, tool, &prompt));
@@ -903,7 +903,7 @@ const FETCHES: u32 = 4;
 /// debate and the latest, for the kind of video it is.
 pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to read up on the topic".to_owned());
+        return Err(needs_key(model, "read up on the topic"));
     }
     let (from_source, attached) = source_of(&brief.source)?;
     let prompt = format!(
@@ -1061,7 +1061,7 @@ pub fn rewrite_scene(
     model: &str,
 ) -> Result<Scene, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to write the script".to_owned());
+        return Err(needs_key(model, "write the script"));
     }
     let old = board
         .chapters
@@ -1172,7 +1172,7 @@ pub fn suggest_shot(
     model: &str,
 ) -> Result<Suggestion, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to write the script".to_owned());
+        return Err(needs_key(model, "write the script"));
     }
     let prompt = suggest_prompt(board, brief, chapter, scene, shot)?;
     let video = board.chapters[chapter].scenes[scene].shots[shot].kind == ShotKind::Video;
@@ -1202,7 +1202,7 @@ pub fn pick_short(
     model: &str,
 ) -> Result<crate::shorts::Pick, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to write the script".to_owned());
+        return Err(needs_key(model, "write the script"));
     }
     let got =
         crate::providers::retry(|| call(key, model, &short_tool(), &short_prompt(board, brief)))?;
@@ -1235,7 +1235,7 @@ pub fn pick_shorts(
     model: &str,
 ) -> Result<Vec<crate::shorts::Pick>, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to write the script".to_owned());
+        return Err(needs_key(model, "write the script"));
     }
     let count = count.clamp(1, 5);
     let prompt = format!(
@@ -1303,7 +1303,7 @@ pub fn ideas(
     model: &str,
 ) -> Result<Vec<VideoIdea>, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to suggest ideas".to_owned());
+        return Err(needs_key(model, "suggest ideas"));
     }
     let count = count.clamp(1, 10);
     let mut prompt = format!(
@@ -1362,7 +1362,7 @@ pub fn translate(
     progress: &mut dyn FnMut(usize, usize),
 ) -> Result<Storyboard, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to translate the script".to_owned());
+        return Err(needs_key(model, "translate the script"));
     }
     let mut out = board.clone();
     out.language = language.trim().to_owned();
@@ -1581,7 +1581,7 @@ fn apply_words(chapter: &mut Chapter, got: &Value) -> Result<(), String> {
 /// best from: the writer's, from the video's title, moods and narration.
 pub fn music_prompt(board: &Storyboard, key: &str, model: &str) -> Result<String, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to write the script".to_owned());
+        return Err(needs_key(model, "write the script"));
     }
     let got = crate::providers::retry(|| call(key, model, &music_tool(), &music_ask(board)))?;
     let prompt = text(&got["prompt"]);
@@ -1671,7 +1671,7 @@ pub fn timestamp(seconds: f64) -> String {
 /// description, tags, and a thumbnail's words and picture.
 pub fn publishing(board: &Storyboard, key: &str, model: &str) -> Result<Publishing, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to write the script".to_owned());
+        return Err(needs_key(model, "write the script"));
     }
     let got =
         crate::providers::retry(|| call(key, model, &publishing_tool(), &publishing_ask(board)))?;
@@ -2312,6 +2312,10 @@ fn call_blocks(
     prompt: &str,
     before: Vec<Value>,
 ) -> Result<Value, String> {
+    // An OpenAI model writes through OpenAI's API, with the same ask.
+    if crate::chatgpt::is_openai(model) {
+        return crate::chatgpt::call(key, model, system, server_tools, tool, prompt, before);
+    }
     let name = tool["name"].as_str().unwrap_or_default();
     let mut tools: Vec<Value> = server_tools.to_vec();
     tools.push(tool.clone());
@@ -2420,7 +2424,7 @@ fn tool_call(reply: &Value) -> Option<(String, Value)> {
 
 /// Reads a field written as JSON text - `"[{\"title\": ...}]"` where a list
 /// belongs - as the list or the object it says, at any depth.
-fn decode_json_text(value: &mut Value) {
+pub(crate) fn decode_json_text(value: &mut Value) {
     match value {
         Value::String(text) => {
             if let Some(mut decoded) = json_in(text) {
@@ -2460,7 +2464,7 @@ fn json_in(text: &str) -> Option<Value> {
 /// The required fields of `tool` that `input` leaves out or empty, or
 /// gives as something other than the list the schema asks for: such an
 /// answer is asked again rather than taken as having nothing in it.
-fn missing(tool: &Value, input: &Value) -> Vec<String> {
+pub(crate) fn missing(tool: &Value, input: &Value) -> Vec<String> {
     let properties = &tool["input_schema"]["properties"];
     tool["input_schema"]["required"]
         .as_array()
@@ -2481,7 +2485,7 @@ fn missing(tool: &Value, input: &Value) -> Vec<String> {
 
 /// What an answer holds, field by field, for the error that says it fell
 /// short: each field's name and kind.
-fn given(input: &Value) -> String {
+pub(crate) fn given(input: &Value) -> String {
     let Some(map) = input.as_object() else {
         return "no fields".to_owned();
     };
@@ -2501,6 +2505,16 @@ fn given(input: &Value) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The error for a call made without a key: the key of the service whose
+/// model writes, and what it was needed for.
+pub(crate) fn needs_key(model: &str, what: &str) -> String {
+    let service = match crate::chatgpt::is_openai(model) {
+        true => "OpenAI",
+        false => "Anthropic",
+    };
+    format!("an {service} API key is needed to {what}")
 }
 
 /// The error's own sentence out of an API error body, or the body.

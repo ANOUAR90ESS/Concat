@@ -115,6 +115,12 @@ export struct GenerateSheetData {
     /// Open on a hook written last, from the whole script.
     hook: bool,
     anthropic-key: string,
+    /// Who writes: 0 Claude, 1 ChatGPT; the OpenAI key it writes with
+    /// (the pictures' too), and its model, with the default shown.
+    writer: int,
+    openai-key: string,
+    writer-model: string,
+    writer-model-default: string,
     replicate-token: string,
     /// The video model; empty for stills only.
     replicate-model: string,
@@ -1396,6 +1402,15 @@ export component GenerateDialog inherits Modal {
                         hint: I18n.t("generate.writerHint");
 
                         DialogRow {
+                            label: I18n.t("generate.writtenBy");
+                            Select {
+                                options: ["Claude", "ChatGPT"];
+                                current: root.data.writer;
+                                changed(index) => { root.choice-changed(23, index); }
+                            }
+                        }
+
+                        if root.data.writer == 0: DialogRow {
                             label: "Claude";
                             Field {
                                 value: root.data.anthropic-key;
@@ -1403,6 +1418,27 @@ export component GenerateDialog inherits Modal {
                                 technical: true;
                                 placeholder: "sk-ant-...";
                                 edited(text) => { root.text-edited(2, text); }
+                            }
+                        }
+
+                        if root.data.writer == 1: DialogRow {
+                            label: "ChatGPT";
+                            Field {
+                                value: root.data.openai-key;
+                                secret: true;
+                                technical: true;
+                                placeholder: "sk-...";
+                                edited(text) => { root.text-edited(29, text); }
+                            }
+                        }
+
+                        if root.data.writer == 1: DialogRow {
+                            label: I18n.t("generate.writerModel");
+                            Field {
+                                value: root.data.writer-model;
+                                technical: true;
+                                placeholder: root.data.writer-model-default;
+                                edited(text) => { root.text-edited(30, text); }
                             }
                         }
                     }

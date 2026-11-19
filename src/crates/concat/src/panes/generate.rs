@@ -434,6 +434,8 @@ impl GeneratePane {
                     20 => prefs.structure = text,
                     26 => prefs.channel_topics = text,
                     27 => prefs.channel_rules = text,
+                    29 => prefs.openai_key = text,
+                    30 => prefs.writer_model = text,
                     28 => {
                         // The notes as the person corrects them, kept with
                         // the video as they go; emptied, they are gone.
@@ -547,6 +549,7 @@ impl GeneratePane {
                     }
                     10 => prefs.level = Some(index.min(Level::ALL.len() - 1)),
                     22 => prefs.shorts_count = Some(index.min(4) + 1),
+                    23 => prefs.writer = index.min(1),
                     20 => {
                         prefs.picture_maker = index.min(2);
                         studio.prefs.save(&studio.host.dirs);
@@ -1411,27 +1414,16 @@ impl GeneratePane {
         if self.rewriting.is_some() {
             return;
         }
-        let key = studio.prefs.generate.anthropic_key.clone();
+        let (key, model) = studio.prefs.generate.writer();
         if key.trim().is_empty() {
-            self.script_message = t("generate.needAnthropicKey");
+            self.script_message = need_writer_key(&studio.prefs.generate);
             return;
         }
         self.script_message.clear();
         self.rewriting = Some((chapter, scene));
         let brief = self.brief(studio);
         spawn_in_project(
-            move || {
-                writer::rewrite_scene(
-                    &board,
-                    &brief,
-                    chapter,
-                    scene,
-                    "",
-                    false,
-                    &key,
-                    writer::DEFAULT_MODEL,
-                )
-            },
+            move || writer::rewrite_scene(&board, &brief, chapter, scene, "", false, &key, &model),
             move |studio, _, _, result| {
                 studio.handle(Msg::Generate(GenerateMsg::Rewritten(
                     chapter,
@@ -1459,10 +1451,10 @@ impl GeneratePane {
         if !self.suggesting.insert((chapter, scene, shot)) {
             return;
         }
-        let key = studio.prefs.generate.anthropic_key.clone();
+        let (key, model) = studio.prefs.generate.writer();
         if key.trim().is_empty() {
             self.suggesting.remove(&(chapter, scene, shot));
-            self.script_message = t("generate.needAnthropicKey");
+            self.script_message = need_writer_key(&studio.prefs.generate);
             return;
         }
         self.script_message.clear();
@@ -1479,14 +1471,7 @@ impl GeneratePane {
             spawn_in_project(
                 move || {
                     concat_generate::director::direct(
-                        &board,
-                        &brief,
-                        chapter,
-                        scene,
-                        shot,
-                        "",
-                        &key,
-                        writer::DEFAULT_MODEL,
+                        &board, &brief, chapter, scene, shot, "", &key, &model,
                     )
                 },
                 move |studio, _, _, result| {
@@ -1501,17 +1486,7 @@ impl GeneratePane {
             return;
         }
         spawn_in_project(
-            move || {
-                writer::suggest_shot(
-                    &board,
-                    &brief,
-                    chapter,
-                    scene,
-                    shot,
-                    &key,
-                    writer::DEFAULT_MODEL,
-                )
-            },
+            move || writer::suggest_shot(&board, &brief, chapter, scene, shot, &key, &model),
             move |studio, _, _, result| {
                 studio.handle(Msg::Generate(GenerateMsg::Suggested(
                     chapter,
@@ -1531,8 +1506,9 @@ impl GeneratePane {
             self.message = t("generate.describeIdeaFirst");
             return;
         }
-        if prefs.anthropic_key.trim().is_empty() {
-            self.message = t("generate.needAnthropicKey");
+        let (key, model) = prefs.writer();
+        if key.trim().is_empty() {
+            self.message = need_writer_key(&prefs);
             return;
         }
         let Some(job) = self.job(studio) else { return };
@@ -1556,7 +1532,7 @@ impl GeneratePane {
                             String::new(),
                         )));
                     });
-                    match writer::research(&brief, &prefs.anthropic_key, writer::DEFAULT_MODEL) {
+                    match writer::research(&brief, &key, &model) {
                         Ok(found) => {
                             if let Err(error) = job.keep_research(&found) {
                                 log::warn!("generate: the research: {error}");
@@ -1571,34 +1547,33 @@ impl GeneratePane {
                         }
                     }
                 }
-                let board =
-                    writer::write(&brief, &prefs.anthropic_key, writer::DEFAULT_MODEL, |at| {
-                        let (fraction, stage, detail) = match at {
-                            Writing::Research => (0.01, t("generate.researching"), String::new()),
-                            Writing::Outline => (0.02, t("generate.writingOutline"), String::new()),
-                            Writing::Chapter { n, of, title } => (
-                                n as f32 / (of + 1) as f32,
-                                tf("generate.writingChapter", &[&n, &of]),
-                                title,
-                            ),
-                            Writing::Explainer {
-                                chapter,
-                                chapters,
-                                n,
-                                of,
-                            } => (
-                                chapter as f32 / (chapters + 1) as f32,
-                                tf("generate.designingExplainer", &[&n, &of]),
-                                String::new(),
-                            ),
-                            Writing::Hook => (0.98, t("generate.writingHook"), String::new()),
-                        };
-                        on_ui_in_project(epoch, move |studio, _, _| {
-                            studio.handle(Msg::Generate(GenerateMsg::Progress(
-                                fraction, stage, detail,
-                            )));
-                        });
-                    })?;
+                let board = writer::write(&brief, &key, &model, |at| {
+                    let (fraction, stage, detail) = match at {
+                        Writing::Research => (0.01, t("generate.researching"), String::new()),
+                        Writing::Outline => (0.02, t("generate.writingOutline"), String::new()),
+                        Writing::Chapter { n, of, title } => (
+                            n as f32 / (of + 1) as f32,
+                            tf("generate.writingChapter", &[&n, &of]),
+                            title,
+                        ),
+                        Writing::Explainer {
+                            chapter,
+                            chapters,
+                            n,
+                            of,
+                        } => (
+                            chapter as f32 / (chapters + 1) as f32,
+                            tf("generate.designingExplainer", &[&n, &of]),
+                            String::new(),
+                        ),
+                        Writing::Hook => (0.98, t("generate.writingHook"), String::new()),
+                    };
+                    on_ui_in_project(epoch, move |studio, _, _| {
+                        studio.handle(Msg::Generate(GenerateMsg::Progress(
+                            fraction, stage, detail,
+                        )));
+                    });
+                })?;
                 let old = Storyboard::read(&job.storyboard()).ok();
                 job.keep(&board)?;
                 if let Some(old) = old {
@@ -1828,7 +1803,7 @@ impl GeneratePane {
         let ai_music = self.music == AI_MUSIC
             && matches!(&shots, Shots::Models { replicate, .. } if !replicate.trim().is_empty())
             && job.music().is_none();
-        let writer_key = prefs.anthropic_key.clone();
+        let (writer_key, writer_model) = prefs.writer();
         let speaker = studio.prefs.tts_voice.unwrap_or(DEFAULT_SPEAKER);
         let speech = Arc::clone(&studio.host.speech);
         let dirs = studio.host.dirs.clone();
@@ -1887,7 +1862,7 @@ impl GeneratePane {
                     on_ui(|studio, _, _| studio.handle(Msg::Generate(GenerateMsg::Tick)));
                 };
                 let music = ai_music.then(|| {
-                    writer::music_prompt(&board, &writer_key, writer::DEFAULT_MODEL).unwrap_or_else(
+                    writer::music_prompt(&board, &writer_key, &writer_model).unwrap_or_else(
                         |error| {
                             log::warn!("generate: the music's description: {error}");
                             writer::plain_music_prompt()
@@ -1938,8 +1913,9 @@ impl GeneratePane {
             return;
         };
         let prefs = studio.prefs.generate.clone();
-        if prefs.anthropic_key.trim().is_empty() {
-            self.message = t("generate.needAnthropicKey");
+        let (key, model) = prefs.writer();
+        if key.trim().is_empty() {
+            self.message = need_writer_key(&prefs);
             return;
         }
         self.message.clear();
@@ -1948,8 +1924,7 @@ impl GeneratePane {
         let voiced = self.voice_row(studio) != 0;
         spawn_in_project(
             move || {
-                let mut publishing =
-                    writer::publishing(&board, &prefs.anthropic_key, writer::DEFAULT_MODEL)?;
+                let mut publishing = writer::publishing(&board, &key, &model)?;
                 // Timed as the cut is; a video not made yet has no times.
                 publishing.chapters = job
                     .gather(&board, voiced)
@@ -2189,13 +2164,13 @@ impl GeneratePane {
     }
 
     fn research_first(&mut self, studio: &mut Studio) {
-        let key = studio.prefs.generate.anthropic_key.clone();
+        let (key, model) = studio.prefs.generate.writer();
         if self.topic.trim().is_empty() {
             self.message = t("generate.describeIdeaFirst");
             return;
         }
         if key.trim().is_empty() {
-            self.message = t("generate.needAnthropicKey");
+            self.message = need_writer_key(&studio.prefs.generate);
             return;
         }
         let Some(job) = self.job(studio) else { return };
@@ -2205,7 +2180,7 @@ impl GeneratePane {
         self.phase = 0;
         spawn_in_project(
             move || {
-                let found = writer::research(&brief, &key, writer::DEFAULT_MODEL)?;
+                let found = writer::research(&brief, &key, &model)?;
                 job.keep_research(&found)?;
                 Ok(found)
             },
@@ -2216,9 +2191,9 @@ impl GeneratePane {
     }
 
     fn suggest_ideas(&mut self, studio: &mut Studio) {
-        let key = studio.prefs.generate.anthropic_key.clone();
+        let (key, model) = studio.prefs.generate.writer();
         if key.trim().is_empty() {
-            self.message = t("generate.needAnthropicKey");
+            self.message = need_writer_key(&studio.prefs.generate);
             return;
         }
         let brief = self.brief(studio);
@@ -2227,7 +2202,7 @@ impl GeneratePane {
         self.begin(t("generate.ideasBusy"));
         self.phase = 0;
         spawn_in_project(
-            move || writer::ideas(&field, &brief, &made, 5, &key, writer::DEFAULT_MODEL),
+            move || writer::ideas(&field, &brief, &made, 5, &key, &model),
             |studio, _, _, result| {
                 studio.handle(Msg::Generate(GenerateMsg::Ideas(Box::new(result))))
             },
@@ -2307,9 +2282,9 @@ impl GeneratePane {
             self.message = t("generate.translateSame");
             return;
         }
-        let key = studio.prefs.generate.anthropic_key.clone();
+        let (key, model) = studio.prefs.generate.writer();
         if key.trim().is_empty() {
-            self.message = t("generate.needAnthropicKey");
+            self.message = need_writer_key(&studio.prefs.generate);
             return;
         }
         let Some(project) = studio
@@ -2324,12 +2299,8 @@ impl GeneratePane {
         self.phase = 0;
         spawn_in_project(
             move || {
-                let translated = writer::translate(
-                    &board,
-                    language,
-                    &key,
-                    writer::DEFAULT_MODEL,
-                    &mut |n, of| {
+                let translated =
+                    writer::translate(&board, language, &key, &model, &mut |n, of| {
                         let stage = tf("generate.translating", &[&n, &of]);
                         let fraction = n as f32 / (of + 1) as f32;
                         on_ui(move |studio, _, _| {
@@ -2339,8 +2310,7 @@ impl GeneratePane {
                                 String::new(),
                             )));
                         });
-                    },
-                )?;
+                    })?;
                 let job = Job::new(Path::new(&project), &topic);
                 job.adopt(&from)?;
                 job.keep(&translated)?;
@@ -2358,7 +2328,7 @@ impl GeneratePane {
         let (Some(board), Some(job)) = (self.board.clone(), self.job(studio)) else {
             return;
         };
-        let key = studio.prefs.generate.anthropic_key.clone();
+        let (key, model) = studio.prefs.generate.writer();
         let count = studio.prefs.generate.shorts_count();
         let brief = self.brief(studio);
         self.begin(t("generate.pickingShort"));
@@ -2366,7 +2336,7 @@ impl GeneratePane {
         spawn_in_project(
             move || {
                 let board = voice_timed(&job, &board);
-                let picks = writer::pick_shorts(&board, &brief, count, &key, writer::DEFAULT_MODEL)
+                let picks = writer::pick_shorts(&board, &brief, count, &key, &model)
                     .unwrap_or_else(|error| {
                         // As many all the same, from the start of the
                         // video on, when the writer cannot be asked.
@@ -2396,7 +2366,7 @@ impl GeneratePane {
         let (Some(board), Some(job)) = (self.board.clone(), self.job(studio)) else {
             return;
         };
-        let key = studio.prefs.generate.anthropic_key.clone();
+        let (key, model) = studio.prefs.generate.writer();
         let brief = self.brief(studio);
         self.begin(t("generate.pickingShort"));
         self.phase = 3;
@@ -2406,12 +2376,10 @@ impl GeneratePane {
                 let pick = if key.trim().is_empty() {
                     shorts::opening(&board)
                 } else {
-                    writer::pick_short(&board, &brief, &key, writer::DEFAULT_MODEL).unwrap_or_else(
-                        |error| {
-                            log::warn!("generate: the Short's minute: {error}");
-                            shorts::opening(&board)
-                        },
-                    )
+                    writer::pick_short(&board, &brief, &key, &model).unwrap_or_else(|error| {
+                        log::warn!("generate: the Short's minute: {error}");
+                        shorts::opening(&board)
+                    })
                 };
                 let short = shorts::board(&board, &pick);
                 let made = job.gather(&short, true)?;
@@ -2722,6 +2690,10 @@ impl GeneratePane {
             channel_example: prefs.channel_example.as_str().into(),
             titles: self.titles,
             anthropic_key: prefs.anthropic_key.as_str().into(),
+            writer: prefs.writer as i32,
+            openai_key: prefs.openai_key.as_str().into(),
+            writer_model: prefs.writer_model.as_str().into(),
+            writer_model_default: concat_generate::chatgpt::DEFAULT_MODEL.into(),
             replicate_token: prefs.replicate_token.as_str().into(),
             replicate_model: prefs.replicate_model.as_str().into(),
             replicate_image_model: prefs.replicate_image_model.as_str().into(),
@@ -3231,6 +3203,15 @@ fn finding_text(finding: &review::Finding) -> String {
             "generate.reviewSilence",
             &[&format!("{seconds:.0}"), &clock(*at)],
         ),
+    }
+}
+
+/// What to say when the writer picked has no key: the Anthropic key for
+/// Claude, the OpenAI key for ChatGPT.
+fn need_writer_key(prefs: &crate::prefs::GeneratePrefs) -> String {
+    match prefs.writer {
+        1 => t("generate.needOpenAiWriterKey"),
+        _ => t("generate.needAnthropicKey"),
     }
 }
 

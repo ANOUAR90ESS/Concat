@@ -29,6 +29,7 @@
 //! runs steps 1 and 2 on a worker and step 4 on the window's session.
 
 pub mod budget;
+pub mod chatgpt;
 pub mod checklist;
 pub mod cost;
 pub mod director;

@@ -159,7 +159,7 @@ pub fn direct(
     model: &str,
 ) -> Result<Explainer, String> {
     if key.trim().is_empty() {
-        return Err("an Anthropic API key is needed to direct an explainer".to_owned());
+        return Err(crate::writer::needs_key(model, "direct an explainer"));
     }
     let prompt = director_prompt(board, brief, chapter, scene, shot, note)?;
     let canvas = explainer::canvas(&board.aspect);
