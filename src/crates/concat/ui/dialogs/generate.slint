@@ -79,6 +79,9 @@ export struct GenerateSheetData {
     has-research: bool,
     research-notes: string,
     research-sources: string,
+    /// What the check before publishing found, a line each; empty until
+    /// it has run.
+    publish-check: string,
     /// 0 none, 1 Concat's own voices, 2 ElevenLabs
     voice: int,
     /// 0 draft cards, 1 Replicate, 2 made by hand
@@ -721,16 +724,38 @@ export component GenerateDialog inherits Modal {
                         // folder beside what goes up with each.
                         if root.data.can-short: HorizontalLayout {
                             alignment: start;
+                            spacing: 8px;
 
                             Button {
                                 label: I18n.t("generate.exportAll");
                                 glyph: Glyph.film;
                                 clicked => { root.act(6); }
                             }
+
+                            // What to look at before the videos go up:
+                            // warnings, never a block.
+                            Button {
+                                label: I18n.t("generate.checkBefore");
+                                glyph: Glyph.search;
+                                clicked => { root.act(7); }
+                            }
                         }
 
                         if root.data.can-short: Text {
                             text: I18n.t("generate.exportAllHint");
+                            color: Theme.fg-dim;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        if root.data.can-short && root.data.publish-check != "": Text {
+                            text: root.data.publish-check;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        if root.data.can-short && root.data.publish-check != "": Text {
+                            text: I18n.t("generate.checkHint");
                             color: Theme.fg-dim;
                             font-size: Theme.fs-sm;
                             wrap: word-wrap;
