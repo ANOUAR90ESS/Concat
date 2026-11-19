@@ -778,6 +778,7 @@ impl GeneratePane {
                         studio.prefs.save(&studio.host.dirs);
                         self.board = Some(board.clone());
                         self.dirty = false;
+                        self.checked = None;
                         self.changed();
                         self.mended = false;
                         self.make(studio, board);
@@ -1026,6 +1027,8 @@ impl GeneratePane {
             .job(studio)
             .filter(|_| !self.topic.trim().is_empty())
             .and_then(|job| job.research());
+        // The findings were for the video loaded before.
+        self.checked = None;
         self.dirty = false;
         self.stale_voices.clear();
         self.stale_shots.clear();
@@ -2020,7 +2023,12 @@ impl GeneratePane {
         let prefs = &studio.prefs.generate;
         let music = match self.music {
             0 => checklist::Music::None,
-            AI_MUSIC => checklist::Music::Made,
+            // Only when a bed was made: without Replicate's shots there is
+            // none, and the cut carries no music.
+            AI_MUSIC => match self.job(studio).and_then(|job| job.music()) {
+                Some(_) => checklist::Music::Made,
+                None => checklist::Music::None,
+            },
             row => row
                 .checked_sub(AI_MUSIC + 1)
                 .and_then(|row| music_items(studio).into_iter().nth(row))

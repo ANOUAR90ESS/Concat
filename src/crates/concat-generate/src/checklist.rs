@@ -126,8 +126,10 @@ fn states_figures(words: &str) -> bool {
 }
 
 /// How many points the research notes list under DISPUTED: each line of
-/// that section with words on it, up to the next section's heading. "None"
-/// alone counts as none.
+/// that section that is a point - a bullet, or a line citing a source, as
+/// `writer::research` asks every note to - up to the next heading or the
+/// closing "Explain it like this:" and "Common misconception:" lines.
+/// "None" alone counts as none.
 fn disputed(notes: &str) -> usize {
     let mut inside = false;
     let mut count = 0;
@@ -139,6 +141,11 @@ fn disputed(notes: &str) -> usize {
             inside = heading.eq_ignore_ascii_case("DISPUTED");
             continue;
         }
+        let lower = line.to_lowercase();
+        if lower.starts_with("explain it like this") || lower.starts_with("common misconception") {
+            inside = false;
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("DISPUTED:") {
             inside = true;
             if !is_none(rest) {
@@ -146,11 +153,20 @@ fn disputed(notes: &str) -> usize {
             }
             continue;
         }
-        if inside && !line.is_empty() && !is_none(line) {
+        if inside && !is_none(line) && (line.starts_with(['-', '*', '•']) || cites(line)) {
             count += 1;
         }
     }
     count
+}
+
+/// Whether a line cites a source by its number: "[2]".
+fn cites(line: &str) -> bool {
+    line.split('[').skip(1).any(|rest| {
+        rest.split(']')
+            .next()
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    })
 }
 
 /// Whether a line of notes says there is nothing: "none", "- None." and
@@ -167,15 +183,15 @@ fn is_none(line: &str) -> bool {
 
 /// The title among `made` that `title` is closest to, when it is near
 /// enough to read as the same video: most of the words of the shorter
-/// shared. The title itself, remembered once it was written, is passed
-/// over.
+/// shared. The title itself, remembered as it was written, is passed over;
+/// an earlier one that differs only in case or punctuation is not.
 fn closest(title: &str, made: &[String]) -> Option<String> {
     let mine = words(title);
     if mine.is_empty() {
         return None;
     }
     made.iter()
-        .filter(|other| words(other) != mine)
+        .filter(|other| other.trim() != title.trim())
         .map(|other| (overlap(&mine, &words(other)), other))
         .filter(|(share, _)| *share >= 0.75)
         .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
@@ -268,6 +284,11 @@ mod tests {
         assert_eq!(disputed("FACTS:\n- one\nDISPUTED:\n- None.\n"), 0);
         assert_eq!(disputed("DISPUTED: the date\nFACTS:\n- one\n"), 1);
         assert_eq!(disputed("Just notes, no sections."), 0);
+        // The closing lines the research ends on are not disputed points.
+        let tail = "DISPUTED:\n- The founding date [1][3]\n\
+                    Explain it like this: a city grows like a tree.\n\
+                    Common misconception: Rome was built in a day.\n";
+        assert_eq!(disputed(tail), 1);
     }
 
     /// A title close to one already made is named; the video's own title,
@@ -275,12 +296,19 @@ mod tests {
     #[test]
     fn a_title_made_before_is_named() {
         let made = vec![
+            "Why Rome fell".to_owned(),
             "Why Rome Fell".to_owned(),
             "How the Roman Empire Fell Apart".to_owned(),
             "The secret life of octopuses".to_owned(),
         ];
+        // Its own entry is passed over; the earlier one, the same words in
+        // other capitals, is named.
         let video = board("Why Rome fell", &[]);
-        assert_eq!(closest(&video.title, &made), None);
+        assert_eq!(
+            closest(&video.title, &made),
+            Some("Why Rome Fell".to_owned())
+        );
+        assert_eq!(closest("Why Rome fell", &made[..1]), None);
         let video = board("How the Roman Empire fell", &[]);
         assert_eq!(
             closest(&video.title, &made),
