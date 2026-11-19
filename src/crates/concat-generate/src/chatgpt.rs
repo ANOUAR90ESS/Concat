@@ -18,13 +18,29 @@ const API: &str = "https://api.openai.com/v1/responses";
 /// The model that writes when ChatGPT is picked and no model is named.
 pub const DEFAULT_MODEL: &str = "gpt-5.4";
 
+/// What marks a model as OpenAI's whatever its name: the sheet's ChatGPT
+/// choice puts it before the model typed, and it is taken off before the
+/// model is sent. OpenAI names some models in no pattern (`chat-latest`).
+pub const MARK: &str = "openai:";
+
 /// Whether `model` is one of OpenAI's: what sends a call here rather than
-/// to Anthropic. GPT models, ChatGPT's, and the o-series reasoning ones.
+/// to Anthropic. Anything marked, GPT models, ChatGPT's, and the o-series
+/// reasoning ones.
 pub fn is_openai(model: &str) -> bool {
     let model = model.trim().to_ascii_lowercase();
-    model.starts_with("gpt")
+    model.starts_with(MARK)
+        || model.starts_with("gpt")
         || model.starts_with("chatgpt")
         || (model.starts_with('o') && model[1..].starts_with(|c: char| c.is_ascii_digit()))
+}
+
+/// `model` as OpenAI knows it: without the mark.
+fn sent_as(model: &str) -> &str {
+    let model = model.trim();
+    match model.get(..MARK.len()) {
+        Some(head) if head.eq_ignore_ascii_case(MARK) => model[MARK.len()..].trim(),
+        _ => model,
+    }
 }
 
 /// The words of the ask, after whatever goes before them - Anthropic's
@@ -109,7 +125,7 @@ pub(crate) fn call(
     while tries < 3 {
         tries += 1;
         let mut body = json!({
-            "model": model.trim(),
+            "model": sent_as(model),
             "instructions": system,
             "input": input,
             "tools": tools(server_tools, tool, search),
@@ -203,6 +219,13 @@ mod tests {
         for model in ["claude-sonnet-5-5", "opus", "", " "] {
             assert!(!is_openai(model), "{model}");
         }
+        // A model OpenAI names in no pattern is sent here when marked, and
+        // sent to OpenAI without the mark.
+        assert!(!is_openai("chat-latest"));
+        assert!(is_openai("openai:chat-latest"));
+        assert_eq!(sent_as(" openai:chat-latest "), "chat-latest");
+        assert_eq!(sent_as("OpenAI:gpt-6"), "gpt-6");
+        assert_eq!(sent_as("gpt-6"), "gpt-6");
     }
 
     /// The ask in OpenAI's shape: a picture and a PDF go before the words

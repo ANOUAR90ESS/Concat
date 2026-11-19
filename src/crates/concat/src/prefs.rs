@@ -199,12 +199,17 @@ impl GeneratePrefs {
     /// sheet's choice says.
     pub fn writer(&self) -> (String, String) {
         match self.writer {
+            // Marked as OpenAI's, so any model typed goes to OpenAI.
             1 => (
                 self.openai_key.clone(),
-                match self.writer_model.trim() {
-                    "" => concat_generate::chatgpt::DEFAULT_MODEL.to_owned(),
-                    model => model.to_owned(),
-                },
+                format!(
+                    "{}{}",
+                    concat_generate::chatgpt::MARK,
+                    match self.writer_model.trim() {
+                        "" => concat_generate::chatgpt::DEFAULT_MODEL,
+                        model => model,
+                    }
+                ),
             ),
             _ => (
                 self.anthropic_key.clone(),
@@ -565,15 +570,17 @@ mod tests {
             prefs.writer(),
             (
                 "sk-open".to_owned(),
-                concat_generate::chatgpt::DEFAULT_MODEL.to_owned()
+                format!("openai:{}", concat_generate::chatgpt::DEFAULT_MODEL)
             )
         );
-        prefs.writer_model = " gpt-6 ".into();
-        assert_eq!(prefs.writer().1, "gpt-6");
+        // A model in no OpenAI pattern still goes to OpenAI.
+        prefs.writer_model = " chat-latest ".into();
+        assert_eq!(prefs.writer().1, "openai:chat-latest");
+        assert!(concat_generate::chatgpt::is_openai(&prefs.writer().1));
         prefs.keep_template(GeneratePrefs::default().as_template("Plain"));
         assert!(prefs.apply_template(0));
         assert_eq!(prefs.writer, 1);
-        assert_eq!(prefs.writer().1, "gpt-6");
+        assert_eq!(prefs.writer().1, "openai:chat-latest");
     }
 
     /// A channel remembers its titles once each, the latest last, and no
