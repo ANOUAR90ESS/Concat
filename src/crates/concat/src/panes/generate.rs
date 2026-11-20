@@ -607,6 +607,10 @@ impl GeneratePane {
                     studio.prefs.generate.hook = Some(on);
                     studio.prefs.save(&studio.host.dirs);
                 }
+                7 => {
+                    studio.prefs.generate.deep = Some(on);
+                    studio.prefs.save(&studio.host.dirs);
+                }
                 _ => {}
             },
             GenerateMsg::WriteScript => self.write(studio, false),
@@ -966,6 +970,28 @@ impl GeneratePane {
                         // The research it was written from, kept with it.
                         if let Some(job) = self.job(studio) {
                             self.research = job.research();
+                        }
+                        // What the editor's review found, and mended.
+                        if let Some(review) = board
+                            .editorial
+                            .as_ref()
+                            .and_then(|editorial| editorial.review.as_ref())
+                        {
+                            for issue in &review.issues {
+                                log::info!(
+                                    "generate: review: [{}] {}: {}",
+                                    issue.scene,
+                                    issue.kind,
+                                    issue.problem
+                                );
+                            }
+                            studio.notify(
+                                &tf(
+                                    "generate.reviewed",
+                                    &[&review.issues.len(), &review.revised.len()],
+                                ),
+                                false,
+                            );
                         }
                         if then_make {
                             self.make(studio, board);
@@ -1334,6 +1360,7 @@ impl GeneratePane {
                 .clone()
                 .filter(|research| !research.notes.trim().is_empty()),
             hook: prefs.hook.unwrap_or(true),
+            deep: prefs.deep.unwrap_or(false),
         }
     }
 
@@ -1557,6 +1584,7 @@ impl GeneratePane {
                 let board = writer::write(&brief, &key, &model, |at| {
                     let (fraction, stage, detail) = match at {
                         Writing::Research => (0.01, t("generate.researching"), String::new()),
+                        Writing::Analysis => (0.015, t("generate.analysing"), String::new()),
                         Writing::Outline => (0.02, t("generate.writingOutline"), String::new()),
                         Writing::Chapter { n, of, title } => (
                             n as f32 / (of + 1) as f32,
@@ -1573,7 +1601,13 @@ impl GeneratePane {
                             tf("generate.designingExplainer", &[&n, &of]),
                             String::new(),
                         ),
-                        Writing::Hook => (0.98, t("generate.writingHook"), String::new()),
+                        Writing::Hook => (0.96, t("generate.writingHook"), String::new()),
+                        Writing::Review => (0.97, t("generate.reviewing"), String::new()),
+                        Writing::Revising { n, of } => (
+                            0.97 + 0.03 * n as f32 / (of + 1) as f32,
+                            tf("generate.revising", &[&n, &of]),
+                            String::new(),
+                        ),
                     };
                     on_ui_in_project(epoch, move |studio, _, _| {
                         studio.handle(Msg::Generate(GenerateMsg::Progress(
@@ -2804,6 +2838,7 @@ impl GeneratePane {
                 .map_or(0, |row| row as i32 + 1),
             bumpers: prefs.brand_bumpers,
             hook: prefs.hook.unwrap_or(true),
+            deep: prefs.deep.unwrap_or(false),
             elevenlabs_key: prefs.elevenlabs_key.as_str().into(),
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
             voice_model: prefs.elevenlabs_model.min(1) as i32,

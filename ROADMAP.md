@@ -648,6 +648,38 @@ in the language the viewer picks, and reads them.
   (`ConcatFiles.publishDownload`, through the media store), where an
   upload page's file picker finds it. The sheet says where.
 
+## Editorial intelligence, for any topic (owner, 20 Nov)
+
+The owner asked for videos that explain rather than describe - researched,
+argued, reviewed - on any subject, with nothing written for one topic.
+Much was there already: research on the web with sources, facts, opinions
+and disputed points kept apart, a source document read instead of the
+model's memory, an outline with an angle, an editor's pass on each
+chapter, explainers (charts, diagrams, maps) and a review of the cut.
+What "Deeper analysis" (a switch under research, off by default) adds, in
+`concat-generate::editorial` and `writer::write`:
+
+- 🚧 Research chosen for the kind of subject (science, history, politics,
+  economics, philosophy, a tutorial...), and the important claims one by
+  one with source, publisher, date, the passage that holds them and their
+  standing: verified, interpretation, hypothesis, unverified. The writer
+  is told to say each only as far as it stands.
+- 🚧 An analysis before the outline: first what kind of explanation the
+  subject needs, then those of the questions that matter which apply -
+  central question, thesis, why it matters, how it works and why,
+  assumptions, distinctions, evidence, objections, limits, conclusion,
+  what the viewer should understand - then the opening and beats that
+  suit that kind of subject and the kind of pictures that explain it.
+  Every call after it is told it.
+- 🚧 An editor's review of the whole script and its pictures, judged by
+  what the subject needs (accuracy, depth, clarity, logic, evidence,
+  precision, narrative, audience, visuals, purpose), naming scenes; the
+  serious ones (and all, when it fails the script) are written again with
+  its note and the research, up to six, once. Analysis and review are kept
+  in `storyboard.json` (`editorial`, absent for older scripts).
+- Later: show the analysis and the review in the script view; claims
+  linked to the scenes that use them.
+
 ## Audit and priorities (owner, 14 Nov)
 
 The owner, after planning with ChatGPT: build the new on the engines that

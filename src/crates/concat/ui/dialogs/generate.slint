@@ -114,6 +114,8 @@ export struct GenerateSheetData {
     bumpers: bool,
     /// Open on a hook written last, from the whole script.
     hook: bool,
+    /// Deeper analysis before and after writing.
+    deep: bool,
     anthropic-key: string,
     /// Who writes: 0 Claude, 1 ChatGPT; the OpenAI key it writes with
     /// (the pictures' too), and its model, with the default shown.
@@ -1093,6 +1095,25 @@ export component GenerateDialog inherits Modal {
                                 Switch {
                                     checked: root.data.research;
                                     toggled(on) => { root.toggled(3, on); }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.t("generate.deepAnalysis");
+                                color: Theme.fg;
+                                font-size: Theme.fs;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    checked: root.data.deep;
+                                    toggled(on) => { root.toggled(7, on); }
                                 }
                             }
                         }

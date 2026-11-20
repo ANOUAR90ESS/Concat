@@ -33,6 +33,7 @@ pub mod chatgpt;
 pub mod checklist;
 pub mod cost;
 pub mod director;
+pub mod editorial;
 pub mod explainer;
 pub mod job;
 pub mod makers;

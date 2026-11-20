@@ -56,6 +56,10 @@ pub struct Storyboard {
     /// Where the facts came from, when the writer researched on the web
     /// first: listed in the YouTube description.
     pub sources: Vec<Source>,
+    /// What deeper analysis worked out before writing and found after:
+    /// none for a video written without it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editorial: Option<crate::editorial::Editorial>,
 }
 
 /// A page the writer's research read.
@@ -409,6 +413,18 @@ impl Storyboard {
         self.chapters
             .iter()
             .flat_map(|chapter| chapter.scenes.iter())
+    }
+
+    /// Where the scene with `id` is: its chapter and its place in it, each
+    /// from 0.
+    pub fn position_of(&self, id: &str) -> Option<(usize, usize)> {
+        self.chapters.iter().enumerate().find_map(|(c, chapter)| {
+            chapter
+                .scenes
+                .iter()
+                .position(|scene| scene.id == id)
+                .map(|s| (c, s))
+        })
     }
 
     /// How many shots the whole video has.
