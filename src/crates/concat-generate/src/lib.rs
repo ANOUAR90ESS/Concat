@@ -42,5 +42,6 @@ pub mod providers;
 pub mod review;
 pub mod sfx;
 pub mod shorts;
+pub mod srt;
 pub mod storyboard;
 pub mod writer;

@@ -333,6 +333,10 @@ mod publisher {
             play: Box::new(move || hand(&to_play, true)),
             share: Box::new(move || hand(&to_share, false)),
         });
+        let to_download = app.clone();
+        concat::install_file_publisher(Box::new(move |path| {
+            publish_with(&to_download, path, jni_str!("publishDownload"))
+        }));
         let app = app.clone();
         concat::install_export_publisher(concat::ExportPublisher {
             folder,
@@ -424,12 +428,24 @@ mod publisher {
     /// `ConcatFiles.publishVideo`: the file's path under the phone's
     /// storage once it is in Movies, or why it could not be moved.
     fn publish(app: &AndroidApp, path: &Path) -> Result<String, String> {
+        publish_with(app, path, jni_str!("publishVideo"))
+    }
+
+    /// A `ConcatFiles` method that takes the activity and a path and answers
+    /// with the file's path under the phone's storage, or why not:
+    /// `publishVideo` (moved into Movies) or `publishDownload` (copied into
+    /// Download).
+    fn publish_with(
+        app: &AndroidApp,
+        path: &Path,
+        method: &'static jni::strings::JNIStr,
+    ) -> Result<String, String> {
         let answer = super::java::with_class(app, |env, activity, class| {
             let path = env.new_string(path.to_string_lossy())?;
             let answer = env
                 .call_static_method(
                     class,
-                    jni_str!("publishVideo"),
+                    method,
                     jni_sig!("(Landroid/app/Activity;Ljava/lang/String;)[Ljava/lang/String;"),
                     &[activity.into(), (&path).into()],
                 )?

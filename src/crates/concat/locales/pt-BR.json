@@ -255,6 +255,7 @@
   "generate.captionAnimated": "Animated",
   "generate.captionClassic": "Classic",
   "generate.captionLook": "Caption style",
+  "generate.captionsFile": "Captions file saved: {0}. Upload it with the video on Facebook or YouTube; you can then turn off \"Captions from the narration\" so the words are not also burnt into the picture.",
   "generate.captionsFromNarration": "Captions from the narration",
   "generate.channel": "Your channel",
   "generate.channelAudience": "Audience",

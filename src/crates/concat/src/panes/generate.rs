@@ -792,7 +792,14 @@ impl GeneratePane {
             GenerateMsg::ShortsReady(result) => {
                 self.running = false;
                 match *result {
-                    Ok(shorts) => {
+                    Ok(mut shorts) => {
+                        // Each its own name: the Shorts made up where the
+                        // writer picked too few all come titled alike, and
+                        // a name is a timeline's tab and a captions file's.
+                        let mut taken = HashSet::new();
+                        for (board, _) in &mut shorts {
+                            board.title = unique_name(&board.title, &mut taken);
+                        }
                         // Each on a timeline of its own; exported by hand,
                         // one at a time.
                         self.hold_export = true;
@@ -2483,6 +2490,26 @@ impl GeneratePane {
                 return;
             }
         };
+        // The captions as a file of their own, for an upload page to take
+        // beside the video: the cards the cut shows, or would show when
+        // they are not burnt in.
+        let captioned = if options.captions {
+            Some(placements.clone())
+        } else {
+            plan::plan(
+                board,
+                &made.files,
+                &Options {
+                    captions: true,
+                    ..options.clone()
+                },
+                music
+                    .as_ref()
+                    .map(|(path, length)| (path.as_str(), *length)),
+            )
+            .inspect_err(|error| log::warn!("generate: the captions file: {error}"))
+            .ok()
+        };
         // One batch: the bookkeeping after each of the cut's clips is done
         // once, at the end.
         let laid = studio
@@ -2497,6 +2524,9 @@ impl GeneratePane {
                 );
                 if made.spent > 0.0 {
                     studio.notify(&tf("generate.spent", &[&dollars(made.spent)]), false);
+                }
+                if let (Some(captioned), Some(job)) = (&captioned, self.job(studio)) {
+                    keep_captions(&job.dir, &board.title, captioned);
                 }
                 for stand_in in &made.stand_ins {
                     log::warn!("generate: {stand_in}");
@@ -2972,6 +3002,38 @@ fn export(folder: PathBuf, title: &str) {
         // Overwrite: a run made again replaces its own file, not asks.
         studio.handle(Msg::Export(ExportMsg::Overwrite));
     });
+}
+
+/// Writes the cut's captions as `<title>.srt` in the job's folder - beside
+/// the exported video on a desk - and on a phone copies it to where its
+/// file manager shows it; says where. Nothing when the cut has no words.
+fn keep_captions(folder: &Path, title: &str, placements: &[plan::Placement]) {
+    let text = concat_generate::srt::from_placements(placements);
+    if text.is_empty() {
+        return;
+    }
+    let path = folder.join(format!("{}.srt", file_stem(title)));
+    if let Err(error) = std::fs::write(&path, text) {
+        log::warn!("generate: could not write {}: {error}", path.display());
+        return;
+    }
+    let shown = path.to_string_lossy().into_owned();
+    let handed = crate::platform::publish_file(path, |result| {
+        on_ui(move |studio, _, _| match result {
+            Ok(path) => studio.notify(&tf("generate.captionsFile", &[&path]), false),
+            Err(error) => {
+                log::warn!("generate: the captions file: {error}");
+                studio.notify(&tf("generate.captionsFile", &[&shown]), false);
+            }
+        });
+    });
+    if !handed {
+        let shown = folder
+            .join(format!("{}.srt", file_stem(title)))
+            .to_string_lossy()
+            .into_owned();
+        on_ui(move |studio, _, _| studio.notify(&tf("generate.captionsFile", &[&shown]), false));
+    }
 }
 
 /// Every recording in the bin, with its length: what a music bed can be.
@@ -3585,6 +3647,26 @@ mod tests {
         assert_eq!(unique_name("a-b", &mut taken), "a-b (2)");
         assert_eq!(file_stem(" / "), "-");
         assert_eq!(file_stem("  "), "video");
+    }
+
+    /// Shorts titled alike - the ones made up where the writer picked too
+    /// few - each get a name, so their tabs and captions files differ.
+    #[test]
+    fn shorts_titled_alike_are_told_apart() {
+        let mut taken = HashSet::new();
+        let names: Vec<String> = ["Rome - Short", "Rome - Short", "Rome - Short", "Gaul"]
+            .iter()
+            .map(|title| unique_name(title, &mut taken))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Rome - Short",
+                "Rome - Short (2)",
+                "Rome - Short (3)",
+                "Gaul"
+            ]
+        );
     }
 
     /// The video's tags as hashtags, one word each, eight at most.
