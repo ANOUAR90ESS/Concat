@@ -442,6 +442,10 @@ impl GeneratePane {
                         let job = self.job(studio);
                         let research = self.research.get_or_insert_with(Research::default);
                         research.notes = text;
+                        // Theirs hold: the claims graded before are not
+                        // said again over what they corrected.
+                        research.claims.clear();
+                        research.edited = true;
                         if let Some(job) = job
                             && let Err(error) = job.keep_research(research)
                         {
@@ -1557,6 +1561,17 @@ impl GeneratePane {
                 // kept, and keep it with the video: the person can read it
                 // after, and a script written again is written from it
                 // without paying for it again.
+                // Read up again for deeper analysis when what is kept was read
+                // without it - and the person has not corrected it: their
+                // notes are not written over.
+                let shallow = brief.deep
+                    && brief
+                        .researched
+                        .as_ref()
+                        .is_some_and(|kept| !kept.deep && !kept.edited);
+                if shallow {
+                    brief.researched = None;
+                }
                 if brief.researched.is_none() && (brief.research || !brief.source.trim().is_empty())
                 {
                     on_ui_in_project(epoch, |studio, _, _| {

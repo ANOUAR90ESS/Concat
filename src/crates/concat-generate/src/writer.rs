@@ -747,11 +747,12 @@ pub fn write(
                     let Some((c, s)) = board.position_of(&id) else {
                         continue;
                     };
-                    let note = if evidence.trim().is_empty() {
-                        note
-                    } else {
-                        format!("{note}\nHold to the research notes:\n{}", evidence.trim())
-                    };
+                    // Written again in the analysis's light, as the scene
+                    // was first, and held to the same evidence.
+                    let mut note = format!("{note}\n{}", analysis.brief());
+                    if !evidence.trim().is_empty() {
+                        note += &format!("\nHold to the research notes:\n{}", evidence.trim());
+                    }
                     match rewrite_scene(&board, brief, c, s, &note, false, key, model) {
                         Ok(scene) => {
                             board.chapters[c].scenes[s] = scene;
@@ -980,6 +981,12 @@ pub struct Research {
     /// The important claims one by one, each with its source and how
     /// well it stands: asked for with deeper analysis, none otherwise.
     pub claims: Vec<Claim>,
+    /// Read up with deeper analysis: evidence chosen for the subject and
+    /// the claims graded.
+    pub deep: bool,
+    /// The person corrected the notes: what they wrote holds, and the
+    /// claims graded before it are dropped rather than said again.
+    pub edited: bool,
 }
 
 /// One important claim the research found, and how far it can be said.
@@ -1099,16 +1106,26 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
                 Err(error)
             }
         })?;
-    let sources: Vec<crate::storyboard::Source> = got["sources"]
+    // The sources with a page to them, and where each of the answer's
+    // numbers went once the others were left out.
+    let mut sources: Vec<crate::storyboard::Source> = Vec::new();
+    let numbers: Vec<usize> = got["sources"]
         .as_array()
-        .map(|sources| {
-            sources
+        .map(|given| {
+            given
                 .iter()
-                .map(|source| crate::storyboard::Source {
-                    title: text(&source["title"]),
-                    url: text(&source["url"]),
+                .map(|source| {
+                    let source = crate::storyboard::Source {
+                        title: text(&source["title"]),
+                        url: text(&source["url"]),
+                    };
+                    if source.url.starts_with("http") {
+                        sources.push(source);
+                        sources.len()
+                    } else {
+                        0
+                    }
                 })
-                .filter(|source| source.url.starts_with("http"))
                 .collect()
         })
         .unwrap_or_default();
@@ -1116,11 +1133,13 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
     if notes.is_empty() {
         return Err("the research came back empty".to_owned());
     }
-    let claims = claims_of(&got["claims"], sources.len());
+    let claims = claims_of(&got["claims"], &numbers);
     Ok(Research {
         notes,
         sources,
         claims,
+        deep: brief.deep,
+        edited: false,
     })
 }
 
@@ -1141,20 +1160,27 @@ const DEEP_RESEARCH: &str = "\nFirst decide what kind of subject this is, and ch
      not settled, 'unverified' where you could not confirm it. Never invent a figure, a \
      study, a quote, an institution's statement or an address.";
 
-/// The claims in a research answer, each held to a known standing and a
-/// source the research lists; none for an answer without them.
-fn claims_of(got: &Value, sources: usize) -> Vec<Claim> {
+/// The claims in a research answer, each held to a known standing and to
+/// its source as the kept list numbers it: `numbers` maps the answer's
+/// own numbers, from 1, to the kept list's, 0 where that source was left
+/// out. None for an answer without claims.
+fn claims_of(got: &Value, numbers: &[usize]) -> Vec<Claim> {
     got.as_array()
         .map(|claims| {
             claims
                 .iter()
                 .map(|claim| {
                     let status = text(&claim["status"]).trim().to_ascii_lowercase();
-                    let source = claim["source"].as_u64().unwrap_or(0) as usize;
+                    let given = claim["source"].as_u64().unwrap_or(0) as usize;
                     Claim {
                         claim: text(&claim["claim"]),
-                        // A number past the list names no source.
-                        source: if source <= sources { source } else { 0 },
+                        // A number past the list, or a source left out,
+                        // names no source.
+                        source: given
+                            .checked_sub(1)
+                            .and_then(|index| numbers.get(index))
+                            .copied()
+                            .unwrap_or(0),
                         publisher: text(&claim["publisher"]),
                         date: text(&claim["date"]),
                         evidence: text(&claim["evidence"]),
@@ -3192,7 +3218,9 @@ mod tests {
                 {"claim": "A disputed figure", "source": 9, "status": "maybe"},
                 {"claim": "  ", "source": 1, "status": "verified"}
             ]),
-            2,
+            // The answer's second source had no page and was left out: its
+            // third is the kept list's second.
+            &[1, 0, 2],
         );
         assert_eq!(claims.len(), 2);
         assert_eq!(claims[0].status, "verified");
@@ -3212,7 +3240,16 @@ mod tests {
             told.contains("- [unverified] A disputed figure\n")
                 || told.ends_with("- [unverified] A disputed figure")
         );
-        assert!(claims_of(&json!(null), 3).is_empty());
+        assert!(claims_of(&json!(null), &[1, 2, 3]).is_empty());
+        let moved = claims_of(
+            &json!([
+                {"claim": "From the third", "source": 3, "status": "verified"},
+                {"claim": "From the left out", "source": 2, "status": "verified"}
+            ]),
+            &[1, 0, 2],
+        );
+        assert_eq!(moved[0].source, 2);
+        assert_eq!(moved[1].source, 0);
         let plain = Research {
             notes: "notes".into(),
             ..Research::default()
