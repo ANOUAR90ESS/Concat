@@ -792,7 +792,14 @@ impl GeneratePane {
             GenerateMsg::ShortsReady(result) => {
                 self.running = false;
                 match *result {
-                    Ok(shorts) => {
+                    Ok(mut shorts) => {
+                        // Each its own name: the Shorts made up where the
+                        // writer picked too few all come titled alike, and
+                        // a name is a timeline's tab and a captions file's.
+                        let mut taken = HashSet::new();
+                        for (board, _) in &mut shorts {
+                            board.title = unique_name(&board.title, &mut taken);
+                        }
                         // Each on a timeline of its own; exported by hand,
                         // one at a time.
                         self.hold_export = true;
@@ -3640,6 +3647,26 @@ mod tests {
         assert_eq!(unique_name("a-b", &mut taken), "a-b (2)");
         assert_eq!(file_stem(" / "), "-");
         assert_eq!(file_stem("  "), "video");
+    }
+
+    /// Shorts titled alike - the ones made up where the writer picked too
+    /// few - each get a name, so their tabs and captions files differ.
+    #[test]
+    fn shorts_titled_alike_are_told_apart() {
+        let mut taken = HashSet::new();
+        let names: Vec<String> = ["Rome - Short", "Rome - Short", "Rome - Short", "Gaul"]
+            .iter()
+            .map(|title| unique_name(title, &mut taken))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Rome - Short",
+                "Rome - Short (2)",
+                "Rome - Short (3)",
+                "Gaul"
+            ]
+        );
     }
 
     /// The video's tags as hashtags, one word each, eight at most.
