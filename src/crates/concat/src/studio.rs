@@ -1900,6 +1900,9 @@ fn few(names: &[String]) -> String {
 pub enum Confirm {
     /// Deleting a whole track, and every clip on it.
     RemoveTrack { track_id: String },
+    /// Deleting a whole timeline, and every clip on it: a tab's close
+    /// button, one tap from a video that may have cost money to make.
+    RemoveTimeline { timeline_id: String },
     /// Exporting over a file that is already at `path`.
     ReplaceExport { path: String },
 }
@@ -2263,11 +2266,30 @@ impl Studio {
         self.confirm = Some(Confirm::RemoveTrack { track_id });
     }
 
+    /// Asks before the timeline in tab `index` goes. On a phone a tap
+    /// meant to switch tabs can land on the close button the tap itself
+    /// revealed, and a timeline is a whole video.
+    pub fn ask_remove_timeline(&mut self, index: i32) {
+        let Some(timeline_id) = self
+            .project()
+            .timelines
+            .get(index.max(0) as usize)
+            .map(|timeline| timeline.id.clone())
+        else {
+            return;
+        };
+        self.confirm = Some(Confirm::RemoveTimeline { timeline_id });
+    }
+
     /// The confirmation sheet's answer: go ahead with what it asked about.
     pub fn confirm_accepted(&mut self) {
         match self.confirm.take() {
             Some(Confirm::RemoveTrack { track_id }) => {
                 self.apply(Command::RemoveTrack { track_id });
+            }
+            Some(Confirm::RemoveTimeline { timeline_id }) => {
+                self.selection.clear();
+                self.apply(Command::RemoveTimeline { timeline_id });
             }
             Some(Confirm::ReplaceExport { .. }) => {
                 self.handle(crate::panes::Msg::Export(
@@ -2299,6 +2321,28 @@ impl Studio {
                 crate::ui::ConfirmData {
                     open: true,
                     title: t("timeline.deleteTrackTitle").into(),
+                    message: message.into(),
+                    action: t("common.delete").into(),
+                }
+            }
+            Confirm::RemoveTimeline { timeline_id } => {
+                let found = self
+                    .project()
+                    .timelines
+                    .iter()
+                    .find(|timeline| &timeline.id == timeline_id);
+                let name = found
+                    .map(|timeline| timeline.name.clone())
+                    .unwrap_or_default();
+                let clips = found.map_or(0, |timeline| timeline.clips.len());
+                let message = match clips {
+                    0 => tf("timeline.deleteTimelineEmpty", &[&name]),
+                    1 => tf("timeline.deleteTimelineOneClip", &[&name]),
+                    many => tf("timeline.deleteTimelineClips", &[&name, &many]),
+                };
+                crate::ui::ConfirmData {
+                    open: true,
+                    title: t("timeline.deleteTimelineTitle").into(),
                     message: message.into(),
                     action: t("common.delete").into(),
                 }

@@ -871,16 +871,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         }
     }));
     editor.on_tab_close_requested(on_window!(|state, index: i32| {
-        let Some(id) = state
-            .project()
-            .timelines
-            .get(index.max(0) as usize)
-            .map(|timeline| timeline.id.clone())
-        else {
-            return;
-        };
-        state.selection.clear();
-        state.apply(concat_project::Command::RemoveTimeline { timeline_id: id });
+        // Asked first: a timeline is a whole video, and on a phone the tap
+        // that switches tabs can land on the close button it revealed.
+        state.ask_remove_timeline(index);
     }));
 
     // ── the tray ──

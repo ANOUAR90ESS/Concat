@@ -625,6 +625,14 @@ and the long video seemed gone - the project opened on the Short alone.
 - ✅ Three Shorts when three are asked for: the writer may pick fewer, or
   stretches longer than a minute that are refused; the rest are made up
   from the scenes left, each a run that fits.
+- ✅ A timeline is not deleted on one tap (owner, 20 Nov, after alpha.42:
+  a ten-minute video that cost over 15 € was gone after its Shorts were
+  made). The tab's close button removed the timeline outright, though
+  the strip claimed to ask; on a phone the tap that switches tabs can
+  land on the close button that tap reveals. It asks now, naming the
+  timeline and its clips, as deleting a track does. Nothing paid for is
+  lost with a timeline: the job's folder keeps every shot, voice and
+  card, and Create video lays it again from them.
 
 ## Audit and priorities (owner, 14 Nov)
 
@@ -755,7 +763,7 @@ publishing; analytics later, asked first.
    compiles and starts the app), and publishes without a macOS or iOS
    bundle whose job did not pass, naming it in the notes; every other job
    must still pass.
-5. 🚧 **A check before publishing.** Warnings, never a block: a claim with no
+5. ✅ **A check before publishing.** (alpha.40) Warnings, never a block: a claim with no
    source, a repeat, music and picture rights, a length wrong for the
    platform, the AI disclosure. Done on the branch (`checklist.rs`): a
    Check before publishing button beside Export everything, which also
@@ -772,7 +780,7 @@ publishing; analytics later, asked first.
    desktop platform: `scripts/ci/onnxruntime.sh` takes the one a job needs
    from it, pinned by digest in deps.lock, laid out as the release
    archives were.
-6. 🚧 **ChatGPT as a writer (owner, 19 Nov).** A friend testing the app uses
+6. ✅ **ChatGPT as a writer (owner, 19 Nov; alpha.41).** A friend testing the app uses
    the OpenAI API: the script and the picture prompts may be written by
    ChatGPT as well as Claude, picked in the sheet, each with its own key.
    Done on the branch: Script writer has a Written by choice, Claude or
@@ -786,7 +794,7 @@ publishing; analytics later, asked first.
    pictures and a source PDF as input items. Who writes stays the
    person's when a series is brought back. Not yet tried against the
    real API: the default model's name could not be checked from here.
-7. 🚧 **Effects from pmndrs/postprocessing (owner, 19 Nov).** The owner
+7. ✅ **Effects from pmndrs/postprocessing (owner, 19 Nov; alpha.42).** The owner
    asked whether react-postprocessing could serve the app. It cannot be
    used as it is - React and three.js in a browser, WebGL - and most of
    its effects the app already has (bloom, vignette, chromatic
