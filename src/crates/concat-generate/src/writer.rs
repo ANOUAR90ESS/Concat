@@ -2178,7 +2178,15 @@ fn chapter_prompt(
              step with the words. Where what is said is a single figure, a list of points, a date \
              or a quote, it may be an animated card (kind \"motion\", with its graphic and no \
              prompt), at most one shot in four. Keep pictures for places, people, moments and \
-             atmosphere, and never draw the first shot of the video.\n"
+             atmosphere, and never draw the first shot of the video.\n\
+             Every shot shows what its scene's words say, not the video's topic in general: \
+             first decide what the viewer must see to understand those words - the shot's idea \
+             and the elements it needs - then write the prompt from them. Literal where the \
+             words name a concrete thing, person, place, event or action: show that. Explained \
+             where they describe a process, a relationship, a comparison or a figure: an \
+             explainer or a card. A clear visual metaphor only where they are abstract, and one a \
+             viewer reads without guessing. Never a decorative or generic cinematic picture, \
+             and no person who adds nothing to what is said.\n"
         )
     };
     prompt + &avoid_list(board, None)
@@ -2534,6 +2542,32 @@ pub(crate) fn call_as(
 
 /// [`call_as`], with whatever content blocks go before the words: pictures,
 /// or a document to read.
+/// Asks a model that can see about `picture` - a content block - and
+/// gets back `tool`'s input: a picture checked against its narration.
+pub(crate) fn look_at(
+    key: &str,
+    model: &str,
+    tool: &Value,
+    prompt: &str,
+    picture: Value,
+) -> Result<Value, String> {
+    if key.trim().is_empty() {
+        return Err(needs_key(model, "look at the pictures"));
+    }
+    crate::providers::retry(|| {
+        call_blocks(
+            key,
+            model,
+            "You check pictures in an explanatory video against what is said over them. Be \
+             strict: a beautiful picture that does not show what is said fails.",
+            &[],
+            tool,
+            prompt,
+            vec![picture.clone()],
+        )
+    })
+}
+
 fn call_blocks(
     key: &str,
     model: &str,
@@ -2877,6 +2911,8 @@ fn scene_schema() -> Value {
                     "properties": {
                         "kind": {"type": "string", "enum": ["image", "video", "motion", "explainer"]},
                         "prompt": {"type": "string", "description": "In English: the picture; for an explainer, what the diagram shows and how it builds, beat by beat. Empty for a motion card."},
+                        "idea": {"type": "string", "description": "In English, one line: what this shot must make the viewer understand of the words said over it."},
+                        "elements": {"type": "array", "items": {"type": "string"}, "description": "In English: the things and actions the picture must show for that - the objects, people, places or data the narration names. Empty for a motion card."},
                         "motion": {
                             "type": "string",
                             "description": "For a video shot, in English, how the camera and the subject move. Empty for an image."
@@ -3348,6 +3384,7 @@ mod tests {
                     seconds: 0.0,
                     graphic: None,
                     explainer: None,
+                    ..Shot::default()
                 })
                 .collect(),
             ..Scene::default()

@@ -74,6 +74,13 @@ pub enum Step {
     Music,
     /// The files being probed.
     Probing,
+    /// Picture `n` (from 1) of `of` being checked against its narration.
+    Checking {
+        /// This one.
+        n: usize,
+        /// Of how many.
+        of: usize,
+    },
 }
 
 /// The idea a job was written from: kept in its folder, so the sheet opened

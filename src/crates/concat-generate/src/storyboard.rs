@@ -223,6 +223,13 @@ pub struct Shot {
     /// directed, the prompt says what it is to show.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub explainer: Option<crate::explainer::Explainer>,
+    /// What the shot must make the viewer understand of its narration:
+    /// what a picture check holds it to. Empty in older scripts.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub idea: String,
+    /// The things and actions it must show for that.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub elements: Vec<String>,
 }
 
 impl Shot {

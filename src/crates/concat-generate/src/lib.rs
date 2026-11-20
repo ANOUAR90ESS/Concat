@@ -45,4 +45,5 @@ pub mod sfx;
 pub mod shorts;
 pub mod srt;
 pub mod storyboard;
+pub mod visual;
 pub mod writer;
