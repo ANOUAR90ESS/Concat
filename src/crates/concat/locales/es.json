@@ -255,6 +255,7 @@
   "generate.captionAnimated": "Animado",
   "generate.captionClassic": "Clásico",
   "generate.captionLook": "Estilo de subtítulos",
+  "generate.captionsFile": "Archivo de subtítulos guardado: {0}. Súbelo con el vídeo en Facebook o YouTube; así puedes desactivar \"Subtítulos de la narración\" para que el texto no quede también grabado en la imagen.",
   "generate.captionsFromNarration": "Subtítulos de la narración",
   "generate.channel": "Tu canal",
   "generate.channelAudience": "Público",

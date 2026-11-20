@@ -634,6 +634,20 @@ and the long video seemed gone - the project opened on the Short alone.
   lost with a timeline: the job's folder keeps every shot, voice and
   card, and Create video lays it again from them.
 
+## A captions file to upload (owner, 20 Nov)
+
+Facebook advises uploading the captions as a file rather than burning
+them into the picture: its player shows a file's captions at the size and
+in the language the viewer picks, and reads them.
+
+- 🚧 Every cut the sheet lays - the long video and each Short - writes
+  its captions as `<title>.srt` (`concat-generate::srt`): the cards the
+  cut shows, at the same times, or the ones it would show when "Captions
+  from the narration" is off. On a desk it sits in the job's folder,
+  beside the exported video; on a phone it is copied to Download/Concat
+  (`ConcatFiles.publishDownload`, through the media store), where an
+  upload page's file picker finds it. The sheet says where.
+
 ## Audit and priorities (owner, 14 Nov)
 
 The owner, after planning with ChatGPT: build the new on the engines that

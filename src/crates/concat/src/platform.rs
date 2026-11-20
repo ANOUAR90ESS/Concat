@@ -677,6 +677,46 @@ pub fn install_export_publisher(publisher: ExportPublisher) {
     let _ = EXPORT_PUBLISHER.set(publisher);
 }
 
+/// Copies a file that is not a video - a captions file - to where a
+/// phone's file manager shows it ("Download/Concat"), and answers with its
+/// path there, or with why it could not. The original stays.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub type FilePublisher = Box<dyn Fn(&std::path::Path) -> Result<String, String> + Send + Sync>;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+static FILE_PUBLISHER: std::sync::OnceLock<FilePublisher> = std::sync::OnceLock::new();
+
+/// Installs what [`publish_file`] calls. Once.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn install_file_publisher(publisher: FilePublisher) {
+    let _ = FILE_PUBLISHER.set(publisher);
+}
+
+/// Hands a small file to the phone on a thread of its own and calls
+/// `on_done` with where it went or why it did not, on that thread. False
+/// when there is nothing to hand it to - a desk, where the file is already
+/// where the person can open it - and `on_done` is never called.
+pub fn publish_file(
+    path: std::path::PathBuf,
+    on_done: impl FnOnce(Result<String, String>) + Send + 'static,
+) -> bool {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let Some(publisher) = FILE_PUBLISHER.get() else {
+            return false;
+        };
+        std::thread::Builder::new()
+            .name("file publish".into())
+            .spawn(move || on_done(publisher(&path)))
+            .is_ok()
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (path, on_done);
+        false
+    }
+}
+
 /// What a phone does with the export it last put where it shows videos:
 /// plays it in its own player, or offers it to the apps that take one.
 #[cfg(any(target_os = "android", target_os = "ios"))]

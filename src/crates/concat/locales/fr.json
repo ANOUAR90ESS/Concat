@@ -255,6 +255,7 @@
   "generate.captionAnimated": "Animé",
   "generate.captionClassic": "Classique",
   "generate.captionLook": "Style des sous-titres",
+  "generate.captionsFile": "Fichier de sous-titres enregistré : {0}. Envoyez-le avec la vidéo sur Facebook ou YouTube ; vous pouvez alors désactiver « Sous-titres de la narration » pour que le texte ne soit pas aussi incrusté dans l'image.",
   "generate.captionsFromNarration": "Sous-titres de la narration",
   "generate.channel": "Ta chaîne",
   "generate.channelAudience": "Public",

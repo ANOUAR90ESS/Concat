@@ -141,6 +141,60 @@ public class ConcatFiles extends Fragment {
         return new String[] {folder + "/" + displayName(activity, uri), null};
     }
 
+    /**
+     * Copies the file at {@code path} - a captions file, small - into
+     * Download/Concat through the media store, where the phone's file
+     * manager and an upload page's file picker find it. The original stays.
+     * The same two strings as {@link #publishVideo}. Null folder before
+     * Android 10, as there.
+     */
+    public static String[] publishDownload(Activity activity, String path) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return new String[] {null, "this phone has no media store to put it in"};
+        }
+        String folder = Environment.DIRECTORY_DOWNLOADS + "/Concat";
+        File file = new File(path);
+        String name = file.getName();
+        String mime = name.endsWith(".srt") ? "application/x-subrip" : "application/octet-stream";
+        ContentResolver resolver = activity.getContentResolver();
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+        values.put(MediaStore.Downloads.MIME_TYPE, mime);
+        values.put(MediaStore.Downloads.RELATIVE_PATH, folder);
+        values.put(MediaStore.Downloads.IS_PENDING, 1);
+        Uri collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        Uri uri;
+        try {
+            uri = resolver.insert(collection, values);
+        } catch (Exception e) {
+            return new String[] {null, "the media store refused the file: " + e.getMessage()};
+        }
+        if (uri == null) {
+            return new String[] {null, "the media store refused the file"};
+        }
+        try (InputStream in = new FileInputStream(file);
+                OutputStream out = resolver.openOutputStream(uri)) {
+            if (out == null) {
+                throw new IOException("the media store would not open the file for writing");
+            }
+            byte[] buffer = new byte[1 << 16];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+            }
+        } catch (Exception e) {
+            try {
+                resolver.delete(uri, null, null);
+            } catch (Exception ignored) {
+            }
+            return new String[] {null, e.getMessage() == null ? e.toString() : e.getMessage()};
+        }
+        values.clear();
+        values.put(MediaStore.Downloads.IS_PENDING, 0);
+        resolver.update(uri, values, null, null);
+        return new String[] {folder + "/" + displayName(activity, uri), null};
+    }
+
     /** Registered from Rust: the picked files' paths, or none. */
     public static native void filesPicked(String[] paths);
 

@@ -255,6 +255,7 @@
   "generate.captionAnimated": "متحرك",
   "generate.captionClassic": "كلاسيكي",
   "generate.captionLook": "شكل الترجمة",
+  "generate.captionsFile": "حُفظ ملف الترجمة: {0}. ارفعه مع الفيديو على فيسبوك أو يوتيوب؛ ويمكنك بعدها إيقاف \"ترجمة نصية من التعليق الصوتي\" حتى لا يُحرق النص داخل الصورة أيضًا.",
   "generate.captionsFromNarration": "ترجمة نصية من التعليق الصوتي",
   "generate.channel": "قناتك",
   "generate.channelAudience": "الجمهور",
