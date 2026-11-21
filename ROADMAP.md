@@ -677,8 +677,11 @@ What "Deeper analysis" (a switch under research, off by default) adds, in
   serious ones (and all, when it fails the script) are written again with
   its note and the research, up to six, once. Analysis and review are kept
   in `storyboard.json` (`editorial`, absent for older scripts).
-- Later: show the analysis and the review in the script view; claims
-  linked to the scenes that use them.
+- 🚧 The script editor shows them: the analysis, each part under its
+  heading, and the review - passed or not, whether the ending follows,
+  the editor's note - at the top; each scene the review held against
+  carries its note, marked when the scene was written again from it.
+- Later: claims linked to the scenes that use them.
 
 ## Audit and priorities (owner, 14 Nov)
 

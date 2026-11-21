@@ -20,7 +20,8 @@ import { SegmentedControl } from "../primitives/segmented-control.slint";
 // storyboard; the file is written when the editor closes.
 
 export struct ScriptRow {
-    /// 0 a chapter, 1 a scene, 2 a shot
+    /// 0 a chapter, 1 a scene, 2 a shot, 3 a block of the editorial
+    /// analysis or review: its label the heading, its text the body
     kind: int,
     /// Which chapter, scene and shot, from 0; -1 where the row is none.
     chapter: int,
@@ -58,6 +59,11 @@ export struct ScriptRow {
     /// About what making the shot again costs: "~$0.10"; empty when it is
     /// free.
     cost: string,
+    /// What the editor's review held against the scene; empty for
+    /// nothing.
+    note: string,
+    /// The scene was written again from that note.
+    revised: bool,
 }
 
 export struct ScriptSheetData {
@@ -198,6 +204,27 @@ export component ScriptDialog inherits Modal {
                 padding-bottom: 6px;
                 spacing: 6px;
 
+                // ── the editorial analysis and review, read only ──
+                if row.kind == 3: Text {
+                    text: row.label;
+                    color: Theme.accent;
+                    font-size: Theme.fs-sm;
+                    font-weight: 600;
+                }
+                if row.kind == 3: Rectangle {
+                    background: Theme.well;
+                    border-radius: Theme.r-sm;
+                    VerticalLayout {
+                        padding: 10px;
+                        Text {
+                            text: row.text;
+                            color: Theme.fg;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
                 // ── a chapter ──
                 if row.kind == 0: Text {
                     text: row.label;
@@ -239,6 +266,13 @@ export component ScriptDialog inherits Modal {
                         enabled: !row.busy;
                         clicked => { root.rewrite(row.chapter, row.scene); }
                     }
+                }
+                if row.kind == 1 && row.note != "": Text {
+                    text: (row.revised ? I18n.t("script.reviewRevised") : I18n.t("script.reviewNote"))
+                        + " " + row.note;
+                    color: row.revised ? Theme.fg-muted : Theme.meter-mid;
+                    font-size: Theme.fs-sm;
+                    wrap: word-wrap;
                 }
                 if row.kind == 1: Paragraph {
                     value: row.text;
