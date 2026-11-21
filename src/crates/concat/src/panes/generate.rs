@@ -230,6 +230,9 @@ pub struct GeneratePane {
     all_made: bool,
     /// A small picture of each shot made, by stem, for the script editor.
     thumbs: HashMap<String, slint::Image>,
+    /// The last picture check, by stem, as kept with the job: shown at
+    /// each shot in the script editor; a shot made again since drops out.
+    picture_checks: HashMap<String, concat_generate::visual::Check>,
     /// The shots being made again, by stem.
     remaking: HashSet<String>,
     /// What goes up with the video on YouTube, once written.
@@ -312,6 +315,7 @@ impl Default for GeneratePane {
             status: String::new(),
             all_made: false,
             thumbs: HashMap::new(),
+            picture_checks: HashMap::new(),
             likeness: HashMap::new(),
             publishing: None,
             research: None,
@@ -643,6 +647,7 @@ impl GeneratePane {
                 if self.board.is_some() {
                     self.script_open = true;
                     self.script_message.clear();
+                    self.load_checks(studio);
                     self.thumbnails(studio, None);
                 }
             }
@@ -1009,6 +1014,7 @@ impl GeneratePane {
                             self.script_open = true;
                             self.script_message.clear();
                             self.tally(studio);
+                            self.load_checks(studio);
                             self.thumbnails(studio, None);
                         }
                     }
@@ -1037,6 +1043,7 @@ impl GeneratePane {
                         }
                         self.cut(studio, &board, &made, false);
                         // Read for pictures too like their neighbours.
+                        self.load_checks(studio);
                         self.thumbnails(studio, None);
                     }
                     Err(error) => self.failed(error),
@@ -1708,6 +1715,10 @@ impl GeneratePane {
         job: &Job,
         result: Result<(Remade, NewMedia), String>,
     ) {
+        // A new take is a picture the last check never saw.
+        if result.is_ok() {
+            self.picture_checks.remove(stem);
+        }
         let (remade, item) = match result {
             Ok(made) => made,
             Err(error) => {
@@ -1765,6 +1776,22 @@ impl GeneratePane {
     /// one - on a worker, for the script editor. They are handed over a few
     /// at a time, so a long video's first shots show while the rest are
     /// still being read.
+    /// Reads the last picture check kept with the job, for the script
+    /// editor; none when no check ran.
+    fn load_checks(&mut self, studio: &Studio) {
+        self.picture_checks = self
+            .job(studio)
+            .and_then(|job| concat_generate::visual::read_report(&job))
+            .map(|report| {
+                report
+                    .checks
+                    .into_iter()
+                    .map(|check| (check.stem.clone(), check))
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+
     fn thumbnails(&self, studio: &Studio, only: Option<String>) {
         let (Some(board), Some(job)) = (self.board.as_ref(), self.job(studio)) else {
             return;
@@ -3141,6 +3168,18 @@ impl GeneratePane {
                         thumb: self.thumbs.get(&stem).cloned().unwrap_or_default(),
                         remaking: self.remaking.contains(&stem),
                         suggesting: self.suggesting.contains(&(c, s, n)),
+                        check_state: match self.picture_checks.get(&stem) {
+                            None => 0,
+                            Some(check) if !check.checked => 3,
+                            Some(check) if check.is_acceptable => 1,
+                            Some(_) => 2,
+                        },
+                        check: self
+                            .picture_checks
+                            .get(&stem)
+                            .map(check_text)
+                            .unwrap_or_default()
+                            .into(),
                         cost: if paid {
                             let cost = match shot.kind {
                                 ShotKind::Video => prices.clip + prices.still,
@@ -3304,6 +3343,39 @@ fn review_text(review: &concat_generate::editorial::Review) -> String {
         parts.push(format!("• {}", issue.problem.trim()));
     }
     parts.join("\n")
+}
+
+/// One picture's check as the script editor shows it at its shot: the
+/// score, what is missing and what is wrong, and how to draw it; why it
+/// was not looked at, when it was not.
+fn check_text(check: &concat_generate::visual::Check) -> String {
+    if !check.checked {
+        return tf("script.checkNotChecked", &[&check.note]);
+    }
+    let mut lines = vec![if check.is_acceptable {
+        tf("script.checkPassed", &[&check.semantic_alignment_score])
+    } else {
+        tf("script.checkFailed", &[&check.semantic_alignment_score])
+    }];
+    if !check.missing_elements.is_empty() {
+        lines.push(tf(
+            "script.checkMissing",
+            &[&check.missing_elements.join(", ")],
+        ));
+    }
+    if !check.visual_mismatches.is_empty() {
+        lines.push(tf(
+            "script.checkWrong",
+            &[&check.visual_mismatches.join("; ")],
+        ));
+    }
+    if !check.is_acceptable && !check.improvement_instructions.is_empty() {
+        lines.push(tf("script.checkHow", &[&check.improvement_instructions]));
+    }
+    if !check.note.is_empty() {
+        lines.push(check.note.clone());
+    }
+    lines.join("\n")
 }
 
 /// Every recording in the bin, with its length: what a music bed can be.
