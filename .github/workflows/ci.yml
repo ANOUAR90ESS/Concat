@@ -253,7 +253,10 @@ jobs:
       # Both rows, unless release.yml asks to leave macOS out (`exclude`
       # cannot: it is applied before an `include` list, which this is).
       matrix:
-        include: ${{ fromJSON(inputs.skip-macos && '[{"os":"windows-2022","sherpa":"win-x64","verb":"Tests"}]' || '[{"os":"macos-15","sherpa":"osx-arm64","verb":"Compiles"},{"os":"windows-2022","sherpa":"win-x64","verb":"Tests"}]') }}
+        # macOS runners cost ten times the minutes of Linux ones, and a
+        # release builds and starts the app on macOS anyway: the compile
+        # here runs only when started by hand.
+        include: ${{ fromJSON((inputs.skip-macos || github.event_name == 'pull_request' || github.event_name == 'push') && '[{"os":"windows-2022","sherpa":"win-x64","verb":"Tests"}]' || '[{"os":"macos-15","sherpa":"osx-arm64","verb":"Compiles"},{"os":"windows-2022","sherpa":"win-x64","verb":"Tests"}]') }}
     runs-on: ${{ matrix.os }}
     # Windows' steps that can run long have timeouts of their own, 115
     # minutes between them, so whichever is stuck is named by its own

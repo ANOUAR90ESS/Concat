@@ -388,6 +388,11 @@ jobs:
   ios:
     name: iOS arm64
     runs-on: macos-15
+    # macOS runners cost ten times the minutes of Linux ones: the iOS
+    # builds run for a release (this workflow called by release.yml, whose
+    # name the github context carries) or when started by hand, not on
+    # every pull request and push.
+    if: github.workflow == 'Release' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -499,6 +504,11 @@ jobs:
   ios-simulator:
     name: iOS simulator smoke
     runs-on: macos-15
+    # macOS runners cost ten times the minutes of Linux ones: the iOS
+    # builds run for a release (this workflow called by release.yml, whose
+    # name the github context carries) or when started by hand, not on
+    # every pull request and push.
+    if: github.workflow == 'Release' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
