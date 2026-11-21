@@ -397,6 +397,12 @@ pub struct Brief {
     /// Open on a hook: a few seconds written last, from the whole script,
     /// with a picture of its own, before anything else.
     pub hook: bool,
+    /// Deeper analysis: research chosen for the kind of subject with each
+    /// claim's standing, an editorial analysis before the outline, and an
+    /// editor's review of the whole script after, which sends weak scenes
+    /// back to be written again. A few more calls of words; off unless
+    /// asked for.
+    pub deep: bool,
 }
 
 impl Brief {
@@ -454,6 +460,8 @@ impl Brief {
 pub enum Writing {
     /// The topic is being read up on, on the web.
     Research,
+    /// What the video sets out to explain is being worked out.
+    Analysis,
     /// The outline is being written.
     Outline,
     /// Chapter `n` (from 1) of `of` is being written.
@@ -479,6 +487,16 @@ pub enum Writing {
     },
     /// The opening hook is being written, from the finished script.
     Hook,
+    /// An editor is reviewing the whole script.
+    Review,
+    /// Scene `n` (from 1) of `of` the review sent back is being written
+    /// again.
+    Revising {
+        /// This scene.
+        n: usize,
+        /// Of how many.
+        of: usize,
+    },
 }
 
 /// Writes a storyboard for `brief`, reporting each call before it is made.
@@ -507,9 +525,33 @@ pub fn write(
         }
         _ => None,
     };
+    let mut evidence = String::new();
     if let Some(found) = found {
-        brief_text += &research_brief(&found.notes);
+        evidence = found.evidence();
+        brief_text += &research_brief(&evidence);
         sources = found.sources;
+    }
+
+    // What the video sets out to explain, worked out before its outline
+    // and told to every call after it.
+    let mut editorial = None;
+    if brief.deep {
+        progress(Writing::Analysis);
+        match ask(
+            &crate::editorial::analysis_tool(),
+            crate::editorial::analysis_prompt(&brief_text),
+        ) {
+            Ok(got) => {
+                let analysis = crate::editorial::Analysis::from_value(&got);
+                brief_text += &analysis.brief();
+                editorial = Some(crate::editorial::Editorial {
+                    analysis,
+                    review: None,
+                });
+            }
+            // Written as without it: the analysis is a help.
+            Err(error) => log::warn!("the editorial analysis failed: {error}"),
+        }
     }
 
     progress(Writing::Outline);
@@ -575,6 +617,7 @@ pub fn write(
             })
             .collect(),
         sources,
+        editorial: None,
     };
     let points: Vec<String> = outlined
         .iter()
@@ -681,6 +724,50 @@ pub fn write(
             Err(error) => log::warn!("the hook could not be written: {error}"),
         }
     }
+
+    // An editor's read of the whole, last, and the scenes it holds
+    // against written again with its notes - once: a second review would
+    // only move the problems about.
+    if brief.deep {
+        progress(Writing::Review);
+        let analysis = editorial
+            .as_ref()
+            .map(|editorial: &crate::editorial::Editorial| editorial.analysis.clone())
+            .unwrap_or_default();
+        match ask(
+            &crate::editorial::review_tool(),
+            crate::editorial::review_prompt(&board, &evidence, &analysis),
+        ) {
+            Ok(got) => {
+                let mut review = crate::editorial::Review::from_value(&got);
+                let fixes = review.to_fix(&board);
+                let of = fixes.len();
+                for (n, (id, note)) in fixes.into_iter().enumerate() {
+                    progress(Writing::Revising { n: n + 1, of });
+                    let Some((c, s)) = board.position_of(&id) else {
+                        continue;
+                    };
+                    // Written again in the analysis's light, as the scene
+                    // was first, and held to the same evidence.
+                    let mut note = format!("{note}\n{}", analysis.brief());
+                    if !evidence.trim().is_empty() {
+                        note += &format!("\nHold to the research notes:\n{}", evidence.trim());
+                    }
+                    match rewrite_scene(&board, brief, c, s, &note, false, key, model) {
+                        Ok(scene) => {
+                            board.chapters[c].scenes[s] = scene;
+                            review.revised.push(id);
+                        }
+                        Err(error) => log::warn!("scene {id}: the revision failed: {error}"),
+                    }
+                }
+                board.tidy()?;
+                editorial.get_or_insert_with(Default::default).review = Some(review);
+            }
+            Err(error) => log::warn!("the editorial review failed: {error}"),
+        }
+    }
+    board.editorial = editorial;
     Ok(board)
 }
 
@@ -891,6 +978,77 @@ pub struct Research {
     pub notes: String,
     /// The pages, numbered from 1 in that order.
     pub sources: Vec<crate::storyboard::Source>,
+    /// The important claims one by one, each with its source and how
+    /// well it stands: asked for with deeper analysis, none otherwise.
+    pub claims: Vec<Claim>,
+    /// Read up with deeper analysis: evidence chosen for the subject and
+    /// the claims graded.
+    pub deep: bool,
+    /// The person corrected the notes: what they wrote holds, and the
+    /// claims graded before it are dropped rather than said again.
+    pub edited: bool,
+}
+
+/// One important claim the research found, and how far it can be said.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Claim {
+    /// What is claimed.
+    pub claim: String,
+    /// Its source's number among the sources, from 1; 0 for none.
+    pub source: usize,
+    /// Who published it: the publisher or institution.
+    pub publisher: String,
+    /// When, as the source dates it; empty when it does not.
+    pub date: String,
+    /// The passage or figure that holds it.
+    pub evidence: String,
+    /// One of [`CLAIM_STATUSES`].
+    pub status: String,
+}
+
+/// How far a claim can be said: as a fact, as someone's reading, as a
+/// hypothesis, or not at all as fact.
+pub const CLAIM_STATUSES: [&str; 4] = ["verified", "interpretation", "hypothesis", "unverified"];
+
+impl Research {
+    /// The notes and the claims as the writer is told them: each claim
+    /// with its standing and its source, so an unverified one is said as
+    /// such or left out.
+    pub fn evidence(&self) -> String {
+        let claims: Vec<String> = self
+            .claims
+            .iter()
+            .filter(|claim| !claim.claim.trim().is_empty())
+            .map(|claim| {
+                let mut line = format!("- [{}] {}", claim.status, claim.claim.trim());
+                let from: Vec<&str> = [claim.publisher.trim(), claim.date.trim()]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect();
+                if !from.is_empty() {
+                    line += &format!(" ({})", from.join(", "));
+                }
+                if claim.source > 0 {
+                    line += &format!(" [{}]", claim.source);
+                }
+                if !claim.evidence.trim().is_empty() {
+                    line += &format!(" - \"{}\"", claim.evidence.trim());
+                }
+                line
+            })
+            .collect();
+        if claims.is_empty() {
+            return self.notes.clone();
+        }
+        format!(
+            "{}\n\nCLAIMS, each with its standing - say a verified one as fact, an \
+             interpretation as whose it is, a hypothesis as a hypothesis; never say an \
+             unverified one as fact:\n{}",
+            self.notes.trim(),
+            claims.join("\n")
+        )
+    }
 }
 
 /// How many searches one research may run: about ten cents of them.
@@ -920,8 +1078,9 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
          who holds it, then what they hold; 'DISPUTED:' - each point where sources or experts \
          disagree, with the sides. Leave out a heading with nothing under it. End with a line \
          'Explain it like this:' giving the clearest analogy you found, and a line 'Common \
-         misconception:'.",
-        brief.text()
+         misconception:'.{}",
+        brief.text(),
+        if brief.deep { DEEP_RESEARCH } else { "" }
     );
     let search = |kind: &str| json!({"type": kind, "name": "web_search", "max_uses": SEARCHES});
     let fetch = json!({"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": FETCHES});
@@ -947,16 +1106,26 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
                 Err(error)
             }
         })?;
-    let sources = got["sources"]
+    // The sources with a page to them, and where each of the answer's
+    // numbers went once the others were left out.
+    let mut sources: Vec<crate::storyboard::Source> = Vec::new();
+    let numbers: Vec<usize> = got["sources"]
         .as_array()
-        .map(|sources| {
-            sources
+        .map(|given| {
+            given
                 .iter()
-                .map(|source| crate::storyboard::Source {
-                    title: text(&source["title"]),
-                    url: text(&source["url"]),
+                .map(|source| {
+                    let source = crate::storyboard::Source {
+                        title: text(&source["title"]),
+                        url: text(&source["url"]),
+                    };
+                    if source.url.starts_with("http") {
+                        sources.push(source);
+                        sources.len()
+                    } else {
+                        0
+                    }
                 })
-                .filter(|source| source.url.starts_with("http"))
                 .collect()
         })
         .unwrap_or_default();
@@ -964,7 +1133,69 @@ pub fn research(brief: &Brief, key: &str, model: &str) -> Result<Research, Strin
     if notes.is_empty() {
         return Err("the research came back empty".to_owned());
     }
-    Ok(Research { notes, sources })
+    let claims = claims_of(&got["claims"], &numbers);
+    Ok(Research {
+        notes,
+        sources,
+        claims,
+        deep: brief.deep,
+        edited: false,
+    })
+}
+
+/// What deeper analysis adds to the research: evidence chosen for the
+/// kind of subject, and the important claims one by one with their
+/// standing. Nothing in it names a subject.
+const DEEP_RESEARCH: &str = "\nFirst decide what kind of subject this is, and choose the \
+     evidence it needs rather than the same sources every time: scientific literature and \
+     scientific institutions for science; historical sources and their context for history; \
+     primary sources, institutions and the competing perspectives for politics; statistics, \
+     reports and the mechanisms behind them for economics; faithful accounts of the \
+     arguments and the thinkers for philosophy; technical documentation and steps that work \
+     for a tutorial - and as fits a subject that is none of these. Then list the important \
+     claims the video may make, one by one, each with the number of its source, its \
+     publisher or institution, its date when the source gives one, the passage or figure \
+     that holds it, and its standing: 'verified' where a reliable source states it, \
+     'interpretation' where it is someone's reading, 'hypothesis' where it is proposed but \
+     not settled, 'unverified' where you could not confirm it. Never invent a figure, a \
+     study, a quote, an institution's statement or an address.";
+
+/// The claims in a research answer, each held to a known standing and to
+/// its source as the kept list numbers it: `numbers` maps the answer's
+/// own numbers, from 1, to the kept list's, 0 where that source was left
+/// out. None for an answer without claims.
+fn claims_of(got: &Value, numbers: &[usize]) -> Vec<Claim> {
+    got.as_array()
+        .map(|claims| {
+            claims
+                .iter()
+                .map(|claim| {
+                    let status = text(&claim["status"]).trim().to_ascii_lowercase();
+                    let given = claim["source"].as_u64().unwrap_or(0) as usize;
+                    Claim {
+                        claim: text(&claim["claim"]),
+                        // A number past the list, or a source left out,
+                        // names no source.
+                        source: given
+                            .checked_sub(1)
+                            .and_then(|index| numbers.get(index))
+                            .copied()
+                            .unwrap_or(0),
+                        publisher: text(&claim["publisher"]),
+                        date: text(&claim["date"]),
+                        evidence: text(&claim["evidence"]),
+                        // What is not said to stand is taken not to.
+                        status: if CLAIM_STATUSES.contains(&status.as_str()) {
+                            status
+                        } else {
+                            "unverified".to_owned()
+                        },
+                    }
+                })
+                .filter(|claim| !claim.claim.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The most of a text file a video is made from: more is refused, not cut
@@ -2702,6 +2933,21 @@ fn research_tool() -> Value {
                         },
                         "required": ["title", "url"]
                     }
+                },
+                "claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "claim": {"type": "string"},
+                            "source": {"type": "integer"},
+                            "publisher": {"type": "string"},
+                            "date": {"type": "string"},
+                            "evidence": {"type": "string"},
+                            "status": {"type": "string", "enum": CLAIM_STATUSES}
+                        },
+                        "required": ["claim", "source", "status"]
+                    }
                 }
             },
             "required": ["notes", "sources"]
@@ -2959,6 +3205,57 @@ fn revise_tool() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The research's claims are held to a known standing and a source it
+    /// lists, and told to the writer with their standing; with none, the
+    /// notes alone.
+    #[test]
+    fn research_claims_keep_their_standing() {
+        let claims = claims_of(
+            &json!([
+                {"claim": "Water boils at 100 C at sea level", "source": 1, "publisher": "NIST",
+                 "date": "2020", "evidence": "100 degrees", "status": "Verified"},
+                {"claim": "A disputed figure", "source": 9, "status": "maybe"},
+                {"claim": "  ", "source": 1, "status": "verified"}
+            ]),
+            // The answer's second source had no page and was left out: its
+            // third is the kept list's second.
+            &[1, 0, 2],
+        );
+        assert_eq!(claims.len(), 2);
+        assert_eq!(claims[0].status, "verified");
+        assert_eq!(claims[1].status, "unverified");
+        assert_eq!(claims[1].source, 0);
+        let research = Research {
+            notes: "FACTS:\n- Water boils [1]".into(),
+            claims,
+            ..Research::default()
+        };
+        let told = research.evidence();
+        assert!(told.starts_with("FACTS:"));
+        assert!(told.contains(
+            "- [verified] Water boils at 100 C at sea level (NIST, 2020) [1] - \"100 degrees\""
+        ));
+        assert!(
+            told.contains("- [unverified] A disputed figure\n")
+                || told.ends_with("- [unverified] A disputed figure")
+        );
+        assert!(claims_of(&json!(null), &[1, 2, 3]).is_empty());
+        let moved = claims_of(
+            &json!([
+                {"claim": "From the third", "source": 3, "status": "verified"},
+                {"claim": "From the left out", "source": 2, "status": "verified"}
+            ]),
+            &[1, 0, 2],
+        );
+        assert_eq!(moved[0].source, 2);
+        assert_eq!(moved[1].source, 0);
+        let plain = Research {
+            notes: "notes".into(),
+            ..Research::default()
+        };
+        assert_eq!(plain.evidence(), "notes");
+    }
 
     /// A hook is the video's first scene under its own id: its line read,
     /// its words stuck large, one picture; without a line or a picture

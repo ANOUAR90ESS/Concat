@@ -329,6 +329,10 @@ pub struct GeneratePrefs {
     /// Open every video on a hook written last, from the whole script,
     /// with a picture of its own; on unless turned off.
     pub hook: Option<bool>,
+    /// Deeper analysis: research chosen for the subject with each claim's
+    /// standing, an editorial analysis before writing and an editor's
+    /// review after; off unless turned on.
+    pub deep: Option<bool>,
     /// The channel's colour, `#rrggbb` as typed: its opening and closing
     /// are lit in it, and captions' key words and stickers take it.
     pub brand_color: String,

@@ -442,6 +442,10 @@ impl GeneratePane {
                         let job = self.job(studio);
                         let research = self.research.get_or_insert_with(Research::default);
                         research.notes = text;
+                        // Theirs hold: the claims graded before are not
+                        // said again over what they corrected.
+                        research.claims.clear();
+                        research.edited = true;
                         if let Some(job) = job
                             && let Err(error) = job.keep_research(research)
                         {
@@ -605,6 +609,10 @@ impl GeneratePane {
                 }
                 6 => {
                     studio.prefs.generate.hook = Some(on);
+                    studio.prefs.save(&studio.host.dirs);
+                }
+                7 => {
+                    studio.prefs.generate.deep = Some(on);
                     studio.prefs.save(&studio.host.dirs);
                 }
                 _ => {}
@@ -966,6 +974,28 @@ impl GeneratePane {
                         // The research it was written from, kept with it.
                         if let Some(job) = self.job(studio) {
                             self.research = job.research();
+                        }
+                        // What the editor's review found, and mended.
+                        if let Some(review) = board
+                            .editorial
+                            .as_ref()
+                            .and_then(|editorial| editorial.review.as_ref())
+                        {
+                            for issue in &review.issues {
+                                log::info!(
+                                    "generate: review: [{}] {}: {}",
+                                    issue.scene,
+                                    issue.kind,
+                                    issue.problem
+                                );
+                            }
+                            studio.notify(
+                                &tf(
+                                    "generate.reviewed",
+                                    &[&review.issues.len(), &review.revised.len()],
+                                ),
+                                false,
+                            );
                         }
                         if then_make {
                             self.make(studio, board);
@@ -1334,6 +1364,7 @@ impl GeneratePane {
                 .clone()
                 .filter(|research| !research.notes.trim().is_empty()),
             hook: prefs.hook.unwrap_or(true),
+            deep: prefs.deep.unwrap_or(false),
         }
     }
 
@@ -1530,6 +1561,17 @@ impl GeneratePane {
                 // kept, and keep it with the video: the person can read it
                 // after, and a script written again is written from it
                 // without paying for it again.
+                // Read up again for deeper analysis when what is kept was read
+                // without it - and the person has not corrected it: their
+                // notes are not written over.
+                let shallow = brief.deep
+                    && brief
+                        .researched
+                        .as_ref()
+                        .is_some_and(|kept| !kept.deep && !kept.edited);
+                if shallow {
+                    brief.researched = None;
+                }
                 if brief.researched.is_none() && (brief.research || !brief.source.trim().is_empty())
                 {
                     on_ui_in_project(epoch, |studio, _, _| {
@@ -1557,6 +1599,7 @@ impl GeneratePane {
                 let board = writer::write(&brief, &key, &model, |at| {
                     let (fraction, stage, detail) = match at {
                         Writing::Research => (0.01, t("generate.researching"), String::new()),
+                        Writing::Analysis => (0.015, t("generate.analysing"), String::new()),
                         Writing::Outline => (0.02, t("generate.writingOutline"), String::new()),
                         Writing::Chapter { n, of, title } => (
                             n as f32 / (of + 1) as f32,
@@ -1573,7 +1616,13 @@ impl GeneratePane {
                             tf("generate.designingExplainer", &[&n, &of]),
                             String::new(),
                         ),
-                        Writing::Hook => (0.98, t("generate.writingHook"), String::new()),
+                        Writing::Hook => (0.96, t("generate.writingHook"), String::new()),
+                        Writing::Review => (0.97, t("generate.reviewing"), String::new()),
+                        Writing::Revising { n, of } => (
+                            0.97 + 0.03 * n as f32 / (of + 1) as f32,
+                            tf("generate.revising", &[&n, &of]),
+                            String::new(),
+                        ),
                     };
                     on_ui_in_project(epoch, move |studio, _, _| {
                         studio.handle(Msg::Generate(GenerateMsg::Progress(
@@ -2804,6 +2853,7 @@ impl GeneratePane {
                 .map_or(0, |row| row as i32 + 1),
             bumpers: prefs.brand_bumpers,
             hook: prefs.hook.unwrap_or(true),
+            deep: prefs.deep.unwrap_or(false),
             elevenlabs_key: prefs.elevenlabs_key.as_str().into(),
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
             voice_model: prefs.elevenlabs_model.min(1) as i32,
@@ -2910,6 +2960,50 @@ impl GeneratePane {
         let prices = prices(studio);
         let paid = studio.prefs.generate.shots == 1;
         let mut rows = Vec::new();
+        // What deeper analysis worked out and found, first, to read.
+        let editorial = board.editorial.as_ref();
+        if let Some(editorial) = editorial {
+            let analysis = analysis_text(&editorial.analysis);
+            if !analysis.is_empty() {
+                rows.push(ScriptRow {
+                    kind: 3,
+                    chapter: -1,
+                    scene: -1,
+                    shot: -1,
+                    label: t("script.analysis").into(),
+                    text: analysis.into(),
+                    ..ScriptRow::default()
+                });
+            }
+            if let Some(review) = &editorial.review {
+                rows.push(ScriptRow {
+                    kind: 3,
+                    chapter: -1,
+                    scene: -1,
+                    shot: -1,
+                    label: t("script.review").into(),
+                    text: review_text(review).into(),
+                    ..ScriptRow::default()
+                });
+            }
+        }
+        // What the review held against each scene, by its id.
+        let notes = |id: &str| -> (String, bool) {
+            let Some(review) = editorial.and_then(|editorial| editorial.review.as_ref()) else {
+                return (String::new(), false);
+            };
+            let said: Vec<&str> = review
+                .issues
+                .iter()
+                .filter(|issue| issue.scene == id)
+                .map(|issue| issue.problem.trim())
+                .filter(|problem| !problem.is_empty())
+                .collect();
+            (
+                said.join(" "),
+                review.revised.iter().any(|revised| revised == id),
+            )
+        };
         for (c, chapter) in board.chapters.iter().enumerate() {
             rows.push(ScriptRow {
                 kind: 0,
@@ -2933,6 +3027,8 @@ impl GeneratePane {
                     detail: scene.voice.as_str().into(),
                     extra: scene.on_screen_text.as_deref().unwrap_or_default().into(),
                     busy: self.rewriting == Some((c, s)),
+                    note: notes(&scene.id).0.into(),
+                    revised: notes(&scene.id).1,
                     ..ScriptRow::default()
                 });
                 for (n, shot) in scene.shots.iter().enumerate() {
@@ -3034,6 +3130,104 @@ fn keep_captions(folder: &Path, title: &str, placements: &[plan::Placement]) {
             .into_owned();
         on_ui(move |studio, _, _| studio.notify(&tf("generate.captionsFile", &[&shown]), false));
     }
+}
+
+/// The editorial analysis as the script editor shows it: each part that
+/// was worked out under its heading, lists a line an item; what does not
+/// apply to the subject, left empty, is left out.
+fn analysis_text(analysis: &concat_generate::editorial::Analysis) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (key, value) in [
+        (t("script.analysisApproach"), &analysis.approach),
+        (t("script.analysisQuestion"), &analysis.central_question),
+        (t("script.analysisThesis"), &analysis.thesis),
+        (t("script.analysisWhy"), &analysis.why_it_matters),
+    ] {
+        if !value.trim().is_empty() {
+            parts.push(format!("{key}: {}", value.trim()));
+        }
+    }
+    for (key, items) in [
+        (t("script.analysisMechanisms"), &analysis.mechanisms),
+        (t("script.analysisAssumptions"), &analysis.assumptions),
+        (t("script.analysisMisunderstood"), &analysis.misunderstood),
+        (t("script.analysisEvidence"), &analysis.evidence),
+        (t("script.analysisObjections"), &analysis.counterarguments),
+        (t("script.analysisLimits"), &analysis.limitations),
+    ] {
+        let listed: Vec<String> = items
+            .iter()
+            .map(|item| item.trim())
+            .filter(|item| !item.is_empty())
+            .map(|item| format!("• {item}"))
+            .collect();
+        if !listed.is_empty() {
+            parts.push(format!("{key}:\n{}", listed.join("\n")));
+        }
+    }
+    for (key, value) in [
+        (t("script.analysisConclusion"), &analysis.conclusion),
+        (t("script.analysisTakeaway"), &analysis.takeaway),
+        (t("script.analysisOpening"), &analysis.opening),
+    ] {
+        if !value.trim().is_empty() {
+            parts.push(format!("{key}: {}", value.trim()));
+        }
+    }
+    let beats: Vec<String> = analysis
+        .beats
+        .iter()
+        .map(|beat| beat.trim())
+        .filter(|beat| !beat.is_empty())
+        .enumerate()
+        .map(|(n, beat)| format!("{}. {beat}", n + 1))
+        .collect();
+    if !beats.is_empty() {
+        parts.push(format!(
+            "{}:\n{}",
+            t("script.analysisBeats"),
+            beats.join("\n")
+        ));
+    }
+    if !analysis.visuals.trim().is_empty() {
+        parts.push(format!(
+            "{}: {}",
+            t("script.analysisVisuals"),
+            analysis.visuals.trim()
+        ));
+    }
+    parts.join("\n\n")
+}
+
+/// The editor's review as the script editor shows it: whether it passed
+/// the script, whether the ending follows, the note on the whole, and how
+/// many problems it found and scenes it had written again - each scene's
+/// own problems are shown at the scene.
+fn review_text(review: &concat_generate::editorial::Review) -> String {
+    let mut parts = vec![if review.passed {
+        t("script.reviewPassed")
+    } else {
+        t("script.reviewFailed")
+    }];
+    if !review.conclusion_follows {
+        parts.push(t("script.reviewConclusion"));
+    }
+    if !review.summary.trim().is_empty() {
+        parts.push(review.summary.trim().to_owned());
+    }
+    parts.push(tf(
+        "generate.reviewed",
+        &[&review.issues.len(), &review.revised.len()],
+    ));
+    // What it held against the whole, not one scene.
+    for issue in review
+        .issues
+        .iter()
+        .filter(|issue| issue.scene.trim().is_empty())
+    {
+        parts.push(format!("• {}", issue.problem.trim()));
+    }
+    parts.join("\n")
 }
 
 /// Every recording in the bin, with its length: what a music bed can be.

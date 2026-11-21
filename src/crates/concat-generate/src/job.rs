@@ -1976,6 +1976,7 @@ mod tests {
                 title: "INE".into(),
                 url: "https://ine.es".into(),
             }],
+            ..Default::default()
         };
         job.keep_research(&research).unwrap();
         assert_eq!(job.research(), Some(research));
