@@ -710,9 +710,20 @@ Added (`concat-generate::visual`, the writer's picture rules):
   shot - and its amended prompt kept; a failed clip is said, not remade.
   What could not be looked at is "not checked", never passed. The report
   is kept in `picture-checks.json` and summed up in a notice.
-- Later: show each picture's check in the script editor with a "draw
-  again" button; let the person set the threshold and attempts in the
-  sheet.
+- 🚧 The script editor shows each picture's last check at its shot -
+  score, what is missing, what is wrong, how to draw it, or why it was
+  not checked - beside the shot's Make again; a take made since drops
+  its check.
+- Later: let the person set the threshold and attempts in the sheet.
+
+## Fewer Actions minutes (owner, 21 Nov)
+
+GitHub stopped starting any workflow on the repository after 23:29 on 20
+Nov - likely the account's Actions minutes, which macOS runners spend ten
+times as fast as Linux ones. The macOS compile in ci.yml and the two iOS
+jobs in mobile.yml now run only for a release (release.yml) or when started
+by hand, not on every pull request and push to main; Linux, Windows and
+Android still check each pull request.
 
 ## Audit and priorities (owner, 14 Nov)
 

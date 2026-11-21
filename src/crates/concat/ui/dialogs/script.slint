@@ -59,6 +59,10 @@ export struct ScriptRow {
     /// About what making the shot again costs: "~$0.10"; empty when it is
     /// free.
     cost: string,
+    /// The shot's last picture check: 0 none ran, 1 it passed, 2 it
+    /// failed, 3 it could not be looked at; `check` says what it found.
+    check-state: int,
+    check: string,
     /// What the editor's review held against the scene; empty for
     /// nothing.
     note: string,
@@ -359,6 +363,13 @@ export component ScriptDialog inherits Modal {
                         }
                     }
                     Rectangle { horizontal-stretch: 1; }
+                }
+                if row.kind == 2 && row.check-state != 0: Text {
+                    text: row.check;
+                    color: row.check-state == 1 ? Theme.fg-muted
+                        : row.check-state == 2 ? Theme.danger : Theme.meter-mid;
+                    font-size: Theme.fs-sm;
+                    wrap: word-wrap;
                 }
                 if row.kind == 2: Paragraph {
                     value: row.text;

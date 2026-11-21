@@ -281,6 +281,12 @@ pub fn report_file(job: &crate::job::Job) -> PathBuf {
     job.dir.join("picture-checks.json")
 }
 
+/// The last check kept with the job, if one ran.
+pub fn read_report(job: &crate::job::Job) -> Option<Report> {
+    let bytes = std::fs::read(report_file(job)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 /// Looks at every picture a model drew for `board` against its narration
 /// and draws again, with what was missing, each still that fails - up to
 /// `attempts` times, each a picture paid for at the run's prices. A clip
@@ -474,6 +480,24 @@ mod tests {
         );
         assert!(prompt.contains("\"Prices rose.\""));
         assert!(prompt.contains("asked for as: \"a meter\""));
+    }
+
+    /// A report kept with the job is read back as it was written; a job
+    /// with none has none.
+    #[test]
+    fn a_report_is_read_back() {
+        let root = std::env::temp_dir().join(format!("concat-visual-{}", std::process::id()));
+        let job = crate::job::Job::new(&root, "checked");
+        std::fs::create_dir_all(&job.dir).unwrap();
+        assert!(read_report(&job).is_none());
+        let report = Report {
+            threshold: 7,
+            checks: vec![Check::unchecked("s1_0", Path::new("x.png"), "no key")],
+            redrawn: vec!["s2_0".into()],
+        };
+        std::fs::write(report_file(&job), serde_json::to_vec(&report).unwrap()).unwrap();
+        assert_eq!(read_report(&job), Some(report));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// Only a picture a model can take is sent.
