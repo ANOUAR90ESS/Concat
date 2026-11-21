@@ -333,6 +333,14 @@ pub struct GeneratePrefs {
     /// standing, an editorial analysis before writing and an editor's
     /// review after; off unless turned on.
     pub deep: Option<bool>,
+    /// Check every picture a model drew against its narration and draw
+    /// again those that fail; off unless turned on.
+    pub picture_check: Option<bool>,
+    /// The score out of 10 a picture needs; none for the default.
+    pub picture_threshold: Option<u8>,
+    /// How many times a failed picture is drawn again; none for the
+    /// default.
+    pub picture_attempts: Option<u8>,
     /// The channel's colour, `#rrggbb` as typed: its opening and closing
     /// are lit in it, and captions' key words and stickers take it.
     pub brand_color: String,

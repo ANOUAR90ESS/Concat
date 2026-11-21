@@ -615,6 +615,10 @@ impl GeneratePane {
                     studio.prefs.generate.deep = Some(on);
                     studio.prefs.save(&studio.host.dirs);
                 }
+                8 => {
+                    studio.prefs.generate.picture_check = Some(on);
+                    studio.prefs.save(&studio.host.dirs);
+                }
                 _ => {}
             },
             GenerateMsg::WriteScript => self.write(studio, false),
@@ -1016,6 +1020,9 @@ impl GeneratePane {
                 self.ended = Some(std::time::Instant::now());
                 match *result {
                     Ok((board, made)) => {
+                        // The script as made: a picture check keeps the
+                        // prompts it drew again with.
+                        self.board = Some(board.clone());
                         // Before the cut: a shot a model could not make is
                         // asked for once more, as an editor would, rather
                         // than the video going out with a card in it.
@@ -1143,6 +1150,14 @@ impl GeneratePane {
                 self.phase = 3;
                 self.detail.clear();
                 (0.97, t("generate.readingFiles"))
+            }
+            Step::Checking { n, of } => {
+                self.phase = 3;
+                self.detail.clear();
+                (
+                    0.97 + 0.03 * *n as f32 / (*of).max(1) as f32,
+                    tf("generate.checkingPicture", &[n, of]),
+                )
             }
         };
         self.progress = fraction;
@@ -1860,6 +1875,18 @@ impl GeneratePane {
             && matches!(&shots, Shots::Models { replicate, .. } if !replicate.trim().is_empty())
             && job.music().is_none();
         let (writer_key, writer_model) = prefs.writer();
+        // The pictures looked at against their words once made, with the
+        // writer's key: the model that writes the script sees.
+        let picture_check = prefs.picture_check.unwrap_or(false);
+        let threshold = prefs
+            .picture_threshold
+            .unwrap_or(concat_generate::visual::DEFAULT_THRESHOLD)
+            .min(10);
+        let attempts = prefs
+            .picture_attempts
+            .unwrap_or(concat_generate::visual::DEFAULT_ATTEMPTS)
+            .min(3);
+        let voiced = !matches!(voice, Voice::None);
         let speaker = studio.prefs.tts_voice.unwrap_or(DEFAULT_SPEAKER);
         let speech = Arc::clone(&studio.host.speech);
         let dirs = studio.host.dirs.clone();
@@ -1944,6 +1971,54 @@ impl GeneratePane {
                     &mut progress,
                     &|| stop.load(Ordering::Acquire),
                 );
+                // Every picture a model drew looked at against what is
+                // said over it, and the stills that fail drawn again.
+                let mut board = board;
+                let made = match made {
+                    Ok(mut made) if picture_check && !stop.load(Ordering::Acquire) => {
+                        let (report, redrawing) = concat_generate::visual::check_and_mend(
+                            &job,
+                            &mut board,
+                            &shots,
+                            &costs,
+                            &writer_key,
+                            &writer_model,
+                            threshold,
+                            attempts,
+                            &mut |n, of| progress(Step::Checking { n, of }),
+                            &|| stop.load(Ordering::Acquire),
+                        );
+                        for check in report.checks.iter().filter(|check| !check.is_acceptable) {
+                            log::warn!(
+                                "generate: picture {} ({}/10): missing {:?}, wrong {:?} {}",
+                                check.stem,
+                                check.semantic_alignment_score,
+                                check.missing_elements,
+                                check.visual_mismatches,
+                                check.note
+                            );
+                        }
+                        if !report.redrawn.is_empty() {
+                            // The new takes, in place of the ones they mend.
+                            let spent = made.spent;
+                            made = job.gather(&board, voiced)?;
+                            made.spent = spent + redrawing;
+                        }
+                        let (passed, failed, unchecked) = report.counts();
+                        let redrawn = report.redrawn.len();
+                        on_ui(move |studio, _, _| {
+                            studio.notify(
+                                &tf(
+                                    "generate.picturesChecked",
+                                    &[&passed, &failed, &unchecked, &redrawn],
+                                ),
+                                failed + unchecked > 0,
+                            );
+                        });
+                        Ok(made)
+                    }
+                    made => made,
+                };
                 drop(held);
                 crate::platform::hold(MAKING, None, -1);
                 // Said wherever the window is now: a run left behind in a
@@ -2854,6 +2929,7 @@ impl GeneratePane {
             bumpers: prefs.brand_bumpers,
             hook: prefs.hook.unwrap_or(true),
             deep: prefs.deep.unwrap_or(false),
+            picture_check: prefs.picture_check.unwrap_or(false),
             elevenlabs_key: prefs.elevenlabs_key.as_str().into(),
             elevenlabs_voice: prefs.elevenlabs_voice.as_str().into(),
             voice_model: prefs.elevenlabs_model.min(1) as i32,
@@ -3593,6 +3669,10 @@ fn rough(step: &Step) -> Option<(f32, String)> {
         )),
         Step::Music => Some((0.95, t("generate.makingMusic"))),
         Step::Probing => Some((0.97, t("generate.readingFiles"))),
+        Step::Checking { n, of } => Some((
+            0.97 + 0.03 * (*n as f32 / (*of).max(1) as f32),
+            tf("generate.checkingPicture", &[n, of]),
+        )),
     }
 }
 

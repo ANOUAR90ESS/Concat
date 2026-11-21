@@ -683,6 +683,37 @@ What "Deeper analysis" (a switch under research, off by default) adds, in
   carries its note, marked when the scene was written again from it.
 - Later: claims linked to the scenes that use them.
 
+## Pictures that show what is said (owner, 21 Nov)
+
+The owner found pictures with little to do with the narration - a person
+or a cinematic backdrop where the words named a thing, a figure or an
+idea. Already there: each scene's shots written from its own words, not
+the topic; three kinds of visual (pictures and clips, explainers -
+charts, maps, diagrams, timelines - and animated cards); shots timed to
+the words of the voice; recurring characters named in every prompt.
+Added (`concat-generate::visual`, the writer's picture rules):
+
+- 🚧 Every shot carries its `idea` (what the viewer must understand of
+  the words over it) and the `elements` it must show; the writer decides
+  them first and writes the prompt from them - literal for concrete
+  things, an explainer or card for processes and figures, a clear
+  metaphor only for the abstract; no decorative pictures, no person who
+  adds nothing.
+- 🚧 "Check every picture against its narration" (off by default): once
+  the shots are made, each picture a model drew (a clip by its start
+  still) is shown to the writer's model with its narration, idea and
+  elements, and scored 0-10 with what is there, missing and wrong
+  (`semantic_alignment_score`, `required_elements_present`,
+  `missing_elements`, `visual_mismatches`, `is_acceptable`,
+  `improvement_instructions`). A still under the threshold (7 unless
+  set) is drawn again with what was missing - once unless set, only that
+  shot - and its amended prompt kept; a failed clip is said, not remade.
+  What could not be looked at is "not checked", never passed. The report
+  is kept in `picture-checks.json` and summed up in a notice.
+- Later: show each picture's check in the script editor with a "draw
+  again" button; let the person set the threshold and attempts in the
+  sheet.
+
 ## Audit and priorities (owner, 14 Nov)
 
 The owner, after planning with ChatGPT: build the new on the engines that
